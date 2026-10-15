@@ -232,7 +232,6 @@
         { key: 'githubPostsDir', label: '文章目录', hint: '如 content/zh/posts（多语言）或 content/posts（单语言扁平），「文章」页写这里' },
         { key: 'githubMomentsDir', label: '时刻目录', hint: '如 content/zh/moments，「时刻」页读写这里' },
         { key: 'gitWritebackEnabled', label: '开启前端参数写回', kind: 'bool', hint: '「前端管理」页与友链数据写回都依赖此开关' },
-        { key: 'githubParamsFile', label: '前端参数文件', hint: '如 config/_default/params.toml' },
         { key: 'githubLinksFile', label: '友链文件', hint: '如 data/links.yaml' },
         { key: 'githubAuthorsFile', label: '作者数据文件', hint: '如 data/authors.yaml' },
         { key: 'cloudflarePagesBuildHook', label: 'Pages 重建 Hook', hint: '选填，填了改完友链会自动重建站点' },

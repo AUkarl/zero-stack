@@ -124,6 +124,8 @@ app.post('/comments', async (c) => {
     csv?: string;
     format?: string;
     status?: string;
+    /** 导出里没带文章地址时（Giscus 按页导出）统一补这个地址 */
+    defaultSlug?: string;
     dryRun?: boolean;
   } | null;
   const payload = body?.csv && body.csv.trim() ? parseCsvRows(body.csv) : body?.payload;
@@ -135,6 +137,7 @@ app.post('/comments', async (c) => {
     plan = await planCommentImport(c.env, payload, {
       format: (body?.format || '') as CommentFormat | '',
       status: body?.status === 'pending' || body?.status === 'spam' ? body.status : 'keep',
+      defaultSlug: body?.defaultSlug,
     });
   } catch (e) {
     fail(400, errorMessage(e));

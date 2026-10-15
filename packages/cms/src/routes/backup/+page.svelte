@@ -190,6 +190,8 @@
   let cf = $state<{ name: string; kind: 'json' | 'csv'; text: string } | null>(null);
   let cFormat = $state('');
   let cStatus = $state('keep');
+  /** Giscus 这类按页导出的文件里不带文章地址，导入时由这里补 */
+  let cSlug = $state('');
   let cPlan = $state<CommentPlan | null>(null);
 
   async function pickCommentFile(file: File | undefined) {
@@ -233,7 +235,8 @@
       }
     }
     try {
-      const body = cf.kind === 'csv' ? { csv: cf.text, format: cFormat, status: cStatus, dryRun } : { payload: JSON.parse(cf.text), format: cFormat, status: cStatus, dryRun };
+      const extra = { format: cFormat, status: cStatus, defaultSlug: cSlug.trim() || undefined, dryRun };
+      const body = cf.kind === 'csv' ? { csv: cf.text, ...extra } : { payload: JSON.parse(cf.text), ...extra };
       const d = await post<{ data: CommentPlan }>('/api/admin/backup/comments', body);
       cPlan = d.data;
       if (!dryRun) {
@@ -403,6 +406,10 @@
         <option value="approved">全部直接显示</option>
         <option value="pending">全部先进待审</option>
       </select>
+    </label>
+    <label class="inline">
+      文章地址兜底
+      <input bind:value={cSlug} placeholder="/posts/xxx/" title="Giscus 这类按页导出的文件每行都不带文章地址，填了就用它；文件里本来就有的行不受影响" />
     </label>
   </div>
 

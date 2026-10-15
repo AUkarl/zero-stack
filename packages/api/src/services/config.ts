@@ -112,8 +112,6 @@ export type ConfigKey =
   | 'githubBranch'
   | 'githubContentDir'
   | 'gitWritebackEnabled'
-  | 'gitWritebackDangerous'
-  | 'githubParamsFile'
   | 'githubLinksFile'
   | 'cloudflarePagesBuildHook'
   /* 评论提醒与展示 */
@@ -228,8 +226,6 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'githubBranch',
   'githubContentDir',
   'gitWritebackEnabled',
-  'gitWritebackDangerous',
-  'githubParamsFile',
   'githubLinksFile',
   'cloudflarePagesBuildHook',
   'commentNotifyAdmin',
@@ -353,8 +349,6 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   draftsEnabled: 'true',
   authorVerifyEnabled: 'true',
   gitWritebackEnabled: 'false',
-  gitWritebackDangerous: 'false',
-  githubParamsFile: 'config/_default/params.toml',
   githubLinksFile: 'data/links.yaml',
   cloudflarePagesBuildHook: '',
   githubBranch: 'main',

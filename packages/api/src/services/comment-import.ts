@@ -198,7 +198,22 @@ export function parseCsvRows(text: string): Record<string, unknown>[] {
 
 /* ---------------------------------------------------------------- 格式识别 */
 
-/** 导出主体可能包在一层里：{data:[]} / {comments:[]} / [..] */
+/**
+ * 「表名 → 行数组」这种导出结构：Waline 1.4x 是 `{data: {Comment:[], Counter:[], Users:[]}}`，
+ * 别家的 `tables` 也可能是同形状的映射。挑真正装评论的那张：先看名字含 comment 的，
+ * 再退到行数最多的那张（Counter/Users 通常比 Comment 少或字段不同）。
+ */
+function fromTableMap(obj: Record<string, unknown>): Record<string, unknown>[] {
+  const arrays = Object.entries(obj).filter(
+    ([, v]) => Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' && v[0] !== null,
+  ) as [string, Record<string, unknown>[]][];
+  if (!arrays.length) return [];
+  const byName = arrays.find(([key]) => /comment/i.test(key));
+  const best = byName ?? arrays.reduce((a, b) => (b[1].length >= a[1].length ? b : a));
+  return best[1];
+}
+
+/** 导出主体可能包在一层里：{data:[]} / {comments:[]} / [..] / {data:{Comment:[..]}} */
 function extractList(payload: unknown): Record<string, unknown>[] {
   if (Array.isArray(payload)) return payload.map(rec);
   const o = rec(payload);
@@ -208,26 +223,34 @@ function extractList(payload: unknown): Record<string, unknown>[] {
     if (v && typeof v === 'object') {
       const inner = extractList(v);
       if (inner.length) return inner;
+      const mapped = fromTableMap(rec(v));
+      if (mapped.length) return mapped;
     }
   }
   // 自家备份：{ tables: { comments: [...] } }
   const tables = rec(o.tables);
   if (Array.isArray(tables.comments)) return tables.comments.map(rec);
-  return [];
+  return fromTableMap(tables).length ? fromTableMap(tables) : fromTableMap(o);
 }
 
 export function detectCommentFormat(payload: unknown): CommentFormat {
   const o = rec(payload);
   if (o.version !== undefined && rec(o.tables).comments !== undefined) return 'zero';
+  // 导出文件自己说了是哪个系统就信它（Waline 的 type 字段），省得靠字段名猜
+  const self = typeof o.type === 'string' ? o.type.toLowerCase() : '';
+  if (self === 'waline' || self === 'twikoo' || self === 'artalk' || self === 'giscus') return self;
   const list = extractList(payload);
   const first = list[0] ?? {};
   const keys = Object.keys(first);
   const has = (...names: string[]) => names.some((n) => keys.includes(n));
   if (has('postSlug', 'post_slug') && has('authorName', 'author_name')) return 'zero';
+  // msg 只有 Twikoo 用，必须排在 Waline 前面：Twikoo 的 nick + mail + status 三个键齐全，
+  // 会被下一条 Waline 规则抢走，识别成 Waline 后 dry-run 面板上的来源就写错了。
+  if (has('msg')) return 'twikoo';
   if (has('articleId', 'objectId') || (has('nick') && has('mail') && has('status'))) return 'waline';
-  if (has('msg') || (has('url') && has('nick') && has('admin'))) return 'twikoo';
+  if ((has('_id') && has('url') && (has('comment') || has('mail'))) || (has('url') && has('nick') && has('admin'))) return 'twikoo';
   if (has('page_id', 'pageId') || (has('content') && has('nick') && has('ua'))) return 'artalk';
-  if (has('database_id') || (has('body') && has('author') && has('created_at'))) return 'giscus';
+  if (has('database_id', 'databaseId') || (has('body') && (has('created_at', 'createdAt') || has('author')))) return 'giscus';
   if (has('article_path') || has('user_name')) return 'commentbox';
   if (has('comment', 'content', 'body', 'text') && has('url', 'path', 'slug')) return 'generic';
   return 'generic';
@@ -264,13 +287,22 @@ function flatten(o: Record<string, unknown>): Raw {
   const ua = pickStr(o, ['ua', 'userAgent', 'user_agent', 'agent', 'browserAgent']);
   // 候选键里不含 link：Waline / Twikoo 的 link 是评论者自己的网站，不是文章地址。
   // 单独的「/」按没填处理 —— 站外链接被解析成 pathname "/" 会伪装成首页评论。
-  const slugRaw = normSlug(pickStr(o, ['url', 'pathname', 'path', 'slug', 'page_url', 'pageUrl', 'url_for', 'urlFor', 'articleId', 'page_key', 'pageKey', 'postSlug', 'post_slug', 'permalink']));
+  const slugRaw = normSlug(pickStr(o, ['url', 'pathname', 'path', 'slug', 'page_url', 'pageUrl', 'url_for', 'urlFor', 'articleId', 'article_path', 'articlePath', 'page_key', 'pageKey', 'postSlug', 'post_slug', 'permalink']));
+  // 有些导出没有独立的地址字段，objectId 本身就是文章路径（Waline 的 /posts/x/、Giscus 的 pathname）。
+  // 只有长得像路径（含斜杠）才拿来兜底，否则会把数字 id 当成 slug 建出一堆假页面。
+  const idish = pickStr(o, ['objectId', 'oid', 'id']);
+  const slug = slugRaw || (idish.includes('/') ? idish : '');
+  // Giscus 的作者是对象：{ login: '…' }
+  const authorName = pickStr(rec(o.author), ['login', 'name']);
   return {
     o,
     legacyId: legacy,
-    slug: slugRaw === '/' ? '' : slugRaw,
+    slug: slug === '/' ? '' : slug,
     content,
-    name: pickStr(o, ['nick', 'name', 'author', 'authorName', 'author_name', 'user_name', 'userName', 'displayName', 'display_name', 'login', 'from']) || '访客',
+    name:
+      pickStr(o, ['nick', 'name', 'author', 'authorName', 'author_name', 'user_name', 'userName', 'displayName', 'display_name', 'login', 'from']) ||
+      authorName ||
+      '访客',
     email: isEmail(emailRaw) ? emailRaw.toLowerCase() : '',
     link: pickStr(o, ['link', 'website', 'site', 'url_site', 'homepage']),
     ua,
@@ -287,6 +319,11 @@ export interface ImportOptions {
   status?: 'approved' | 'pending' | 'spam' | 'keep';
   /** 同一个 legacyId 已在库里时跳过（默认 true），避免重复导入 */
   skipExisting?: boolean;
+  /**
+   * 导出里逐条都没带文章地址时统一用这个（Giscus 是按 discussion 导出的，
+   * 一份文件里只有正文和作者，页面地址得由导入者补上）。
+   */
+  defaultSlug?: string;
 }
 
 /**
@@ -316,6 +353,8 @@ export async function planCommentImport(env: Env, payload: unknown, opts: Import
   }
 
   const flat = list.map(flatten);
+  const fallback = opts.defaultSlug ? normSlug(opts.defaultSlug) : '';
+  if (fallback) for (const f of flat) if (!f.slug) f.slug = fallback;
   const wanted = flat.filter((f) => {
     if (!f.content) {
       bumpSkip('正文为空');
