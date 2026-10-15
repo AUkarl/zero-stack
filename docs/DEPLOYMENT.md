@@ -9,11 +9,34 @@ zero-stack 是「Hono Worker（zero-api）+ SvelteKit 后台（zero-cms）+ 评�
 
 ---
 
+## 0. 上线总顺序（照这个清单从上到下做，每步都带验证）
+
+细节在后面的分节里，这一节只负责"下一步该做什么"。卡住时先看 [第 10 节 常见故障](#10-常见故障)。
+
+| # | 做什么 | 命令 / 位置 | 怎么算成功 |
+|---|---|---|---|
+| 1 | 装依赖 | `pnpm install`（Node ≥ 22） | `pnpm exec wrangler --version` 有输出 |
+| 2 | 登录 Cloudflare | `pnpm exec wrangler login` | `wrangler whoami` 显示你的邮箱 |
+| 3 | 一键建资源 + 部署后端与后台 | `pnpm setup`，三问依次是**前台地址**、**后台地址**、**API 地址**（绑了自定义域名就填它，留空则用 `*.workers.dev`） | 结尾打印 API 与后台两个 URL；`GET <API>/api/health` 回 `ok:true` |
+| 4 | 建站长账号 | 打开后台地址。**库里没有账号时登录页会自动变成「建为站长并登录」**，填邮箱 + 两遍密码 | 进仪表盘；`GET <API>/api/auth/init-status` 变 `pending:false` |
+| 5 | 后台「设置」 | `siteUrl` = 前台域名、`mediaPublicUrl` = API 地址、发信方式（SMTP/Resend/Cloudflare） | 「发信方式」页的「发一封测试信」收到 |
+| 6 | 生成内容仓库 | `pnpm create:site`（在 zero-stack 里跑，生成到同级目录） | 目录里有 `hugo.toml`、`content/`（含 home/about/links/… 全部页面分区）、`themes/zero` 子模块 |
+| 7 | 本地验证前台 | `cd <内容仓库> && hugo server -D` | 浏览器逐个点导航：`/home/ /about/ /links/ /moments/ /posts/…` 都不 404，文章页有评论框 |
+| 8 | 部署前台 | 推到 GitHub → Cloudflare Pages 建项目（构建命令 `hugo --gc --minify`，输出 `public`）→ 绑自定义域名 | 线上首页能 `grep -o "designed by 知止"`；文章页有 `zero-comments…js` |
+| 9 | 放行前台域名 | 把第 8 步的域名加进 `packages/api/wrangler.jsonc` 的 `ALLOWED_ORIGINS`，然后 `cd packages/api && npx wrangler deploy` | `curl -X OPTIONS <API>/api/comments -H "Origin: https://你的前台域名" -i` 响应里有 `Access-Control-Allow-Origin` |
+| 10 | 打通后台写仓库 | Worker secret `GITHUB_TOKEN`（Fine-grained PAT：勾上这个仓库 + Contents 读写），后台「设置 → 内容仓库」填 owner/repo/branch | 后台「前端管理」改一项能保存，且 GitHub 上出现对应提交 |
+| 11 | 迁移旧评论（可选） | `pnpm migrate:waline`，见 [第 7 节](#7-迁移旧评论数据) | 后台「评论」里旧评论条数对得上 |
+| 12 | 备份 | `cd packages/api && npx wrangler d1 export zero-db --remote --file=backup.sql` | 文件非空 |
+
+第 3、4、9、10 步是新手最容易卡住的地方，各自的报错与自查见第 10 节。
+
+---
+
 ## 1. 需要准备什么
 
 | 项目 | 要求 |
 |---|---|
-| Node.js | >= 20 |
+| Node.js | >= 22（wrangler 4.x 强制，低于 22 会在 `wrangler deploy` 时报错）|
 | 包管理 | pnpm >= 9（根目录有 `pnpm-workspace.yaml`） |
 | Cloudflare 账户 | 已开通 Workers、Pages、D1、KV、R2、Queues 免费额度即可起步 |
 | wrangler | 仓库已作为 devDependency 安装，无需全局安装 |
@@ -182,8 +205,10 @@ pnpm create:site
 ```
 
 向导会问站点名称、GitHub 用户名、仓库名、API 地址、站点域名、主题仓库地址，然后在 **zero-stack 的同级目录**
-生成一个可直接推送的 Hugo 仓库：`hugo.toml`（含 `params.apiBaseURL` 与各功能开关）、示例文章与时刻、
-`data/friends.yml`、`.gitignore`、`.github/workflows/deploy.yml`、`README.md`，并在本地 `git init` + 提交。
+生成一个可直接推送的 Hugo 仓库：`hugo.toml`（含 `params.apiBaseURL` 与各功能开关）、落地页 `content/_index.md`、
+主题需要的**全部页面分区**（`home / about / archive / tools / work / subscribe / account / links / moments / posts`，
+少一个分区导航里就是一条 404）、示例文章与时刻、`data/friends.yml`、`.gitignore`、`.github/workflows/deploy.yml`、
+`README.md`，并在本地 `git init` + 提交。
 
 - 脚本只在本地生成与提交，**不会替你推送远端**，推送指令会打印出来由你自己执行；
 - 内容仓库必须保持 **Private**：里面有未发布的草稿与个人信息；
@@ -198,6 +223,39 @@ pnpm create:site -- --site-name=Demo --github-user=demo --repo=zero-site \
 ```
 
 zero-site 需要配置的 GitHub Secrets：`CF_API_TOKEN`（Pages 编辑权限）、`CF_ACCOUNT_ID`。
+
+### 6.1 主题怎么进内容仓库（三选一，按你的部署方式挑）
+
+主题的模板在 `zero-theme/layouts/` 下，构建时必须能在 `themes/zero` 或 Hugo Module 里找到它，
+否则 hugo 会用内置空主题，产出一张没有任何样式的骨架页（页面能打开、什么都不显示，很容易误判成"配置没生效"）。
+
+| 方式 | 怎么做 | 适用 | 注意 |
+|---|---|---|---|
+| **Git Submodule**（`create:site` 默认） | `git submodule add https://github.com/AUkarl/zero-theme themes/zero` | 本地构建 + GitHub Actions 构建（模板里已带 `submodules: recursive`） | 换机器 / 重新 clone 后要 `git submodule update --init --recursive`；Cloudflare Pages 的 git 构建**不会**自动拉子模块，用 Pages 构建就得在构建命令里自己加一句 |
+| **复制目录** | 把主题仓库内容复制进 `themes/zero`（不要 `exampleSite`） | 最省事，任何 CI 都能构建 | 升级主题 = 再复制一次；复制后本地要重启 hugo |
+| **Hugo Modules** | `hugo mod init github.com/你/仓库 && hugo mod get -u github.com/AUkarl/zero-theme`，配置里写 `[module.imports]` | 想一条命令升级主题 | **需要 `go` 命令在 `PATH` 里**（见下），CI 的构建镜像也得有 Go |
+
+关于 Go：**装在哪一个盘都无所谓**，Hugo 只按 `PATH` 找 `go.exe`，不读 `GOROOT`、也不看注册表。
+所以 `E:\Program Files\Go`、`D:\Go`、`C:\Go` 都能用，只要把里面的 `bin` 目录加进 `PATH`：
+
+```powershell
+# Windows PowerShell：把 <Go 安装目录>\bin 换成你实际的安装路径
+$env:PATH += ";E:\Program Files\Go\bin"          # 只对当前窗口生效，先验证
+go version                                        # 有输出就说明找得到
+setx PATH "$env:PATH"                             # 确认没问题后写回用户 PATH，重开终端生效
+```
+
+```bash
+# macOS / Linux（brew 安装通常在 /opt/homebrew/bin 或 /usr/local/bin，已在 PATH 里，无需设置）
+export PATH="$PATH:/usr/local/go/bin" && go version
+```
+
+```powershell
+# 网络到不了 proxy.golang.org 时，让 Go 直接走 git 拉取
+setx GOPRIVATE "github.com/AUkarl/*"
+```
+
+如果不想装 Go、也不想动 PATH，就用上表的「复制目录」或「Git Submodule + 本地构建」，两者都不依赖 Go。
 
 ---
 

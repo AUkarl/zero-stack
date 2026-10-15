@@ -34,7 +34,9 @@ function headers(token: string, accept: string): Record<string, string> {
   };
 }
 
-async function readError(res: Response): Promise<string> {
+/** 出错时把「到底打到哪个仓库、哪条分支、哪个文件」一起说清楚：
+    403 / 404 十有八九是 owner、repo 或分支在后台填错了，光看 GitHub 的原文猜不出来。 */
+async function readError(res: Response, target: { owner: string; repo: string; branch: string; path?: string }): Promise<string> {
   let detail = '';
   try {
     const body = (await res.json()) as { message?: string; errors?: { message: string }[] };
@@ -43,7 +45,8 @@ async function readError(res: Response): Promise<string> {
   } catch {
     detail = res.statusText;
   }
-  if (res.status === 401) return 'GitHub 令牌无效或已过期，请重新生成并更新 GITHUB_TOKEN 密钥';
+  const where = `（目标：${target.owner}/${target.repo}@${target.branch}${target.path ? `:${target.path}` : ''}）`;
+  if (res.status === 401) return `GitHub 令牌无效或已过期，请重新生成并更新 GITHUB_TOKEN 密钥${where}`;
   if (res.status === 403) {
     // GitHub 对「认证通过但没这个仓库的权限」统一回 403 Forbidden（不回 404，避免泄露仓库是否存在），
     // 绝大多数情况是 fine-grained PAT 没把目标仓库勾进 Selected repositories，或没给 Contents: Read and write。
@@ -51,11 +54,11 @@ async function readError(res: Response): Promise<string> {
       `GitHub 拒绝访问（403）：${detail || 'Forbidden'}。` +
       '逐项确认：① 令牌的账号就是 githubOwner 本人；② Fine-grained PAT 要在 Selected repository 里显式加上这个仓库，' +
       '且 Permissions → Contents = Read and write（Only select repositories 里没列到的仓库就是 403）；' +
-      '③ Classic PAT 要有 repo 作用域（私密仓库没有 repo 就是 403）；④ 账号若开了 IP allow list 或 SAML SSO，还要给这个令牌/IP 授权。'
+      `③ Classic PAT 要有 repo 作用域（私密仓库没有 repo 就是 403）；④ 账号若开了 IP allow list 或 SAML SSO，还要给这个令牌/IP 授权${where}`
     );
   }
-  if (res.status === 404) return `仓库或路径不存在：${detail}`;
-  return `GitHub ${res.status}：${detail}`;
+  if (res.status === 404) return `仓库或路径不存在：${detail}${where}`;
+  return `GitHub ${res.status}：${detail}${where}`;
 }
 
 /** 取当前文件内容与 sha，Hugo 的 md 是 UTF-8 文本，直接按 content 接口读 */
@@ -63,7 +66,7 @@ export async function readFile(input: Omit<CommitInput, 'content' | 'message'>):
   const url = `${API}/repos/${input.owner}/${input.repo}/contents/${encodeURIComponentPath(input.path)}?ref=${encodeURIComponent(input.branch)}`;
   const res = await fetch(url, { headers: headers(input.token, 'application/vnd.github+json') });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(await readError(res));
+  if (!res.ok) throw new Error(await readError(res, input));
 
   const body = (await res.json()) as { content?: string; encoding?: string; sha: string };
   const text = body.content ? atob(body.content.replace(/\n/g, '')) : '';
@@ -86,7 +89,7 @@ export async function writeFile(input: CommitInput): Promise<CommitResult> {
     // 这次反正已经把文件读出来了，顺手比一下内容：一样的话就不提交。
     // 定时任务天天导出同一份统计，省掉空提交也就省掉一次 Pages 构建。
     if (body.content) current = atob(body.content.replace(/\n/g, ''));
-  } else if (probe.status !== 404) return { success: false, error: await readError(probe) };
+  } else if (probe.status !== 404) return { success: false, error: await readError(probe, input) };
 
   if (current !== undefined && current === input.content) {
     return { success: true, sha, path: input.path, unchanged: true };
@@ -107,7 +110,7 @@ export async function writeFile(input: CommitInput): Promise<CommitResult> {
     }),
   });
 
-  if (!res.ok) return { success: false, error: await readError(res) };
+  if (!res.ok) return { success: false, error: await readError(res, input) };
   const body = (await res.json()) as { commit: { sha: string }; content: { path: string } };
   return { success: true, sha: body.commit.sha, path: body.content.path };
 }
@@ -117,7 +120,7 @@ export async function deleteFile(input: { owner: string; repo: string; path: str
   const url = `${API}/repos/${input.owner}/${input.repo}/contents/${path}?ref=${encodeURIComponent(input.branch)}`;
   const probe = await fetch(url, { headers: headers(input.token, 'application/vnd.github+json') });
   if (probe.status === 404) return { success: false, error: '文件不存在' };
-  if (!probe.ok) return { success: false, error: await readError(probe) };
+  if (!probe.ok) return { success: false, error: await readError(probe, input) };
   const { sha } = (await probe.json()) as { sha: string };
 
   const res = await fetch(`${url}&sha=${sha}`, {
@@ -125,7 +128,7 @@ export async function deleteFile(input: { owner: string; repo: string; path: str
     headers: headers(input.token, 'application/vnd.github+json'),
     body: JSON.stringify({ message: input.message, branch: input.branch, sha }),
   });
-  if (!res.ok) return { success: false, error: await readError(res) };
+  if (!res.ok) return { success: false, error: await readError(res, input) };
   return { success: true };
 }
 
@@ -133,7 +136,7 @@ export async function deleteFile(input: { owner: string; repo: string; path: str
 export async function listDir(input: { owner: string; repo: string; path: string; branch: string; token: string }): Promise<{ name: string; path: string; type: 'file' | 'dir' }[]> {
   const url = `${API}/repos/${input.owner}/${input.repo}/contents/${encodeURIComponentPath(input.path)}?ref=${encodeURIComponent(input.branch)}`;
   const res = await fetch(url, { headers: headers(input.token, 'application/vnd.github+json') });
-  if (!res.ok) throw new Error(await readError(res));
+  if (!res.ok) throw new Error(await readError(res, input));
   const body = (await res.json()) as { name: string; path: string; type: string }[];
   if (!Array.isArray(body)) return [];
   return body.map((e) => ({ name: e.name, path: e.path, type: e.type === 'dir' ? 'dir' : 'file' }));
