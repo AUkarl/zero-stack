@@ -317,7 +317,8 @@ pnpm check   # 本地跑同一套校验
 ## 11. 上线后待办
 
 - [ ] 后台「设置」逐项确认：站点信息、语言、评论与点赞开关、订阅双重确认、头像模板、SEO 默认值
-- [ ] `zero-site` 的 `hugo.toml` 里 `params.apiBaseURL` 指向正式 worker 地址（自定义域名更好）
+- [ ] `zero-site` 里 `params.apiBaseURL` 指向正式 worker 地址（自定义域名更好）。`pnpm create:site` 生成的仓库写在根 `hugo.toml`，本仓库自带的示例站在 `config/_default/params.toml` —— 两处都只有这一个键，留空 = 整站退回纯静态（不加载评论组件、不发任何请求）
+- [ ] 后台「设置」填 `siteUrl`（前台正式域名）与 `mediaPublicUrl`（同一个 API 地址），并把前台域名加进 `ALLOWED_ORIGINS` 后 `pnpm deploy:api`
 - [ ] 前台页面验证评论、点赞、订阅、时刻、友链与统计埋点
 - [ ] 停用 Waline / Twikoo 的旧部署与 CDN 引用
 - [ ] 需要监控时把 `/api/health` 加进 Uptime 检查
