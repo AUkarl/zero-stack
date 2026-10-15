@@ -217,6 +217,25 @@ comments: true
 <!-- 左邻右舍与站点联盟的名单由 zero-cms 后台「友链」维护，此页只写要求与说明。 -->
 `;
 
+/**
+ * 主题的每个页面都靠 `layouts/<分区>/list.html` 渲染，少了 `content/<分区>/_index.md`
+ * 那条路由就是 404（导航里的 主页 / 关于 / 归档 / 工具 / 工坊 / 订阅 / 账号 都是这种页）。
+ * 正文一律留空：这些页显示的内容来自 data/*.json 与后台「前端管理」，Markdown 只是占位。
+ */
+const SECTIONS: [string, string][] = [
+  ['home', '主页'],
+  ['about', '关于'],
+  ['archive', '归档'],
+  ['tools', '工具'],
+  ['work', '工坊'],
+  ['subscribe', '邮箱订阅'],
+  ['account', '账号'],
+];
+
+function sectionIndex(dir: string, title: string): string {
+  return `---\ntitle: "${title}"\ntype: "${dir}"\nlayout: "list"\n---\n`;
+}
+
 async function main(): Promise<void> {
   console.log('\n🏗️  生成 zero-site（私密内容仓库）\n');
   const a = { ...PRESET, ...(await ask(QUESTIONS)) } as Answers;
@@ -227,6 +246,7 @@ async function main(): Promise<void> {
 
   step('创建目录与示例内容');
   const dirs = ['content/posts', 'content/moments', 'content/links', 'static/images', 'data', '.github/workflows'];
+  for (const [dir] of SECTIONS) dirs.push(`content/${dir}`);
   for (const d of dirs) mkdirSync(resolve(siteDir, d), { recursive: true });
   info(siteDir);
 
@@ -236,6 +256,9 @@ async function main(): Promise<void> {
   write(rel('content/moments/first-moment.md'), SAMPLE_MOMENT);
   write(rel('data/friends.yml'), FRIENDS_DATA);
   write(rel('content/links/_index.md'), LINKS_INDEX);
+  // 落地页（主题的 layouts/index.html）：空 front matter 即可，进去按回车到 /home/
+  write(rel('content/_index.md'), '---\n---\n');
+  for (const [dir, title] of SECTIONS) write(rel(`content/${dir}/_index.md`), sectionIndex(dir, title));
   write(rel('static/images/.gitkeep'), '');
   write(rel('.gitignore'), `.hugo_build.lock
 public/
