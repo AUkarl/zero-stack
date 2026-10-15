@@ -202,7 +202,8 @@ export async function githubExchange(
 
   try {
     const user = await fetch('https://api.github.com/user', {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+      // GitHub 缺 User-Agent 就回 403；Workers 的 fetch 默认不带，必须自己加
+      headers: { 'User-Agent': 'zero-cms (cloudflare-workers)', Authorization: `Bearer ${token.trim()}`, Accept: 'application/vnd.github+json' },
     });
     if (!user.ok) return { error: `读取 GitHub 账号信息失败（HTTP ${user.status}）` };
     const profile = (await user.json().catch(() => null)) as { id?: number; login?: string; avatar_url?: string; email?: string | null } | null;
@@ -232,7 +233,7 @@ export async function githubProofValid(env: Env, row: typeof accounts.$inferSele
   if (!row?.accessToken) return false;
   try {
     const res = await fetch('https://api.github.com/user', {
-      headers: { Authorization: `Bearer ${row.accessToken}`, Accept: 'application/vnd.github+json' },
+      headers: { 'User-Agent': 'zero-cms (cloudflare-workers)', Authorization: `Bearer ${row.accessToken.trim()}`, Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) return false;
     const body = (await res.json().catch(() => null)) as { id?: number } | null;

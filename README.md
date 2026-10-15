@@ -453,4 +453,5 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 
 ## 许可证
 
-MIT。第三方依赖各自的许可证见各包的 `package.json`。
+Apache-2.0，全文见仓库根目录的 `LICENSE`（专利授权条款比 MIT 更明确，商用与二次分发都更稳）。
+第三方依赖各自的许可证见各包的 `package.json`；配套的 `zero-theme` 是 MIT。

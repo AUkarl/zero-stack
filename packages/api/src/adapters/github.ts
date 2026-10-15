@@ -27,7 +27,11 @@ const API = 'https://api.github.com';
 
 function headers(token: string, accept: string): Record<string, string> {
   return {
-    Authorization: `Bearer ${token}`,
+    /* GitHub 的 REST API 硬性要求 User-Agent，缺了直接 403 Forbidden —— 与令牌权限无关，
+       而 Cloudflare Workers 的 fetch 默认不发 User-Agent，所以必须自己带上。 */
+    'User-Agent': 'zero-cms (cloudflare-workers)',
+    // 用 wrangler secret put 粘贴时很容易带上尾部的 \r\n，带着它 GitHub 会当成非法凭据
+    Authorization: `Bearer ${token.trim()}`,
     Accept: accept,
     'X-GitHub-Request-Type': 'zero-cms',
     'Content-Type': 'application/json',
