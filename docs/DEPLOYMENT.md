@@ -304,6 +304,7 @@ pnpm check   # 本地跑同一套校验
 | 后台「前端管理」保存报「未配置内容仓库」 | 这一页写的是站点的 `data/*.json`，需要仓库写回通道：`GITHUB_TOKEN` + `githubOwner/githubRepo`，或本地的 `GIT_LOCAL_DIR`（本地开发还要 `GIT_LOCAL_HTTP` 指向 `pnpm repo:bridge`） |
 | 后台保存文章成功、仓库没有变化 | 未配置 `GITHUB_TOKEN`，或 `githubOwner/githubRepo/githubBranch/githubContentDir` 与实际不符；看 worker 日志 |
 | 评论组件在页面里不显示 | `apiBaseURL` 没配或指向错误协议；浏览器控制台看是否有 CORS 报错 |
+| 注册/改密码报 `PBKDF2 failed: iteration counts above 100000 are not supported` | Cloudflare 的 Web Crypto 把 PBKDF2 迭代次数硬上限设在 100000，本地 workerd 走 Node 的 crypto 不报错，只有上线才暴露。`packages/api/src/lib/crypto.ts` 的 `PBKDF2_ITERATIONS` 必须 ≤ 100000；口令串本身带迭代次数（`pbkdf2$次数$盐$摘要`），改小不影响老账号登录 |
 | Cron 从未执行 | `wrangler.jsonc` 的 `triggers.crons` 被删；Workers Paid 才能自定义多个 cron，免费额度只有一条 |
 
 ---

@@ -101,7 +101,12 @@ export async function verifyToken<T>(secret: string, token: string): Promise<T |
 
 /* ------------------------- 口令哈希 ------------------------- */
 
-const PBKDF2_ITERATIONS = 150_000;
+/**
+ * Cloudflare 的 Web Crypto 实现把 PBKDF2 迭代次数硬上限设在 100000，
+ * 超过就直接抛「iteration counts above 100000 are not supported」——
+ * 本地 workerd 走的是 Node 的 crypto，不报错，所以只有上线才暴露。
+ */
+const PBKDF2_ITERATIONS = 100_000;
 
 async function derive(password: string, salt: Uint8Array, iterations: number): Promise<string> {
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
@@ -120,7 +125,13 @@ export async function verifyPassword(password: string, stored: string): Promise<
   if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
   const iterations = Number(parts[1]);
   if (!Number.isFinite(iterations) || iterations <= 0) return false;
-  return timingSafeEqual(parts[3]!, await derive(password, bytesFromHex(parts[2]!), iterations));
+  try {
+    return timingSafeEqual(parts[3]!, await derive(password, bytesFromHex(parts[2]!), iterations));
+  } catch {
+    // 老串里的迭代次数超过当前运行时上限（比如 150000）时 deriveBits 会抛：
+    // 当成密码不对处理，别把 500 抛给用户。
+    return false;
+  }
 }
 
 /* ------------------------- 头像与匿名指纹 ------------------------- */
