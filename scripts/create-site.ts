@@ -95,8 +95,11 @@ title = "${a.siteName}"
 theme = "zero"
 defaultContentLanguage = "zh"
 hasCJKLanguage = true
-# 时刻与文章的时间由后台自由填写，将来日期也要立刻上线
-enableFuture = true
+
+# 时刻与文章的时间由后台自由填写，将来日期也要立刻上线。
+# Hugo 0.146+ 只认 [build].future，写在顶层的 enableFuture 会被静默忽略。
+[build]
+  future = true
 
 [params]
   # 后端地址：zero-api 部署后填入
