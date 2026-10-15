@@ -16,6 +16,7 @@ import { createDb } from '../db/client';
 import { authorRequests, postDrafts, users } from '../db/schema';
 import { writeAudit } from '../services/audit';
 import { upsertAuthor, type AuthorSocialRow } from '../services/authors';
+import { withAdminAuthorBits } from '../services/admin-author';
 import { getConfig, getConfigBool } from '../services/config';
 import { writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild } from '../services/git';
@@ -41,9 +42,13 @@ function toYamlString(v: string): string {
  * 文章署名用的作者标识：认证过的账号用 handle（前台据此取作者卡片与认证徽章，
  * 也能在 data/authors.yaml 里查到资料）；没认证的保持原有兜底顺序。
  */
-export function authorKeyFor(row: { name: string | null; handle: string | null; authorVerified: boolean | null } | undefined): string {
-  if (row?.authorVerified && row.handle) return row.handle;
-  return row?.handle || row?.name || '读者';
+export function authorKeyFor(
+  row: { role?: string | null; name: string | null; handle: string | null; authorVerified: boolean | null } | undefined,
+): string {
+  // 管理员恒为认证作者：handle 由 withAdminAuthorBits 补齐（库里没有时按注册信息推一个）
+  const me = row ? withAdminAuthorBits(row) : row;
+  if (me?.authorVerified && me.handle) return me.handle;
+  return me?.handle || me?.name || '读者';
 }
 
 /**
@@ -181,7 +186,7 @@ draftsAdmin.post('/:id/approve', async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const path = await postPath(c.env, row);
   const authorRows = await db
-    .select({ name: users.name, handle: users.handle, authorVerified: users.authorVerified })
+    .select({ role: users.role, name: users.name, handle: users.handle, authorVerified: users.authorVerified, accountSlug: users.accountSlug })
     .from(users)
     .where(eq(users.id, row.userId))
     .limit(1);
@@ -241,7 +246,7 @@ draftsAdmin.post('/:id/publish', async (c) => {
 
   const path = await postPath(c.env, row);
   const authorRows = await db
-    .select({ name: users.name, handle: users.handle, authorVerified: users.authorVerified })
+    .select({ role: users.role, name: users.name, handle: users.handle, authorVerified: users.authorVerified, accountSlug: users.accountSlug })
     .from(users)
     .where(eq(users.id, row.userId))
     .limit(1);

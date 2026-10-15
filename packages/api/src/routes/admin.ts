@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { createDb } from '../db/client';
 import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
 import { getAllConfig, getConfig, isConfigKey, isSecretKey, maskSecrets, setConfig } from '../services/config';
-import { LOGIN_POLICIES } from '../services/account-shared';
+import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
+import { ensureAdminAuthorIdentity } from '../services/admin-author';
+import { avatarForEmail, emailMd5 } from '../lib/avatar';
 import { listAudit, writeAudit } from '../services/audit';
 import {
   AUTHORS_FILE_DEFAULT,
@@ -25,7 +27,7 @@ import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { deleteFile, listDir, readFile, writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild } from '../services/git';
-import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, writeRepoFile } from '../services/repo';
+import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, deleteMediaObject, objectPath, type MediaBucket } from '../services/media';
 import {
   buildMarkdown,
@@ -72,6 +74,9 @@ const configWriteSchema = z.record(z.string(), z.union([z.string(), z.number(), 
 
 /** 登录策略以 LOGIN_POLICIES 为唯一口径：写错值会静默退回单密码，必须在入口就拦住 */
 const POLICY_VALUES: string[] = LOGIN_POLICIES;
+
+/** 仪表盘数文章/时刻时的上限：超过就标 capped，避免有人把整站仓库塞满文件后开一次后台烧光 D1/GitHub 额度 */
+const CONTENT_COUNT_CAP = 2000;
 
 app.patch('/config', async (c) => {
   const admin = requireAdmin(c);
@@ -1209,14 +1214,31 @@ app.get('/authors/file', async (c) => {
   }
 });
 
-/** 会话里的管理员没有 handle，作者表按 handle 建键，所以现查一次账号行 */
-async function adminHandle(env: Env, userId: string): Promise<string> {
+/**
+ * 站长作者资料的头像兜底：本人上传的图 → 后台配的头像模板（{hash} / {email}）→ 按邮箱算的 Cravatar。
+ * 与 account.ts 的 avatarOf 同一条优先级，只是这里必须回一个非空串（作者表头像字段必填）。
+ */
+async function authorAvatar(env: Env, row: { image: string | null; email: string } | null): Promise<string> {
+  if (!row) return '';
+  if (row.image) return row.image;
+  const template = (await getConfig(env, 'avatarTemplate'))?.trim();
+  if (template) return template.replaceAll('{hash}', emailMd5(row.email)).replaceAll('{email}', encodeURIComponent(row.email));
+  return avatarForEmail(row.email);
+}
+
+/**
+ * 会话里的管理员没有 handle，作者表按 handle 建键，所以现查一次账号行。
+ * 顺手补齐：管理员这一行的 handle / 权限位 / 用户组如果还是空的（老库、或注册后才加上的这套逻辑），
+ * 这里补完再返回，「我的信息 → 站长作者资料」就不会再因为缺标识而保存不了。
+ */
+async function adminHandle(env: Env, userId: string): Promise<{ handle: string; clash: boolean }> {
+  const repair = await ensureAdminAuthorIdentity(env, userId);
   const rows = await createDb(env)
     .select({ handle: users.handle })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  return resolveAuthorHandle(rows[0]?.handle ?? '');
+  return { handle: resolveAuthorHandle(rows[0]?.handle ?? repair.handle), clash: repair.clash };
 }
 
 /**
@@ -1225,9 +1247,9 @@ async function adminHandle(env: Env, userId: string): Promise<string> {
  */
 app.get('/authors/me', async (c) => {
   const admin = requireAdmin(c);
-  const handle = await adminHandle(c.env, admin.id);
+  const { handle, clash } = await adminHandle(c.env, admin.id);
   const profile = handle ? await readAuthorProfile(c.env, handle) : null;
-  return ok({ handle, profile, defaultAuthor: (await getConfig(c.env, 'defaultAuthor')) ?? '' });
+  return ok({ handle, profile, clash, defaultAuthor: (await getConfig(c.env, 'defaultAuthor')) ?? '' });
 });
 
 /**
@@ -1251,21 +1273,35 @@ app.put('/authors/me', async (c) => {
     })
     .safeParse(body);
   if (!parsed.success) fail(400, '作者资料格式不对：昵称、头像、邮箱为必填');
-  const handle = await adminHandle(c.env, admin.id);
-  if (!handle) fail(400, '你的账号还没有作者标识（handle），先到「用户」页补一个');
+  const { handle, clash } = await adminHandle(c.env, admin.id);
+  // 标识按注册信息推出来后基本不会缺；真缺了只可能是推出来的值被别的账号占了（clash），
+  // 这时给一个能操作的说明，而不是原来那句把人赶去看不到的那一行的死循环提示。
+  if (!handle) fail(400, clash ? '推出来的作者标识已被其它账号占用，请到「用户」页给站长这一行改一个标识' : '这个账号还没有作者标识，请到「用户」页补一个');
 
   const f = parsed.data;
+  /*
+   * 作者表要求 name / avatar / email 三项非空（前台卡片与 Gravatar 都靠它们），
+   * 而站长的账号资料里 image / bio 经常是空的。这里按「账号资料铺默认值」补：
+   * 空着就用账号的昵称 / 头像（没有头像就用后台配的 Gravatar 模板）/ 注册邮箱，
+   * 免得第一次保存被「头像必填」挡在门外。
+   */
+  const accountRow = await createDb(c.env).select().from(users).where(eq(users.id, admin.id)).limit(1);
+  const me = accountRow[0] ?? null;
+  // 作者表的头像必填（前台卡片与 Gravatar 都靠它），留空时按账号资料逐级兜底
+  const fallbackAvatar = await authorAvatar(c.env, me);
   let written;
   try {
     written = await upsertAuthor(
       c.env,
       {
         handle,
-        name: f.name.trim(),
-        avatar: f.avatar.trim(),
-        email: f.email.trim(),
-        bioZh: f.bio ?? null,
-        website: f.website ?? null,
+        name: f.name.trim() || me?.name || '站长',
+        avatar: f.avatar.trim() || fallbackAvatar,
+        email: f.email.trim() || me?.email || '',
+        bioZh: f.bio ?? me?.bio ?? null,
+        website: f.website ?? me?.website ?? null,
+        // 站长本来就是认证作者：这一条写进作者表，作者页与署名的身份口径才不会和后台反着来
+        verified: true,
         social: f.social ?? null,
         donate: f.donate ?? null,
       },
@@ -1332,7 +1368,14 @@ app.get('/health-detail', async (c) => {
   const env = c.env;
   const db = createDb(env);
   const started = Date.now();
-  const rows = await db
+
+  /*
+   * 定时任务：每个任务取最近一次执行，全量返回。
+   * 之前是「最近 20 条流水里过滤掉 friends:feed 再截前 6 条」，前端按数组遍历、
+   * 这里给的是 { recent: [...] } 对象，结果 {#if health.checks.cron?.length} 永远为假，
+   * 表格里明明跑过的任务也一律显示「尚未执行过」。
+   */
+  const jobs = await db
     .select({
       name: jobRuns.name,
       status: jobRuns.status,
@@ -1341,42 +1384,84 @@ app.get('/health-detail', async (c) => {
       finishedAt: jobRuns.finishedAt,
     })
     .from(jobRuns)
-    .orderBy(desc(jobRuns.startedAt))
-    .limit(20);
+    .where(
+      sql`${jobRuns.startedAt} = (select max(j2.started_at) from job_runs j2 where j2.name = ${jobRuns.name})`,
+    )
+    .orderBy(desc(jobRuns.startedAt));
 
-  const checks: Record<string, unknown> = { apiLatencyMs: Date.now() - started };
+  const checks: Record<string, unknown> = { apiLatencyMs: 0 };
   try {
     const r = await env.DB.prepare('select 1 as ok').first();
-    checks.d1 = { ok: Boolean(r), detail: 'ok' };
+    checks.d1 = { ok: Boolean(r), detail: '连接正常' };
   } catch (e) {
     checks.d1 = { ok: false, detail: e instanceof Error ? e.message : String(e) };
   }
-  try {
-    const listed = await env.R2.list({ limit: 5 });
-    checks.r2 = { ok: true, detail: `对象 ${listed.objects.length} 个（示例）` };
-  } catch (e) {
-    checks.r2 = { ok: false, detail: e instanceof Error ? e.message : String(e) };
-  }
-  try {
-    const keys = await env.CACHE.list({ limit: 100 });
-    checks.kv = { ok: true, detail: `缓存键 ${keys.keys.length} 个` };
-  } catch (e) {
-    checks.kv = { ok: false, detail: e instanceof Error ? e.message : String(e) };
-  }
+
+  /* R2 / KV 的 list 是分页的：limit 只是单页大小，不是总量。
+     以前把「这一页数到几个」当成总量显示（对象 5 个 / 缓存键 100 个），
+     现在翻完所有分页；超过 50 页（约 5 万条）就停下来标「50000+」。 */
+  const tally = async (kind: 'r2' | 'kv'): Promise<{ ok: boolean; detail: string; count: number; capped: boolean }> => {
+    try {
+      let count = 0;
+      let cursor: string | undefined;
+      let capped = false;
+      for (let page = 0; page < 50; page++) {
+        if (kind === 'r2') {
+          const listed = await env.R2.list({ cursor, limit: 1000 });
+          count += listed.objects.length;
+          capped = listed.truncated;
+          cursor = listed.truncated ? listed.cursor : undefined;
+        } else {
+          const listed = await env.CACHE.list({ cursor, limit: 1000 });
+          count += listed.keys.length;
+          capped = listed.list_complete === false;
+          cursor = listed.list_complete === false ? listed.cursor : undefined;
+        }
+        if (!cursor) break;
+      }
+      return { ok: true, detail: `${count.toLocaleString('zh-CN')}${capped ? '+' : ''} 个`, count, capped };
+    } catch (e) {
+      return { ok: false, detail: e instanceof Error ? e.message : String(e), count: 0, capped: false };
+    }
+  };
+  const [r2, kv] = await Promise.all([tally('r2'), tally('kv')]);
+  checks.r2 = { ok: r2.ok, detail: r2.detail };
+  checks.kv = { ok: kv.ok, detail: kv.detail };
+
   checks.emailQueue = { ok: Boolean(env.EMAIL_QUEUE), detail: env.EMAIL_QUEUE ? '已绑定' : '未绑定队列' };
-  checks.cron = { recent: rows.filter((r) => r.name !== 'friends:feed').slice(0, 6) };
+  checks.cron = jobs;
+
+  /* 发信凭据：后台填在 D1 里的密码同样算数（邮件发送就是按「D1 优先、其次 wrangler secret」取的），
+     只看 env.SMTP_PASSWORD 会让用后台密码的站永远显示红灯。 */
+  const provider = (await getConfig(env, 'emailProvider')) ?? 'smtp';
+  const credentialSource =
+    provider === 'resend'
+      ? (await getConfig(env, 'resendApiKey'))
+        ? '后台已填'
+        : env.RESEND_API_KEY
+          ? 'wrangler secret'
+          : '未配置'
+      : provider === 'cloudflare'
+        ? (await getConfig(env, 'cloudflareEmailToken'))
+          ? '后台已填'
+          : env.CF_EMAIL_API_TOKEN
+            ? 'wrangler secret'
+            : '未配置'
+        : (await getConfig(env, 'smtpPassword'))
+          ? '后台已填'
+          : env.SMTP_PASSWORD
+            ? 'wrangler secret'
+            : '未配置';
   checks.email = {
-    provider: await getConfig(env, 'emailProvider'),
-    host: await getConfig(env, 'smtpHost'),
-    from: await getConfig(env, 'emailFrom'),
-    secretConfigured: Boolean(env.SMTP_PASSWORD || env.RESEND_API_KEY),
+    provider,
+    host: (await getConfig(env, 'smtpHost')) || '',
+    from: (await getConfig(env, 'emailFrom')) || '',
+    secretConfigured: await emailOtpAvailable(env),
+    credentialSource,
   };
 
-  const counts = await db
-    .select({ name: jobRuns.name, status: jobRuns.status, n: sql<number>`count(*)`, last: sql<number>`max(started_at)` })
-    .from(jobRuns)
-    .groupBy(jobRuns.name, jobRuns.status);
-  return ok({ checks, jobs: counts });
+  checks.apiLatencyMs = Date.now() - started;
+  return ok({ checks, jobs });
 });
 
 app.get('/stats', async (c) => {
@@ -1402,16 +1487,31 @@ app.get('/stats', async (c) => {
   });
 });
 
-/** 内容仓库文件数，用来估算文章总量 */
+/**
+ * 文章与时刻的数量：按「设置 → 内容仓库」里的文章目录、时刻目录递归数 .md。
+ * 之前只 listDir 一层（githubContentDir，默认 content），而文章实际在 content/posts/ 下，
+ * 所以仪表盘那个「文章」卡片数出来的永远是 0（或多语言布局下少算一整层）。
+ * 用的就是备份分区同一份递归列举，两处口径不会再分叉。
+ */
 app.get('/stats/content', async (c) => {
   requireAdmin(c);
-  const settings = await repoTarget(c.env);
-  const dir = (await getConfig(c.env, 'githubContentDir')) ?? 'content';
+  const postsDir = (await getConfig(c.env, 'githubPostsDir'))?.trim() || 'content/posts';
+  const momentsDir = (await getConfig(c.env, 'githubMomentsDir'))?.trim() || 'content/moments';
   try {
-    const entries = await listDir({ ...settings, path: dir });
-    return ok({ dir, entries });
+    const target = await repoTarget(c.env);
+    const [posts, moments] = await Promise.all([
+      walkFiles(target, postsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP }),
+      walkFiles(target, momentsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP }),
+    ]);
+    return ok({
+      postsDir,
+      momentsDir,
+      posts: posts.length,
+      moments: moments.length,
+      capped: posts.length >= CONTENT_COUNT_CAP || moments.length >= CONTENT_COUNT_CAP,
+    });
   } catch (e) {
-    return ok({ dir, entries: [], error: e instanceof Error ? e.message : String(e) });
+    return ok({ postsDir, momentsDir, posts: 0, moments: 0, capped: false, error: errorMessage(e) });
   }
 });
 

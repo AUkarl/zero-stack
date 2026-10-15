@@ -26,7 +26,7 @@ zero-stack 是「Hono Worker（zero-api）+ SvelteKit 后台（zero-cms）+ 评�
 | 9 | 放行前台域名 | 把第 8 步的域名加进 `packages/api/wrangler.jsonc` 的 `ALLOWED_ORIGINS`，然后 `cd packages/api && npx wrangler deploy` | `curl -X OPTIONS <API>/api/comments -H "Origin: https://你的前台域名" -i` 响应里有 `Access-Control-Allow-Origin` |
 | 10 | 打通后台写仓库 | Worker secret `GITHUB_TOKEN`（Fine-grained PAT：勾上这个仓库 + Contents 读写），后台「设置 → 内容仓库」填 owner/repo/branch | 后台「前端管理」改一项能保存，且 GitHub 上出现对应提交 |
 | 11 | 迁移旧评论（可选） | `pnpm migrate:waline`，见 [第 7 节](#7-迁移旧评论数据) | 后台「评论」里旧评论条数对得上 |
-| 12 | 备份 | `cd packages/api && npx wrangler d1 export zero-db --remote --file=backup.sql` | 文件非空 |
+| 12 | 备份 | 后台「备份」→「存档到 R2」（全站备份），另外可 `cd packages/api && npx wrangler d1 export zero-db --remote --file=backup.sql` 存一份裸库 | 存档列表里有今天那份，体积非 0 |
 
 第 3、4、9、10 步是新手最容易卡住的地方，各自的报错与自查见第 10 节。
 
@@ -323,6 +323,40 @@ rclone copy r2:旧桶/uploads r2:zero-media/uploads --progress
 
 ---
 
+## 7.5 全站备份：把整站搬到新账号、新仓库
+
+后台「备份」只有**一种**备份 —— 全站。导出的是一份 JSON，十个分区：
+
+| 分区 | 装的是什么 |
+|---|---|
+| 站点设置 | `site_config` 的开关与文案；**密钥与绑定本站域名/仓库坐标的项不进文件** |
+| 主题样式 | 仓库 `data/*.json`（导航、首页、页脚、关于、工坊、时刻页、SEO、站点信息）+ `params.toml` |
+| 文章 / 时刻 | 设置里那两个目录下的全部 `.md`（递归，含子目录） |
+| 友链 | D1 的友链与已抓到的博客动态 + 仓库 `links.yaml` |
+| 订阅名单 | 已确认的订阅邮箱（发信日志与群发记录不备份） |
+| 评论 | 评论正文、层级与评论者身份 |
+| 点赞与收藏 | `reactions`（整表，不再截断）与评论点赞 |
+| 账号 | 普通用户（含密码哈希）与仓库 `authors.yaml`；**管理员账号不导出** |
+| 媒体清单 | R2 里图片的 key、体积、被哪篇文章引用；**图片本体不在文件里** |
+
+### 搬站步骤
+
+1. 旧站：后台「备份」→「存档到 R2」或「导出到本地」，拿到那份 JSON。
+2. 新账号：按第 0 节把 Worker、Pages、D1 建好并跑完迁移，前台内容仓库用 `pnpm create:site` 生成（或先推空仓库）。
+3. 新站后台「设置 → 内容仓库」把 owner / repo / branch 与**文章目录、时刻目录**配成和备份里一致（JSON 顶部的 `origin` 就是旧站的这三个值），并配好 `GITHUB_TOKEN`。
+4. 后台「备份」→「恢复」：选中 JSON → 分区默认全选，**先点「跑演习」**。演习不写任何东西，只回：每区会写多少行、哪些文件同名、配置将改哪几项（本站现值 → 备份值）。
+5. 确认后点「推送恢复」。同名文件默认保持本站不动；要让旧稿盖掉新站的示例稿，就勾「覆盖同名文件」。
+   恢复完会自动调一次 Pages 构建 Hook（没配就提示等下次自动构建）。
+6. 手工补三样不进文件的东西：各类密钥（SMTP / Resend / Cloudflare / 审核服务商 / 翻译）、
+   绑定本站的配置（`siteUrl`、仓库坐标、媒体桶）、以及图片本体（按媒体清单 `wrangler r2 cp` 过去，或让新桶同名）。
+7. 新站后台登录并注册第一个账号 —— 备份里的管理员账号刻意不导，避免「备份文件 = 一个能登录别人后台的账号」。
+   普通用户与评论的作者归属照常带过来。
+
+数据表类分区是**主键已存在就跳过**，不覆盖本站记录；附属计数（Waline 的表态数与浏览量）按只增不减并入。
+v1 的旧备份文件（只有 `tables`）会被明确拒绝，评论可以走「导入其它评论系统的历史评论」那一栏单独搬。
+
+---
+
 ## 8. 本地开发
 
 ```bash
@@ -387,7 +421,11 @@ pnpm check   # 本地跑同一套校验
 | 评论组件在页面里不显示 | `apiBaseURL` 没配或指向错误协议；浏览器控制台看是否有 CORS 报错 |
 | 注册/改密码报 `PBKDF2 failed: iteration counts above 100000 are not supported` | Cloudflare 的 Web Crypto 把 PBKDF2 迭代次数硬上限设在 100000，本地 workerd 走 Node 的 crypto 不报错，只有上线才暴露。`packages/api/src/lib/crypto.ts` 的 `PBKDF2_ITERATIONS` 必须 ≤ 100000；口令串本身带迭代次数（`pbkdf2$次数$盐$摘要`），改小不影响老账号登录 |
 | 后台保存内容时 `GitHub 拒绝访问（403）：Forbidden` | GitHub 对「令牌能用但没这个仓库权限」统一回 403（不是 404，防探测）。逐项确认：令牌账号 = `githubOwner`；**Fine-grained PAT 必须在 Selected repository 里显式勾上这个仓库**并给 `Contents: Read and write`（新建的仓库不在旧令牌的选择列表里，就会这样）；Classic PAT 要有 `repo` 作用域；账号开了 IP allow list / SAML 时还要额外授权。自查命令（把 TOKEN 换成你的令牌，不会外泄）：`curl -sI -H "Authorization: Bearer TOKEN" https://api.github.com/repos/<owner>/<repo> | grep -iE "^http|x-oauth-scopes|x-ratelimit-remaining"` —— 403/404 就是令牌看不到该仓库；`x-oauth-scopes` 里应有 `repo`（Classic）或为空但仓库已勾选（Fine-grained） |
-| Cron 从未执行 | `wrangler.jsonc` 的 `triggers.crons` 被删；Workers Paid 才能自定义多个 cron，免费额度只有一条 |
+| Cron 从未执行 | `wrangler.jsonc` 的 `triggers.crons` 被删；Workers Paid 才能自定义多个 cron，免费额度只有一条。注意「运行状况」里这张表是**真读 `job_runs`** 的：库里没有行就确实一次都没跑过（重建过的 D1 要等到下一个 02:00 UTC） |
+| 运行状况的定时任务表永远显示「尚未执行过」 | 已修：接口以前把 cron 包成 `{ recent: [...] }` 对象回给按数组判断的界面，跑过也显示没跑过。若仍显示为空，先 `select name, count(*) from job_runs group by name` 确认库里有没有行 |
+| 仪表盘的「文章」是 0，仓库里明明有稿子 | 已修：以前只列 `content` 这一层，而稿子在 `content/posts/` 下。现在按设置里的文章目录、时刻目录递归数 `.md`，目录填错就先去「设置 → 内容仓库」对一遍 |
+| 发信胶囊红着，但验证码邮件确实发得出去 | 已修：判断凭据时只看了 `wrangler secret`，没算后台「发信方式」里填在 D1 的密码。现在两处任一有值就算绿，胶囊上会写明凭据来源是「后台已填」还是「wrangler secret」 |
+| 后台「用户」页找不到站长自己那一行 | 已修：这一页以前 `where role <> 'admin'` 把管理员过滤掉了，而作者标识（handle）只能在这一页改，「我的信息 → 站长作者资料」又要求先有 handle，成一个死循环。现在默认列出站长那一行（标「站长」、三个权限位常亮置灰、作者标识可改） |
 
 ---
 
@@ -399,7 +437,7 @@ pnpm check   # 本地跑同一套校验
 - [ ] 前台页面验证评论、点赞、订阅、时刻、友链与统计埋点
 - [ ] 停用 Waline / Twikoo 的旧部署与 CDN 引用
 - [ ] 需要监控时把 `/api/health` 加进 Uptime 检查
-- [ ] 备份：`npx wrangler d1 export zero-db --remote --file=backup.sql`
+- [ ] 备份：后台「备份」→「存档到 R2」出一份全站备份（内容与配置都在里面），再 `npx wrangler d1 export zero-db --remote --file=backup.sql` 存一份裸库
 
 ---
 

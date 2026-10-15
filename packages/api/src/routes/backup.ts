@@ -1,6 +1,16 @@
 /**
- * 全站备份的后台口子：导出 / 存档到 R2 / 取回 / 删除 / 导入。
- * 导入默认只做演习（dryRun），确认影响面之后再真写。
+ * 全站备份的后台口子：导出一份 JSON、按分区恢复。
+ *
+ * 路由只剩一条主线：
+ *   GET  /export          导出（?save=1 同时存档到 R2）
+ *   GET  /catalog         分区目录，导入前先给界面渲染勾选清单用
+ *   GET  /list /file      R2 存档的列表、取回
+ *   DELETE /file          删存档
+ *   POST /import          按分区演习 / 恢复
+ *   POST /comments        第三方评论系统（Waline / Twikoo …）的历史评论导入
+ *
+ * 上一版的 scope=core|full 两档、includeSecrets 开关与「最近 N 条高频表」的截断都删了：
+ * 备份只有一种（全站），密钥永不进文件，被备份的表一律整表。
  */
 
 import { Hono } from 'hono';
@@ -8,15 +18,28 @@ import { clientIp } from '../lib/http';
 import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { writeAudit } from '../services/audit';
-import { backupKey, exportBackup, importBackup, pruneBackups, type BackupScope, type ImportOutcome } from '../services/backup';
-import { applyCommentImport, parseCsvRows, planCommentImport, planSummary, type CommentFormat } from '../services/comment-import';
+import {
+  backupKey,
+  exportBackup,
+  importBackup,
+  pruneBackups,
+  sectionCatalog,
+  type ImportOutcome,
+  type SectionId,
+} from '../services/backup';
+import {
+  applyCommentImport,
+  applyCounters,
+  extractCounters,
+  parseCsvRows,
+  planCommentImport,
+  planCounters,
+  planSummary,
+  type CommentFormat,
+} from '../services/comment-import';
 import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
-
-function scopeOf(v: string | undefined): BackupScope {
-  return v === 'full' ? 'full' : 'core';
-}
 
 /** 只允许访问自己的备份目录，别让后台变成任意对象读取器 */
 function safeKey(key: string): string {
@@ -26,23 +49,27 @@ function safeKey(key: string): string {
   return clean;
 }
 
+app.get('/catalog', async (c) => {
+  requireAdmin(c);
+  return ok({ sections: sectionCatalog() });
+});
+
 app.get('/export', async (c) => {
   const admin = requireAdmin(c);
-  const scope = scopeOf(c.req.query('scope'));
-  const includeSecrets = c.req.query('secrets') === '1';
   const save = c.req.query('save') === '1';
+  const note = c.req.query('note') ?? '';
 
-  const { payload, warnings } = await exportBackup(c.env, { scope, includeSecrets });
+  const { payload, warnings } = await exportBackup(c.env, { note });
   await writeAudit(c.env, {
     actor: admin,
     action: 'backup',
-    target: `export:${scope}`,
-    detail: { counts: payload.counts, warnings, saved: save, withSecrets: includeSecrets },
+    target: 'export',
+    detail: { sections: payload.sections.map((s) => ({ id: s.id, counts: s.counts })), warnings, saved: save },
     ip: clientIp(c),
   });
 
   if (!save) {
-    return new Response(JSON.stringify(payload, null, 2), {
+    return new Response(JSON.stringify(payload), {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': `attachment; filename="${backupKey().split('/').pop()}"`,
@@ -53,7 +80,15 @@ app.get('/export', async (c) => {
   const key = backupKey();
   await c.env.R2.put(key, JSON.stringify(payload), { httpMetadata: { contentType: 'application/json' } });
   const removed = await pruneBackups(c.env, 10);
-  return ok({ key, counts: payload.counts, warnings, pruned: removed });
+  return ok({
+    key,
+    createdAt: payload.createdAt,
+    siteName: payload.siteName,
+    sections: payload.sections.map((s) => ({ id: s.id, counts: s.counts, notes: s.notes ?? [] })),
+    omitted: payload.omitted.length,
+    warnings,
+    pruned: removed,
+  });
 });
 
 app.get('/list', async (c) => {
@@ -86,15 +121,27 @@ app.delete('/file', async (c) => {
   return ok({ deleted: key });
 });
 
+/**
+ * POST /api/admin/backup/import
+ * body: { payload, sections?: string[], dryRun?: boolean, overwrite?: boolean }
+ * 不带 sections 表示整份恢复；带就是只恢复勾选的那几区。
+ * dryRun 默认为 true：先看每区会写多少、哪些文件同名冲突，再决定推。
+ */
 app.post('/import', async (c) => {
   const admin = requireAdmin(c);
-  const body = (await c.req.json().catch(() => null)) as { payload?: unknown; dryRun?: boolean } | null;
+  const body = (await c.req.json().catch(() => null)) as {
+    payload?: unknown;
+    sections?: string[];
+    dryRun?: boolean;
+    overwrite?: boolean;
+  } | null;
   if (!body?.payload) fail(400, '请在请求体里带上 payload（备份文件解析后的对象）');
   const dryRun = body.dryRun !== false;
+  const sections = (body.sections ?? []).filter((s): s is SectionId => typeof s === 'string');
 
   let outcome: ImportOutcome;
   try {
-    outcome = await importBackup(c.env, body.payload, { dryRun });
+    outcome = await importBackup(c.env, body.payload, { sections, dryRun, overwrite: body.overwrite === true, actor: admin, ip: clientIp(c) });
   } catch (e) {
     fail(400, errorMessage(e));
   }
@@ -103,7 +150,12 @@ app.post('/import', async (c) => {
     actor: admin,
     action: 'backup',
     target: dryRun ? 'import:dry-run' : 'import:apply',
-    detail: { tables: outcome.tables, errors: outcome.errors },
+    detail: {
+      sections: outcome.sections.map((s) => ({ id: s.id, files: s.files?.write ?? 0, rows: s.tables?.reduce((n, t) => n + t.inserted, 0) ?? 0, settings: s.settings?.write ?? 0 })),
+      overwrite: outcome.overwrite,
+      errors: outcome.sections.flatMap((s) => s.errors),
+      build: outcome.build,
+    },
     ip: clientIp(c),
   });
   return ok(outcome);
@@ -143,12 +195,19 @@ app.post('/comments', async (c) => {
     fail(400, errorMessage(e));
   }
 
+  /*
+   * 附属计数（Waline 的 Counter 那张表：浏览量与表态数）跟评论一起搬，但口径是「只增不减」：
+   * 本站已经比旧站多的地址保持本站，补差值时用固定的 legacy 指纹，同一份文件重复导不会翻倍。
+   */
+  const counterEntries = extractCounters(payload);
+  const counters = dryRun ? await planCounters(c.env, counterEntries) : await applyCounters(c.env, counterEntries);
+
   const applied = dryRun ? undefined : await applyCommentImport(c.env, plan);
   await writeAudit(c.env, {
     actor: admin,
     action: 'backup',
     target: dryRun ? 'comments:dry-run' : 'comments:import',
-    detail: { format: plan.format, rows: plan.rows.length, skipped: plan.skipped, applied },
+    detail: { format: plan.format, rows: plan.rows.length, skipped: plan.skipped, applied, counters },
     ip: clientIp(c),
   });
   return ok({
@@ -159,6 +218,8 @@ app.post('/comments', async (c) => {
     skipped: plan.skipped,
     slugs: plan.slugs,
     notice: plan.notice,
+    counters,
+    counterSlugs: counterEntries.length,
     summary: planSummary(plan, applied),
     applied,
   });

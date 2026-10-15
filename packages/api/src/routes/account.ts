@@ -51,6 +51,7 @@ import {
 } from '../db/schema';
 import { requireAdmin, requireUser, sessionCookie } from '../middleware/auth';
 import { destroyUserSessions, issueSession } from '../services/auth';
+import { userGroupName, withAdminAuthorBits } from '../services/admin-author';
 import { writeAudit } from '../services/audit';
 import { getConfig, getConfigBool } from '../services/config';
 import { deleteCommentSubtree } from '../services/comment-tree';
@@ -105,7 +106,9 @@ async function avatarOf(env: Env, row: UserRow): Promise<string> {
   return template.replaceAll('{hash}', hash).replaceAll('{email}', encodeURIComponent(row.email));
 }
 
-function shapeUser(row: UserRow, avatar: string) {
+function shapeUser(source: UserRow, avatar: string) {
+  // 管理员恒为认证作者 + 全权限（services/admin-author.ts），界面与门栏都读这份口径
+  const row = withAdminAuthorBits(source);
   return {
     id: row.id,
     name: row.name,
@@ -123,7 +126,7 @@ function shapeUser(row: UserRow, avatar: string) {
     account_slug: row.accountSlug,
     userGroup: row.userGroup,
     user_group: row.userGroup,
-    userGroupName: row.userGroup === 'coauthor' ? '共创' : '朋友',
+    userGroupName: userGroupName(row),
     authorVerified: row.authorVerified,
     author_verified: row.authorVerified,
     canPublish: row.canPublish,
@@ -930,22 +933,25 @@ app.get('/author-request', async (c) => {
     }
   }
   // 入口是否开放由后台的三个状态共同决定，前端只读这里算好的结果，避免「明明开了却显示未开放」
+  const me = withAdminAuthorBits(target);
   const enabled = await getConfigBool(c.env, 'authorVerifyEnabled', true);
-  const allowed = target.canAuthor || target.role === 'admin';
+  const allowed = me.canAuthor;
   const pending = rows[0]?.status === 'pending';
   const blocked = !enabled
     ? '站点当前关闭了作者认证入口，站主在「设置 → 用户中心」打开后即可申请。'
     : !allowed
       ? '你还没有共创权限，请站主在后台「用户」页把你的用户组设为「共创」。'
-      : target.authorVerified
-        ? '你已通过作者认证，资料如需修改请直接联系站主。'
+      : me.authorVerified
+        ? target.role === 'admin'
+          ? '管理员默认就是本站的认证作者，不需要申请；署名与作者资料在「我的信息 → 站长作者资料」里改。'
+          : '你已通过作者认证，资料如需修改请直接联系站主。'
         : pending
           ? '已有一份认证申请正在审核中。'
           : '';
-  const canApply = enabled && allowed && !target.authorVerified && !pending;
+  const canApply = enabled && allowed && !me.authorVerified && !pending;
   return ok({
-    verified: target.authorVerified,
-    handle: target.handle,
+    verified: me.authorVerified,
+    handle: me.handle,
     enabled,
     allowed,
     pending,
@@ -960,8 +966,11 @@ app.get('/author-request', async (c) => {
 
 app.post('/author-request', async (c) => {
   const { target } = await resolveAccountTarget(c);
-  if (!target.canAuthor && target.role !== 'admin') fail(403, '站主尚未开放你的作者认证入口');
-  if (target.authorVerified) fail(409, '你已通过作者认证，如需修改资料请直接联系站主');
+  const me = withAdminAuthorBits(target);
+  if (!me.canAuthor) fail(403, '站主尚未开放你的作者认证入口');
+  if (me.authorVerified) {
+    fail(409, target.role === 'admin' ? '管理员本来就是认证作者，作者资料请在「我的信息 → 站长作者资料」里改' : '你已通过作者认证，如需修改资料请直接联系站主');
+  }
   const parsed = authorSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '认证资料有误（赞赏图最多三张）');
   const db = createDb(c.env);

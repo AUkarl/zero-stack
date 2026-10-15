@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { sessions, users } from '../db/schema';
 import { createDb } from '../db/client';
 import { hashPassword, newId, verifyToken, signToken, randomToken } from '../lib/crypto';
+import { ensureAdminAuthorIdentity, withAdminAuthorBits } from './admin-author';
 import { fail } from '../lib/errors';
 
 export interface AuthUser {
@@ -14,10 +15,13 @@ export interface AuthUser {
   emailVerified: boolean;
   /** 注册时间，审核引擎据此判断「新号首评带链接」 */
   createdAt: number;
-  /** 以下三项由管理员在后台授予；resolveSession 每次查库，所以改完立即生效 */
+  /** 以下三项由管理员在后台授予；resolveSession 每次查库，所以改完立即生效。
+   *  管理员例外：这三项对 role='admin' 恒为 true（见 withAdminAuthorBits）。 */
   canPublish: boolean;
   canAuthor: boolean;
   authorVerified: boolean;
+  /** 作者标识（前台 /author/<handle>/ 与 data/authors.yaml 的键）；未认证作者可能为空 */
+  handle: string;
   /** 用户中心地址用的账号标识（注册时按邮箱前缀分配，可能为空，前端按需回退到 id） */
   accountSlug: string | null;
   /** 'friend' | 'coauthor'，决定前台评论徽章 */
@@ -80,6 +84,7 @@ export async function resolveSession(env: Env, token: string | undefined): Promi
       status: users.status,
       emailVerified: users.emailVerified,
       createdAt: users.createdAt,
+      handle: users.handle,
       canPublish: users.canPublish,
       canAuthor: users.canAuthor,
       authorVerified: users.authorVerified,
@@ -97,20 +102,30 @@ export async function resolveSession(env: Env, token: string | undefined): Promi
   if (row.expiresAt * 1000 < Date.now()) return null;
   // 封禁即刻生效：不用等 token 自然过期
   if (row.status === 'banned') return null;
+  /*
+   * 管理员的账号行缺作者标识或未点亮权限位，就在这里补一次（只在这两种情况下写库）。
+   * 放在这一层是因为它是所有后台请求的必经之路：现网那批「先注册再改代码」留下的
+   * handle=NULL、三位全 false 的站长行，不用人手工跑 SQL 也会自己修好。
+   */
+  if (row.role === 'admin' && (!row.handle || !row.canPublish || !row.canAuthor || !row.authorVerified || row.userGroup !== 'owner')) {
+    await ensureAdminAuthorIdentity(env, row.id);
+  }
+  const me = withAdminAuthorBits(row);
   return {
-    id: row.id,
-    email: row.email,
-    name: row.name,
-    role: row.role,
-    status: row.status,
-    emailVerified: row.emailVerified,
-    createdAt: row.createdAt,
-    canPublish: row.canPublish,
-    canAuthor: row.canAuthor,
-    authorVerified: row.authorVerified,
-    accountSlug: row.accountSlug ?? null,
-    userGroup: row.userGroup ?? 'friend',
-    totpEnabled: Boolean(row.totpEnabled),
+    id: me.id,
+    email: me.email,
+    name: me.name,
+    role: me.role,
+    status: me.status,
+    emailVerified: me.emailVerified,
+    createdAt: me.createdAt,
+    handle: me.handle ?? '',
+    canPublish: me.canPublish,
+    canAuthor: me.canAuthor,
+    authorVerified: me.authorVerified,
+    accountSlug: me.accountSlug ?? null,
+    userGroup: me.userGroup ?? 'friend',
+    totpEnabled: Boolean(me.totpEnabled),
   };
 }
 

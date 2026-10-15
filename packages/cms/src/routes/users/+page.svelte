@@ -690,7 +690,7 @@
                   <input
                     type="checkbox"
                     checked={r[key]}
-                    disabled={busy === r.id}
+                    disabled={busy === r.id || r.role === 'admin'}
                     onchange={(e) => togglePerm(r, key, e.currentTarget.checked)}
                   />
                   <span>{PERM_LABEL[key]}</span>
@@ -700,11 +700,14 @@
                 <input
                   type="checkbox"
                   checked={r.authorVerified}
-                  disabled={busy === r.id}
+                  disabled={busy === r.id || r.role === 'admin'}
                   onchange={(e) => void toggleVerified(r, e.currentTarget.checked)}
                 />
                 <span>已认证徽章</span>
               </label>
+              {#if r.role === 'admin'}
+                <span class="muted small">站长的这三项恒为开启（管理员默认就是认证作者、默认全权限），这里改不动；要改的是上面的作者标识。</span>
+              {/if}
             </div>
             <div class="extrow comments">
               <span class="k">最近评论</span>

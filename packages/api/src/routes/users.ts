@@ -10,6 +10,7 @@ import { writeAudit } from '../services/audit';
 import { requireAdmin } from '../middleware/auth';
 import { clientIp } from '../lib/http';
 import { canonHandle } from '../lib/slug';
+import { deriveHandle, userGroupName, withAdminAuthorBits } from '../services/admin-author';
 import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
 
@@ -63,8 +64,10 @@ async function hasOtherAdmin(db: ReturnType<typeof createDb>, selfId: string): P
  * 用户管理（挂在 /api/admin/users）：列表、改权限位与用户组、封禁/解封、删除账号。
  * 封禁会立刻作废该用户全部会话，并阻止其继续评论（评论侧按 userId 复查状态）。
  *
- * 管理员不出现在用户列表：默认过滤掉 role='admin' 的账号（站长由个人中心与
- * /api/security 自己管），要看全部请加 ?includeAdmin=1。
+ * 站长自己那一行也列在里页（标「站长」，权限位常亮）。以前这里默认
+ * `where role <> 'admin'`，要 ?includeAdmin=1 才看得到，而 handle（作者标识）
+ * 偏偏只在这一页能改 —— 于是「站长作者资料」保存时报「先到『用户』页补一个」，
+ * 那一页又没有站长那一行，成一个死循环。
  *
  * 管理员唯一：这里不再能把 role 改成 admin —— 首个账号自动成为管理员，
  * 之后只有那条路径能产生 admin，避免后台一点就把读者提成第二个管理员。
@@ -79,8 +82,6 @@ export function userGroupView(row: { role: string | null; userGroup: string | nu
 
 app.get('/', async (c) => {
   const db = createDb(c.env);
-  /** 默认把管理员账号藏起来：?includeAdmin=1 才列全（只有管理员身份能看到） */
-  const includeAdmin = ['1', 'true', 'yes', 'on'].includes((c.req.query('includeAdmin') ?? '').trim().toLowerCase());
   const rows = await db
     .select({
       id: users.id,
@@ -101,8 +102,7 @@ app.get('/', async (c) => {
       commentCount: sql<number>`(select count(*) from comments where comments.author_type = 'user' and comments.author_id = ${users.id})`,
       sessionCount: sql<number>`(select count(*) from sessions where sessions.user_id = ${users.id})`,
     })
-    .from(users)
-    .where(includeAdmin ? undefined : sql`${users.role} <> 'admin'`);
+    .from(users);
 
   // 邀请码只用来把 invitedBy 还原成人能看的码，不参与分页
   const codes = await db.select({ id: inviteCodes.id, code: inviteCodes.code }).from(inviteCodes);
@@ -120,20 +120,21 @@ app.get('/', async (c) => {
 
   return ok({
     total: filtered.length,
-    /** 管理员账号是否已被隐藏：前端据此提示「另有 N 个管理员账号未显示」并提供 includeAdmin 开关 */
-    includeAdmin,
-    adminHidden: !includeAdmin,
     data: filtered
       .sort((a, b) => b.createdAt - a.createdAt)
-      .map((r) => ({
-        ...r,
-        invitedCode: codeById.get(r.invitedBy ?? '') ?? null,
-        /** 库里的原值（friend|coauthor），PATCH 回填用这个 */
-        user_group: r.userGroup,
-        /** 显示口径：管理员为 owner（站长） */
-        userGroupView: userGroupView(r),
-        user_group_name: r.role === 'admin' ? '站长' : r.userGroup === 'coauthor' ? '共创' : '朋友',
-      })),
+      .map((raw) => {
+        // 管理员那一行读出来就是全亮的（库里值与显示口径不再分两套）
+        const r = withAdminAuthorBits(raw);
+        return {
+          ...r,
+          invitedCode: codeById.get(r.invitedBy ?? '') ?? null,
+          /** 库里的原值（friend|coauthor），PATCH 回填用这个 */
+          user_group: r.userGroup,
+          /** 显示口径：管理员为 owner（站长） */
+          userGroupView: userGroupView(r),
+          user_group_name: userGroupName(r),
+        };
+      }),
   });
 });
 
@@ -209,7 +210,19 @@ app.patch('/:id', async (c) => {
         .limit(1);
       if (clash[0]) fail(409, `作者标识 ${handle} 已被其它账号占用`);
     }
-    set.handle = handle || null;
+    // 管理员清空 handle 等于把前台署名推回主题占位作者，所以清空时按注册信息重新推一个
+    set.handle = handle || (user.role === 'admin' ? deriveHandle(user) : null);
+  }
+  /*
+   * 管理员那一行的权限位与用户组永远亮着（口径见 services/admin-author.ts）。
+   * 界面上这三个框对站长是置灰的，这里再兜一层：就算有人直接发 canPublish:false，
+   * 也不会再出现「管理员未认证、用户组是朋友」这种半开状态 —— 线上这次就是这么坏的。
+   */
+  if (user.role === 'admin') {
+    set.canPublish = true;
+    set.canAuthor = true;
+    set.authorVerified = true;
+    set.userGroup = 'owner';
   }
   if (parsed.data.account_slug !== undefined) {
     if (parsed.data.account_slug === null) {

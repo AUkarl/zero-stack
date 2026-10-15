@@ -1,228 +1,720 @@
 /**
- * 全站备份：把 D1 里的动态数据导出成一个 JSON，可以再灌回来。
+ * 全站备份：一份文件装下一个站点的全部内容、样式与配置，可以再灌回一个空站点。
  *
- * 只备份后台产生的数据，不碰三类东西：
- *   文章正文   在 Git 仓库里，备份它等于和 Hugo 抢职责
- *   sessions   导出来就是一份可用的登录凭证，绝不能进备份文件
- *   密钥配置   默认剔除，确有需要时显式带 includeSecrets
+ * 为什么不再只有 D1：文章、时刻、主题覆盖文件（data/*.json、params.toml）都在 Git 仓库里，
+ * 评论与设置才是 D1 的。只导 D1 的备份搬到新站，结果是「配置导了、站还是空的」，
+ * 所以这一版把两类来源合到一份文件里，并按分区组织。
+ *
+ * 分区（导入时逐个勾选、逐个演习）：
+ *   站点设置   site_config 里非密钥、不绑定本站的项
+ *   主题样式   仓库 data/*.json + params.toml
+ *   文章       仓库文章目录里的 .md
+ *   时刻       仓库时刻目录里的 .md
+ *   友链       D1 的 friends / friend_posts + 仓库 links.yaml
+ *   订阅名单   D1 subscribers（邮箱名单本身；发信日志与群发任务不备份）
+ *   评论       comments + commenters
+ *   点赞收藏   reactions(kind=like|star) + comment_likes
+ *   账号       users（管理员除外，含密码哈希）+ 仓库 authors.yaml
+ *   媒体清单   R2 里图片的 key 与体积、被哪篇文章引用（二进制不进文件）
+ *
+ * 明确不备份：邮件发送日志、群发任务、邀请码使用记录、访问统计、审计流水、
+ * sessions / accounts / verifications（导出来就是一把能登录别人后台的钥匙）。
+ * 密钥类配置项（SMTP 密码、各家 API Key）永远不进文件，界面上也不再给「包含密钥」这个开关。
  */
 
-import { count, desc, eq, getTableColumns, inArray } from 'drizzle-orm';
+import { desc, getTableColumns, inArray, ne } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import {
-  auditLogs,
+  commentLikes,
   commenters,
   comments,
-  emailLogs,
-  friendApplications,
   friendPosts,
   friends,
-  inviteCodes,
   reactions,
   siteConfig,
   subscribers,
   users,
-  visits,
 } from '../db/schema';
-import { SECRET_KEYS } from './config';
+import { SECRET_KEYS, getConfig, invalidateConfigCache } from './config';
+import { readFileFrom, resolveRepoTarget, walkFiles, writeViaTarget, type RepoTarget } from './repo';
+import { triggerPagesBuild } from './git';
 
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
-/** 核心表：整表导出 */
-const CORE = {
-  users,
-  commenters,
-  comments,
-  subscribers,
-  friends,
-  friendPosts,
-  inviteCodes,
-  friendApplications,
-  siteConfig,
-};
+/* ------------------------------------------------------------------ 分区定义 */
 
-/** 高频写入表：只取最近若干条，够用且不会把一个请求撑爆 */
-const RECENT = {
-  reactions: 5000,
-  visits: 5000,
-  emailLogs: 1000,
-  auditLogs: 1000,
-};
+export type SectionId =
+  | 'settings'
+  | 'theme'
+  | 'posts'
+  | 'moments'
+  | 'friends'
+  | 'subscribers'
+  | 'comments'
+  | 'likes'
+  | 'users'
+  | 'media';
 
-const RECENT_TABLES = { reactions, visits, emailLogs, auditLogs };
+export const SECTION_CATALOG: { id: SectionId; label: string; what: string }[] = [
+  { id: 'settings', label: '站点设置', what: '后台各处开关与文案（评论、点赞、友链、时刻、统计、审核、邮件模板…）' },
+  { id: 'theme', label: '主题样式', what: '仓库 data/*.json 八份覆盖文件与 config 下的 params.toml' },
+  { id: 'posts', label: '文章', what: '文章目录里的全部 .md（含子目录）' },
+  { id: 'moments', label: '时刻', what: '时刻目录里的全部 .md' },
+  { id: 'friends', label: '友链', what: 'D1 的友链与已抓到的博客动态 + 仓库 links.yaml' },
+  { id: 'subscribers', label: '订阅名单', what: '已订阅的邮箱与确认状态；发信日志与群发记录不备份' },
+  { id: 'comments', label: '评论', what: '评论正文、层级关系与评论者身份' },
+  { id: 'likes', label: '点赞与收藏', what: '文章/时刻的 like、star 记录与评论点赞' },
+  { id: 'users', label: '用户账号', what: '普通用户（含密码哈希）与仓库 authors.yaml；管理员账号不导出' },
+  { id: 'media', label: '媒体清单', what: 'R2 图片的 key、体积与被引用位置；图片本体不进备份文件' },
+];
 
-type BackupTable = keyof typeof CORE | keyof typeof RECENT_TABLES;
+export const SECTION_IDS = SECTION_CATALOG.map((s) => s.id);
+const SECTION_LABEL = new Map(SECTION_CATALOG.map((s) => [s.id, s.label]));
 
-const ALL_TABLES = { ...CORE, ...RECENT_TABLES } as unknown as Record<BackupTable, any>;
+/**
+ * 绑定「这一个账号 / 这一个域名」的配置项：导出时列出来给人工对照，恢复时一律不写。
+ * 写回的后果是把新站的仓库坐标与域名盖成旧站的，表现为「后台一发文就 404、所有链接指向别人的域名」。
+ */
+const SITE_BOUND_KEYS = [
+  'siteUrl',
+  'githubOwner',
+  'githubRepo',
+  'githubBranch',
+  'cloudflareAccountId',
+  'mediaBaseUrl',
+  'mediaPublicUrl',
+  // 这份 JSON 里可能带明文 S3 accessKeyId / secretAccessKey，绝不能进备份文件
+  'mediaBuckets',
+];
 
-export type BackupScope = 'core' | 'full';
+/* -------------------------------------------------------------------- 上限 */
+
+/**
+ * Worker 单次请求的软限制：128MB 内存、1000 个子请求、响应体也不能无限大。
+ * 超限时不静默丢弃，而是在分区里写一条 note，让人知道这份备份不完整。
+ */
+const FILE_CAP = 600;
+const TABLE_CAP = 20000;
+const MEDIA_CAP = 3000;
+const DIR_DEPTH = 4;
+
+/* -------------------------------------------------------------------- 形状 */
+
+export interface BackupFile {
+  path: string;
+  content: string;
+}
+
+export interface MediaObject {
+  key: string;
+  size: number;
+  uploaded: string | null;
+  /** 哪些文章/时刻正文里提到了这个 key */
+  usedBy: string[];
+}
+
+export interface BackupSection {
+  id: SectionId;
+  counts: Record<string, number>;
+  tables?: Record<string, Record<string, unknown>[]>;
+  files?: BackupFile[];
+  objects?: MediaObject[];
+  notes?: string[];
+}
 
 export interface BackupPayload {
   version: number;
-  scope: BackupScope;
   createdAt: number;
   siteName: string;
   note: string;
-  counts: Record<string, number>;
-  tables: Record<string, Record<string, unknown>[]>;
+  /** 备份来自哪个仓库、哪套目录：恢复时用来对照本站配置，不参与写入 */
+  origin: {
+    owner: string;
+    repo: string;
+    branch: string;
+    siteUrl: string;
+    dataDir: string;
+    postsDir: string;
+    momentsDir: string;
+    linksFile: string;
+    authorsFile: string;
+  };
+  /** 没写进文件、也没配到本站的项：分区之外单独列一份，界面上给出旧值供人工搬 */
+  omitted: { key: string; reason: string; value: string }[];
+  sections: BackupSection[];
 }
+
+/* -------------------------------------------------------------------- 导出 */
 
 export async function exportBackup(
   env: Env,
-  opts: { scope?: BackupScope; includeSecrets?: boolean; note?: string } = {},
+  opts: { note?: string } = {},
 ): Promise<{ payload: BackupPayload; warnings: string[] }> {
-  const scope: BackupScope = opts.scope === 'full' ? 'full' : 'core';
   const db = createDb(env);
   const warnings: string[] = [];
-  const tables: BackupPayload['tables'] = {};
-  const counts: Record<string, number> = {};
+  const sections: BackupSection[] = [];
 
-  const names: BackupTable[] = scope === 'full' ? [...(Object.keys(CORE) as BackupTable[]), ...(Object.keys(RECENT_TABLES) as BackupTable[])] : (Object.keys(CORE) as BackupTable[]);
+  const dataDir = (await getConfig(env, 'githubDataDir'))?.trim() || 'data';
+  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/posts';
+  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/moments';
+  const linksFile = (await getConfig(env, 'githubLinksFile'))?.trim() || `${dataDir}/links.yaml`;
+  const authorsFile = (await getConfig(env, 'githubAuthorsFile'))?.trim() || `${dataDir}/authors.yaml`;
+  const origin: BackupPayload['origin'] = {
+    owner: (await getConfig(env, 'githubOwner')) ?? '',
+    repo: (await getConfig(env, 'githubRepo')) ?? '',
+    branch: (await getConfig(env, 'githubBranch')) || 'main',
+    siteUrl: (await getConfig(env, 'siteUrl')) ?? '',
+    dataDir,
+    postsDir,
+    momentsDir,
+    linksFile,
+    authorsFile,
+  };
 
-  for (const name of names) {
-    const table: any = ALL_TABLES[name];
-    // 高频表按 RECENT 里的条数截断；写成 RECENT_TABLES[name] 会拿到表对象本身
-    const limit = name in RECENT ? RECENT[name as keyof typeof RECENT] : undefined;
-    const base: any = db.select().from(table);
-    const rows: Record<string, unknown>[] = await (limit
-      ? base.orderBy(desc(table.createdAt)).limit(limit)
-      : base);
-    counts[name] = rows.length;
-    tables[name] = rows;
+  /* --- 站点设置：site_config 去掉密钥与本站绑定项 --- */
+  const configRows = await db.select().from(siteConfig);
+  const secretSet = new Set<string>(SECRET_KEYS);
+  const boundSet = new Set<string>(SITE_BOUND_KEYS);
+  const keepConfig: Record<string, unknown>[] = [];
+  const omitted: BackupPayload['omitted'] = [];
+  for (const r of configRows) {
+    if (secretSet.has(r.key)) {
+      // 值一律不带出去：这一列本身就是「密码 / API Key」
+      omitted.push({ key: r.key, reason: '密钥类配置，不进备份文件（到新站后台重新填）', value: '' });
+      continue;
+    }
+    if (boundSet.has(r.key)) {
+      omitted.push({ key: r.key, reason: '绑定本站账号或域名，恢复时不写', value: r.value });
+      continue;
+    }
+    keepConfig.push({ key: r.key, value: r.value, valueType: r.valueType, updatedAt: r.updatedAt });
+  }
+  sections.push({
+    id: 'settings',
+    counts: { 配置项: keepConfig.length },
+    tables: { siteConfig: keepConfig },
+    notes: omitted.length ? [`另有 ${omitted.length} 项不写入，见「未包含」列表`] : [],
+  });
+
+  /* --- 仓库里的那些分区 --- */
+  let target: RepoTarget | null = null;
+  try {
+    target = await resolveRepoTarget(env);
+  } catch (e) {
+    warnings.push(`读不到内容仓库，文章/时刻/主题样式/友链文件这次是空的：${briefError(e)}`);
   }
 
-  if (tables.siteConfig) {
-    const secretSet = new Set<string>(SECRET_KEYS);
-    const before = tables.siteConfig.length;
-    tables.siteConfig = opts.includeSecrets ? tables.siteConfig : tables.siteConfig.filter((r) => !secretSet.has(String(r.key)));
-    counts.siteConfig = tables.siteConfig.length;
-    if (opts.includeSecrets) warnings.push('本份备份包含明文密钥，请勿外传');
-    else if (before !== counts.siteConfig) warnings.push(`已剔除 ${before - counts.siteConfig} 项密钥配置`);
+  /** 仓库文件读不到不算失败，只记一条 note：新装的站本来就没几篇 */
+  const readRepo = async (paths: string[], noteSink: string[]): Promise<BackupFile[]> => {
+    if (!target) return [];
+    const out: BackupFile[] = [];
+    for (const p of paths) {
+      try {
+        const f = await readFileFrom(target, p);
+        if (f?.content !== undefined && f.content !== '') out.push({ path: p, content: f.content });
+        else noteSink.push(`${p}：仓库里没有或内容为空`);
+      } catch (e) {
+        noteSink.push(`${p}：读取失败（${briefError(e)}）`);
+      }
+      if (out.length >= FILE_CAP) {
+        noteSink.push(`文件数达到上限 ${FILE_CAP}，多余的没导出来`);
+        break;
+      }
+    }
+    return out;
+  };
+
+  /* 主题样式：data/*.json 的覆盖文件 + config 下的 params.toml。
+     links.yaml / authors.yaml 归友链与账号分区；poststats / linksstatus / friendfeed 是定时任务
+     重算出来的派生数据，导过去只会在下一次构建前显示旧数字，所以不导。 */
+  const DERIVED_DATA = /\/(poststats|linksstatus|friendfeed)\.json$/;
+  const themeNotes: string[] = [];
+  const dataFiles: string[] = [];
+  if (target) {
+    try {
+      const listed = await walkFiles(target, dataDir, { exts: ['.json'], cap: FILE_CAP, maxDepth: DIR_DEPTH });
+      dataFiles.push(...listed.filter((p) => !DERIVED_DATA.test(p)));
+      const skippedDerived = listed.length - dataFiles.length;
+      if (skippedDerived) themeNotes.push(`${skippedDerived} 份派生统计文件（精选/友链状态/朋友动态）由定时任务重算，不导`);
+    } catch (e) {
+      themeNotes.push(`列 ${dataDir} 失败：${briefError(e)}`);
+    }
   }
+  const themePaths = [...dataFiles, ...(await paramFiles(target))];
+  const themeFiles = await readRepo(themePaths, themeNotes);
+  themeNotes.push('hugo.toml 不在备份里：它带本站域名与 API 地址，新站用 pnpm create:site 生成的那一份');
+  sections.push({
+    id: 'theme',
+    counts: { 文件: themeFiles.length },
+    files: themeFiles,
+    notes: themeNotes,
+  });
 
-  const siteNameRow = await db.select({ value: siteConfig.value }).from(siteConfig).where(eq(siteConfig.key, 'siteName')).limit(1);
+  const postsNotes: string[] = [];
+  const postPaths = target ? await safeList(target, postsDir, ['.md'], postsNotes) : [];
+  const postFiles = await readRepo(postPaths, postsNotes);
+  sections.push({ id: 'posts', counts: { 文章: postFiles.length }, files: postFiles, notes: postsNotes });
 
+  const momentNotes: string[] = [];
+  const momentPaths = target ? await safeList(target, momentsDir, ['.md'], momentNotes) : [];
+  const momentFiles = await readRepo(momentPaths, momentNotes);
+  sections.push({ id: 'moments', counts: { 时刻: momentFiles.length }, files: momentFiles, notes: momentNotes });
+
+  const friendNotes: string[] = [];
+  const linksFileRows = await readRepo([linksFile], friendNotes);
+  const friendRows = await readTable(db, friends);
+  const friendPostRows = await readTable(db, friendPosts, 'fetchedAt');
+  sections.push({
+    id: 'friends',
+    counts: { 友链: friendRows.rows.length, 动态: friendPostRows.rows.length, 文件: linksFileRows.length },
+    tables: { friends: friendRows.rows, friendPosts: friendPostRows.rows },
+    files: linksFileRows,
+    notes: [...(friendRows.truncated || friendPostRows.truncated ? [`超过 ${TABLE_CAP} 行的部分没导出来`] : []), ...friendNotes],
+  });
+
+  const subscriberRows = await readTable(db, subscribers);
+  sections.push({
+    id: 'subscribers',
+    counts: { 订阅者: subscriberRows.rows.length },
+    tables: { subscribers: subscriberRows.rows },
+    notes: subscriberRows.truncated ? [`超过 ${TABLE_CAP} 行的部分没导出来`] : [],
+  });
+
+  const commentRows = await readTable(db, comments);
+  const commenterRows = await readTable(db, commenters);
+  sections.push({
+    id: 'comments',
+    counts: { 评论: commentRows.rows.length, 评论者: commenterRows.rows.length },
+    tables: { comments: commentRows.rows, commenters: commenterRows.rows },
+    notes: commentRows.truncated || commenterRows.truncated ? [`超过 ${TABLE_CAP} 行的部分没导出来`] : [],
+  });
+
+  const reactionRows = await readTable(db, reactions);
+  const clikeRows = await readTable(db, commentLikes);
+  sections.push({
+    id: 'likes',
+    counts: { 点赞收藏: reactionRows.rows.length, 评论点赞: clikeRows.rows.length },
+    tables: { reactions: reactionRows.rows, commentLikes: clikeRows.rows },
+    notes: reactionRows.truncated || clikeRows.truncated ? [`超过 ${TABLE_CAP} 行的部分没导出来`] : [],
+  });
+
+  const userNotes: string[] = [];
+  const authorFileRows = await readRepo([authorsFile], userNotes);
+  let userRows: Record<string, unknown>[] = [];
+  try {
+    userRows = (await db.select().from(users).where(ne(users.role, 'admin'))).map((r) => ({ ...r }));
+  } catch (e) {
+    userNotes.push(`读用户表失败：${briefError(e)}`);
+  }
+  sections.push({
+    id: 'users',
+    counts: { 用户: userRows.length, 文件: authorFileRows.length },
+    tables: { users: userRows },
+    files: authorFileRows,
+    notes: ['管理员账号不导出：到新站后台自己注册第一个账号', ...userNotes],
+  });
+
+  /* --- 媒体清单：只列 key，图片本体不进文件 --- */
+  const media: MediaObject[] = [];
+  const mediaNotes: string[] = [];
+  try {
+    let cursor: string | undefined;
+    do {
+      const listed = await env.R2.list({ prefix: 'uploads/', cursor, limit: 1000 });
+      for (const o of listed.objects) {
+        media.push({ key: o.key, size: o.size, uploaded: o.uploaded?.toISOString() ?? null, usedBy: [] });
+        if (media.length >= MEDIA_CAP) break;
+      }
+      cursor = listed.truncated && media.length < MEDIA_CAP ? listed.cursor : undefined;
+    } while (cursor);
+    if (media.length >= MEDIA_CAP) mediaNotes.push(`对象数达到上限 ${MEDIA_CAP}，清单不完整`);
+  } catch (e) {
+    mediaNotes.push(`列 R2 失败：${briefError(e)}`);
+  }
+  // 反查引用：把文章/时刻正文里出现的 key 找出来，新站复制图片时知道哪些真的在用
+  const textBlob = [...postFiles, ...momentFiles, ...themeFiles].map((f) => ({ path: f.path, hay: f.content }));
+  for (const m of media) {
+    const tail = m.key.split('/').pop() ?? m.key;
+    for (const f of textBlob) if (f.hay.includes(m.key) || (tail.length > 8 && f.hay.includes(tail))) m.usedBy.push(f.path);
+  }
+  sections.push({
+    id: 'media',
+    counts: { 对象: media.length, 被引用: media.filter((m) => m.usedBy.length).length },
+    objects: media,
+    notes: [
+      '图片本体不在备份文件里：Worker 单次请求有体积上限，媒体要按清单用 r2 cp / 控制台复制，或直接让新桶同名',
+      ...mediaNotes,
+    ],
+  });
+
+  const siteNameRow = configRows.find((r) => r.key === 'siteName');
   return {
     payload: {
       version: BACKUP_VERSION,
-      scope,
       createdAt: Math.floor(Date.now() / 1000),
-      siteName: siteNameRow[0]?.value ?? '',
+      siteName: siteNameRow?.value ?? '',
       note: (opts.note ?? '').slice(0, 200),
-      counts,
-      tables,
+      origin,
+      omitted,
+      sections,
     },
     warnings,
   };
 }
 
-export interface ImportOutcome {
-  dryRun: boolean;
-  source: { createdAt: number; scope: BackupScope; siteName: string; version: number };
-  tables: { name: string; rows: number; inserted: number; skipped: number; note: string | null }[];
+/* ---------------------------------------------------------------- 仓库列举 */
+
+/** walkFiles 读不到目录时回空数组；这里补一条说明，免得界面看起来像「备份成功但什么都没有」 */
+async function safeList(target: RepoTarget, dir: string, exts: string[], notes: string[]): Promise<string[]> {
+  const found = await walkFiles(target, dir, { exts, cap: FILE_CAP, maxDepth: DIR_DEPTH });
+  if (!found.length) notes.push(`${dir}：没有读到文件（目录不存在、为空，或仓库坐标没配）`);
+  return found;
+}
+
+/** params.toml 在两种布局下的位置都要试：config/_default/ 与根 config.toml */
+async function paramFiles(target: RepoTarget | null): Promise<string[]> {
+  if (!target) return [];
+  const candidates = ['config/_default/params.toml', 'config/params.toml', 'params.toml'];
+  const found: string[] = [];
+  for (const p of candidates) {
+    try {
+      const f = await readFileFrom(target, p);
+      if (f?.content) {
+        found.push(p);
+        break;
+      }
+    } catch {
+      /* 换下一个候选路径 */
+    }
+  }
+  return found;
+}
+
+/* ---------------------------------------------------------------- 读表 */
+
+async function readTable(
+  db: ReturnType<typeof createDb>,
+  table: any,
+  orderColumn = 'createdAt',
+): Promise<{ rows: Record<string, unknown>[]; truncated: boolean }> {
+  try {
+    const sortColumn = (table as Record<string, any>)[orderColumn];
+    const query = db.select().from(table);
+    const rows = (sortColumn
+      ? await query.orderBy(desc(sortColumn)).limit(TABLE_CAP + 1)
+      : await query.limit(TABLE_CAP + 1)) as Record<string, unknown>[];
+    const truncated = rows.length > TABLE_CAP;
+    return { rows: truncated ? rows.slice(0, TABLE_CAP) : rows, truncated };
+  } catch {
+    return { rows: [], truncated: false };
+  }
+}
+
+/* -------------------------------------------------------------------- 导入 */
+
+export interface SectionFileResult {
+  total: number;
+  write: number;
+  skip: number;
+  unchanged: number;
+  /** 本站已存在同名文件的这些路径：没勾覆盖就不动它们 */
+  conflicts: string[];
+}
+
+export interface SectionTableResult {
+  name: string;
+  rows: number;
+  inserted: number;
+  skipped: number;
+  note: string | null;
+}
+
+export interface SectionOutcome {
+  id: SectionId;
+  label: string;
+  files?: SectionFileResult;
+  tables?: SectionTableResult[];
+  /** 站点设置单独说：改了几项、哪几项与本站现值不同 */
+  settings?: { write: number; changed: { key: string; from: string; to: string }[] };
+  media?: { total: number; present: number; absent: number };
+  notes: string[];
   errors: string[];
 }
 
-/**
- * 导入采用「主键已存在就跳过」而不是覆盖：备份文件多半来自另一套环境，
- * 覆盖式写入会静默改掉本站已有的记录。配置表更保守——只列出不自动写。
- */
-export async function importBackup(env: Env, raw: unknown, opts: { dryRun?: boolean } = {}): Promise<ImportOutcome> {
+export interface ImportOutcome {
+  dryRun: boolean;
+  overwrite: boolean;
+  source: { version: number; createdAt: number; siteName: string; origin: BackupPayload['origin'] };
+  /** 本站与备份来源的差异提示，比如文章目录不一样 */
+  layout: { postsDir: { from: string; to: string }; momentsDir: { from: string; to: string }; dataDir: { from: string; to: string } };
+  sections: SectionOutcome[];
+  build: { triggered: boolean; error?: string } | null;
+}
+
+const TABLES_BY_SECTION: Record<string, Record<string, any>> = {
+  friends: { friends, friendPosts },
+  subscribers: { subscribers },
+  comments: { comments, commenters },
+  likes: { reactions, commentLikes },
+  users: { users },
+};
+
+export interface ImportBackupOptions {
+  sections?: SectionId[];
+  dryRun?: boolean;
+  /** 本站已有同名文件时是否覆盖（只对文件类分区有意义） */
+  overwrite?: boolean;
+  actor?: { id?: string | null; name?: string | null } | null;
+  ip?: string;
+}
+
+export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOptions = {}): Promise<ImportOutcome> {
   const payload = normalizePayload(raw);
   const db = createDb(env);
   const dryRun = opts.dryRun !== false;
+  const overwrite = opts.overwrite === true;
+  const wanted = new Set<SectionId>((opts.sections?.length ? opts.sections : SECTION_IDS).filter((s) => SECTION_IDS.includes(s)));
+
+  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/posts';
+  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/moments';
+  const dataDir = (await getConfig(env, 'githubDataDir'))?.trim() || 'data';
+
   const outcome: ImportOutcome = {
     dryRun,
-    source: { createdAt: payload.createdAt, scope: payload.scope, siteName: payload.siteName, version: payload.version },
-    tables: [],
-    errors: [],
+    overwrite,
+    source: { version: payload.version, createdAt: payload.createdAt, siteName: payload.siteName, origin: payload.origin },
+    layout: {
+      postsDir: { from: payload.origin.postsDir, to: postsDir },
+      momentsDir: { from: payload.origin.momentsDir, to: momentsDir },
+      dataDir: { from: payload.origin.dataDir, to: dataDir },
+    },
+    sections: [],
+    build: null,
   };
 
-  for (const [name, rows] of Object.entries(payload.tables)) {
-    const table: any = ALL_TABLES[name as BackupTable];
-    if (!table) {
-      outcome.tables.push({ name, rows: rows.length, inserted: 0, skipped: rows.length, note: '当前版本不认识这张表' });
-      continue;
-    }
-    if (name === 'siteConfig') {
-      outcome.tables.push({ name, rows: rows.length, inserted: 0, skipped: rows.length, note: '配置不自动导入，请到后台逐项确认' });
-      continue;
-    }
-    if (!rows.length) {
-      outcome.tables.push({ name, rows: 0, inserted: 0, skipped: 0, note: null });
-      continue;
-    }
-
-    const columns = new Set(Object.keys(getTableColumns(table)));
-    const prepared = rows.map((r) => pickKnown(r, columns)).filter((r) => Object.keys(r).length);
-    if (!prepared.length) {
-      outcome.tables.push({ name, rows: rows.length, inserted: 0, skipped: rows.length, note: '字段与当前表结构不匹配' });
-      continue;
-    }
-    if (dryRun) {
-      const pk = singlePk(table);
-      if (!pk) {
-        outcome.tables.push({ name, rows: prepared.length, inserted: prepared.length, skipped: 0, note: '演习无法核对主键，实际以确认导入为准' });
-        continue;
-      }
-      const values = [...new Set(prepared.map((r) => r[pk.prop]).filter((v) => v !== undefined && v !== null))];
-      let existing = 0;
-      for (let i = 0; i < values.length; i += 100) {
-        try {
-          const res = await db.select({ n: count() }).from(table).where(inArray(pk.column, values.slice(i, i + 100)));
-          existing += Number(res[0]?.n ?? 0);
-        } catch {
-          existing = 0;
-          break;
-        }
-      }
-      const skip = Math.min(existing, prepared.length);
-      outcome.tables.push({
-        name,
-        rows: prepared.length,
-        inserted: prepared.length - skip,
-        skipped: skip,
-        note: skip ? `${skip} 行主键已存在，会被跳过` : null,
+  // 恢复仓库文件的分区才需要仓库坐标
+  const needRepo = payload.sections.some((s) => wanted.has(s.id) && (s.files?.length ?? 0) > 0);
+  let target: RepoTarget | null = null;
+  if (needRepo) {
+    try {
+      target = await resolveRepoTarget(env);
+    } catch (e) {
+      outcome.sections.push({
+        id: 'theme',
+        label: '仓库文件',
+        notes: [],
+        errors: [`读不到本站的内容仓库，文件类分区这次都跳过：${briefError(e)}`],
       });
-      continue;
+      for (const s of payload.sections) if (wanted.has(s.id) && s.files?.length) outcome.sections.push({ id: s.id, label: labelOf(s.id), notes: [], errors: ['内容仓库不可用'] });
+      return outcome;
     }
-
-    let inserted = 0;
-    let skipped = 0;
-    /* D1 的限制在「一条语句绑定多少个参数」（上限 100），不是行数：
-       原先按 100 行一批发，commenters 七个字段就是 700 个参数，整批直接失败。 */
-    const perBatch = Math.max(1, Math.floor(90 / Math.max(1, columns.size)));
-    for (let i = 0; i < prepared.length; i += perBatch) {
-      const batch = prepared.slice(i, i + perBatch);
-      try {
-        const res = await db.insert(table).values(batch).onConflictDoNothing();
-        const changes = Number((res as unknown as { meta?: { changes?: number } }).meta?.changes ?? batch.length);
-        inserted += changes;
-        skipped += batch.length - changes;
-      } catch (e) {
-        // 单批失败不影响其它表，错误攒起来一起回报
-        outcome.errors.push(`${name}: ${briefError(e)}`);
-      }
-    }
-    outcome.tables.push({ name, rows: prepared.length, inserted, skipped, note: null });
   }
 
+  let wroteFiles = false;
+
+  for (const section of payload.sections) {
+    if (!wanted.has(section.id)) continue;
+    const result: SectionOutcome = { id: section.id, label: labelOf(section.id), notes: [], errors: [] };
+
+    /* 站点设置：覆盖式写回 site_config */
+    if (section.id === 'settings') {
+      const rows = (section.tables?.siteConfig ?? []) as { key: string; value: string; valueType?: string }[];
+      const changed: { key: string; from: string; to: string }[] = [];
+      let write = 0;
+      const existing = new Map<string, string>();
+      try {
+        const keys = rows.map((r) => r.key);
+        for (let i = 0; i < keys.length; i += 90) {
+          const found = await db.select().from(siteConfig).where(inArray(siteConfig.key, keys.slice(i, i + 90)));
+          for (const f of found) existing.set(f.key, f.value);
+        }
+      } catch (e) {
+        result.errors.push(briefError(e));
+      }
+      for (const r of rows) {
+        if (SECRET_KEYS.includes(r.key as never) || SITE_BOUND_KEYS.includes(r.key)) continue;
+        const before = existing.get(r.key);
+        if (before === r.value) continue;
+        changed.push({ key: r.key, from: before ?? '', to: r.value });
+        write++;
+        if (!dryRun) {
+          try {
+            await db
+              .insert(siteConfig)
+              .values({ key: r.key, value: r.value, valueType: r.valueType ?? 'string', updatedAt: Math.floor(Date.now() / 1000) })
+              .onConflictDoUpdate({ target: siteConfig.key, set: { value: r.value, valueType: r.valueType ?? 'string', updatedAt: Math.floor(Date.now() / 1000) } });
+          } catch (e) {
+            result.errors.push(`${r.key}: ${briefError(e)}`);
+          }
+        }
+      }
+      if (!dryRun && write) invalidateConfigCache();
+      result.settings = { write, changed };
+      if (changed.length > 40) result.notes.push(`改动项很多，只列出前 40 项：${changed.slice(0, 40).map((c) => c.key).join('、')}`);
+      else if (changed.length) result.notes.push(`将改这些项：${changed.map((c) => c.key).join('、')}`);
+      outcome.sections.push(result);
+      continue;
+    }
+
+    /* 媒体清单：不写任何东西，只对比本站 R2 有没有同名的对象 */
+    if (section.id === 'media') {
+      const objects = section.objects ?? [];
+      let present = 0;
+      try {
+        const mine = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const listed = await env.R2.list({ prefix: 'uploads/', cursor, limit: 1000 });
+          for (const o of listed.objects) mine.add(o.key);
+          cursor = listed.truncated ? listed.cursor : undefined;
+        } while (cursor && mine.size < MEDIA_CAP);
+        present = objects.filter((o) => mine.has(o.key)).length;
+      } catch (e) {
+        result.errors.push(briefError(e));
+      }
+      result.media = { total: objects.length, present, absent: objects.length - present };
+      result.notes.push(dryRun ? '演习：这一区永远不写数据，只告诉你缺多少张图' : `图片本体没跟着备份文件走：还差 ${objects.length - present} 张，按清单用 r2 cp 复制或让文章改指新桶`);
+      outcome.sections.push(result);
+      continue;
+    }
+
+    /* 数据表类分区 */
+    const tableMap = TABLES_BY_SECTION[section.id];
+    if (tableMap && section.tables) {
+      for (const [name, rows] of Object.entries(section.tables)) {
+        const table = tableMap[name];
+        if (!table) {
+          result.tables ??= [];
+          result.tables.push({ name, rows: rows.length, inserted: 0, skipped: rows.length, note: '当前版本不认识这张表' });
+          continue;
+        }
+        result.tables ??= [];
+        result.tables.push(await mergeTable(db, table, name, rows, dryRun));
+      }
+    }
+
+    /* 仓库文件类分区 */
+    const files = section.files ?? [];
+    if (files.length && target) {
+      const fr: SectionFileResult = { total: files.length, write: 0, skip: 0, unchanged: 0, conflicts: [] };
+      for (const f of files) {
+        let current: { content: string } | null = null;
+        try {
+          current = await readFileFrom(target, f.path);
+        } catch (e) {
+          fr.conflicts.push(`${f.path}（读取失败：${briefError(e)}）`);
+          continue;
+        }
+        if (current) {
+          if (current.content === f.content) {
+            fr.unchanged++;
+            continue;
+          }
+          fr.conflicts.push(f.path);
+          if (!overwrite) {
+            fr.skip++;
+            continue;
+          }
+        }
+        fr.write++;
+        if (!dryRun) {
+          try {
+            const res = await writeViaTarget(target, f.path, f.content, `zero-backup: 恢复${labelOf(section.id)}`, {
+              actor: opts.actor,
+              ip: opts.ip,
+              action: 'backup',
+            });
+            if (!res.success) fr.conflicts.push(`${f.path}：${res.error ?? '提交失败'}`);
+            else wroteFiles = true;
+          } catch (e) {
+            fr.conflicts.push(`${f.path}：${briefError(e)}`);
+          }
+        }
+      }
+      if (!dryRun) {
+        fr.conflicts = fr.conflicts.filter((c) => c.includes('：'));
+      } else if (!overwrite && fr.skip) {
+        result.notes.push(`${fr.skip} 个文件本站已有同名且内容不同，没勾「覆盖同名」时保持不动`);
+      }
+      result.files = fr;
+    }
+
+    outcome.sections.push(result);
+  }
+
+  if (!dryRun && wroteFiles) {
+    const build = await triggerPagesBuild(env);
+    outcome.build = build;
+  }
   return outcome;
+}
+
+/** 表类分区：主键已存在就跳过，绝不覆盖本站已有记录 */
+async function mergeTable(db: ReturnType<typeof createDb>, table: any, name: string, rows: Record<string, unknown>[], dryRun: boolean): Promise<SectionTableResult> {
+  const columns = new Set(Object.keys(getTableColumns(table)));
+  const prepared = rows.map((r) => pickKnown(r, columns)).filter((r) => Object.keys(r).length);
+  if (!prepared.length) {
+    return { name, rows: rows.length, inserted: 0, skipped: rows.length, note: rows.length ? '字段与当前表结构不匹配' : null };
+  }
+  if (dryRun) {
+    const pk = singlePk(table);
+    if (!pk) return { name, rows: prepared.length, inserted: prepared.length, skipped: 0, note: '演习无法核对主键，实际以确认导入为准' };
+    const values = [...new Set(prepared.map((r) => r[pk.prop]).filter((v) => v !== undefined && v !== null))] as unknown[];
+    let existing = 0;
+    for (let i = 0; i < values.length; i += 100) {
+      try {
+        const res = await db.select({ id: pk.column }).from(table).where(inArray(pk.column, values.slice(i, i + 100) as never[]));
+        existing += res.length;
+      } catch {
+        existing = 0;
+        break;
+      }
+    }
+    const skip = Math.min(existing, prepared.length);
+    return { name, rows: prepared.length, inserted: prepared.length - skip, skipped: skip, note: skip ? `${skip} 行主键已存在，会被跳过` : null };
+  }
+
+  let inserted = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+  /* D1 的限制在「一条语句绑定多少个参数」（上限 100），不是行数：
+     comments 十几个字段时按 100 行一批发，第一批就撞上限。 */
+  const perBatch = Math.max(1, Math.floor(90 / Math.max(1, columns.size)));
+  for (let i = 0; i < prepared.length; i += perBatch) {
+    const batch = prepared.slice(i, i + perBatch);
+    try {
+      const res = await db.insert(table).values(batch).onConflictDoNothing();
+      const changes = Number((res as unknown as { meta?: { changes?: number } }).meta?.changes ?? batch.length);
+      inserted += changes;
+      skipped += batch.length - changes;
+    } catch (e) {
+      errors.push(briefError(e));
+    }
+  }
+  return { name, rows: prepared.length, inserted, skipped, note: errors.length ? `写入出错：${errors[0]}` : null };
+}
+
+function labelOf(id: SectionId): string {
+  return SECTION_LABEL.get(id) ?? id;
 }
 
 function normalizePayload(raw: unknown): BackupPayload {
   if (!raw || typeof raw !== 'object') throw new Error('备份文件不是合法的 JSON');
-  const p = raw as Partial<BackupPayload>;
-  if (!p.tables || typeof p.tables !== 'object') throw new Error('备份文件缺少 tables 字段');
+  const p = raw as Partial<BackupPayload> & { tables?: unknown };
+  // v1 的备份只有 D1 表，没有分区概念：直接告诉用户这份文件太老，让他用新后台重新导
+  if (!p.sections && p.tables) throw new Error('这是旧版（v1）备份文件，只有数据表、没有文章与主题样式。请到新站后台用旧版导出的评论分区单独导入，其余内容重新导一份 v2');
+  if (!Array.isArray(p.sections)) throw new Error('备份文件缺少 sections 字段，不是全站备份');
   if (p.version && p.version > BACKUP_VERSION) throw new Error(`备份版本 ${p.version} 高于当前支持的 ${BACKUP_VERSION}`);
+  const sections = (p.sections as BackupSection[]).filter((s) => s && typeof s.id === 'string');
+  const origin = p.origin ?? { owner: '', repo: '', branch: 'main', siteUrl: '', dataDir: 'data', postsDir: 'content/posts', momentsDir: 'content/moments', linksFile: 'data/links.yaml', authorsFile: 'data/authors.yaml' };
   return {
     version: p.version ?? 0,
-    scope: p.scope === 'full' ? 'full' : 'core',
     createdAt: p.createdAt ?? 0,
     siteName: p.siteName ?? '',
     note: p.note ?? '',
-    counts: p.counts ?? {},
-    tables: p.tables as BackupPayload['tables'],
+    origin,
+    omitted: Array.isArray(p.omitted) ? p.omitted : [],
+    sections,
   };
 }
 
@@ -261,4 +753,9 @@ export async function pruneBackups(env: Env, keep = 10): Promise<number> {
     removed++;
   }
   return removed;
+}
+
+/** 给后台显示用的分区目录（不含内容） */
+export function sectionCatalog() {
+  return SECTION_CATALOG;
 }

@@ -12,7 +12,17 @@
   }
 
   let summary = $state<Summary | null>(null);
-  let content = $state<{ comments: number; subscribers: number; users: number; articles?: number } | null>(null);
+  let content = $state<{
+    comments: number;
+    subscribers: number;
+    users: number;
+    posts?: number;
+    moments?: number;
+    postsDir?: string;
+    momentsDir?: string;
+    capped?: boolean;
+    contentError?: string;
+  } | null>(null);
   let trend = $state<{ day: string; views: number; visitors: number }[]>([]);
   let devices = $state<Record<string, { k: string; n: number }[]>>({});
   let top = $state<{ site?: string; pages: { path: string; views: number }[]; referrers: { referrer: string; views: number }[] }>({
@@ -46,9 +56,20 @@
       top = tp.data;
       health = hd.data;
       try {
-        const cs = await get<{ data: { entries: { name: string; type: string }[]; error?: string } }>('/api/admin/stats/content');
-        if (content) content.articles = cs.data.entries.filter((e) => e.type === 'file' && e.name.endsWith('.md')).length;
-      } catch {}
+        const cs = await get<{
+          data: { posts: number; moments: number; postsDir: string; momentsDir: string; capped?: boolean; error?: string };
+        }>('/api/admin/stats/content');
+        if (content) {
+          content.posts = cs.data.posts;
+          content.moments = cs.data.moments;
+          content.postsDir = cs.data.postsDir;
+          content.momentsDir = cs.data.momentsDir;
+          content.capped = cs.data.capped;
+          content.contentError = cs.data.error;
+        }
+      } catch (e) {
+        if (content) content.contentError = e instanceof Error ? e.message : '内容仓库读取失败';
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : '数据加载失败';
     } finally {
@@ -67,6 +88,60 @@
     if (s.length <= head + tail + 1) return s;
     return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
   }
+
+  const JOB_LABELS: Record<string, string> = {
+    'friends:check': '友链健康检测',
+    'friends:feed': '朋友动态抓取',
+    'analytics:prune': '统计明细清理',
+    'stats:reconcile': '累计量对账',
+    'poststats': '文章统计导出',
+    'feed:push': '新文章推送订阅',
+  };
+
+  function sinceText(ts: number): string {
+    const d = Math.floor(Date.now() / 1000) - ts;
+    if (d < 60) return `${d} 秒前`;
+    if (d < 3600) return `${Math.floor(d / 60)} 分钟前`;
+    if (d < 86400) return `${Math.floor(d / 3600)} 小时前`;
+    return `${Math.floor(d / 86400)} 天前`;
+  }
+
+  /**
+   * 运行状况的胶囊。两处改动：
+   * ① 后端 cron 以前回的是 { recent: [...] }，界面按数组判断 length，永远为假，
+   *    跑过的任务也一律显示「尚未执行过」；现在后端回数组，这里也只认数组。
+   * ② 胶囊从「Object.entries 全铺」改成写死的清单：多一个 check 键就凭空多一个没名字的胶囊。
+   */
+  const pillDefs = $derived.by(() => {
+    const chk = health?.checks ?? {};
+    const email = chk.email ?? {};
+    return [
+      { key: 'd1', label: '数据库', ok: chk.d1?.ok !== false, detail: chk.d1?.detail ?? '', tip: 'D1 连通性：select 1 是否成功' },
+      { key: 'r2', label: '对象存储', ok: chk.r2?.ok !== false, detail: chk.r2?.detail ?? '', tip: 'R2 桶里的对象总数（分页翻完，超过 5 万个标 +）' },
+      { key: 'kv', label: '缓存', ok: chk.kv?.ok !== false, detail: chk.kv?.detail ?? '', tip: 'KV 命名空间的键总数' },
+      { key: 'queue', label: '发信队列', ok: chk.emailQueue?.ok !== false, detail: chk.emailQueue?.detail ?? '', tip: 'EMAIL_QUEUE 绑定是否存在' },
+      {
+        key: 'repo',
+        label: '内容仓库',
+        ok: !content?.contentError,
+        detail: content?.contentError ? '读取失败' : `文章 ${content?.posts ?? 0} · 时刻 ${content?.moments ?? 0}`,
+        tip: content?.contentError ?? `递归数 .md：文章目录 ${content?.postsDir ?? ''}、时刻目录 ${content?.momentsDir ?? ''}`,
+      },
+      {
+        key: 'email',
+        label: '发信',
+        ok: email.secretConfigured !== false,
+        detail: `${email.provider ?? 'smtp'}${email.credentialSource ? ` · ${email.credentialSource}` : ''}`,
+        tip: `凭据来源：${email.credentialSource ?? '未配置'}（后台填的密码与 wrangler secret 任一即可）；SMTP 主机 ${email.host || '未填'}，发件人 ${email.from || '未填'}`,
+      },
+    ];
+  });
+
+  const badChecks = $derived(pillDefs.filter((p) => !p.ok));
+  const cronJobs = $derived.by(() => {
+    const rows = health?.checks?.cron;
+    return Array.isArray(rows) ? rows : [];
+  });
 </script>
 
 <div class="head row spread">
@@ -93,7 +168,8 @@
 
 <div class="cards four">
   {#each [
-    ['文章', content?.articles, 'Git 内容目录 .md'],
+    ['文章', content?.posts, content?.contentError ? '内容仓库读不到' : content?.capped ? '目录递归 .md（数量已达上限）' : '目录递归 .md'],
+    ['时刻', content?.moments, content?.contentError ? '内容仓库读不到' : '目录递归 .md'],
     ['评论', content?.comments, ''],
     ['订阅者', content?.subscribers, '已确认'],
     ['用户', content?.users, ''],
@@ -169,32 +245,46 @@
   <div class="card wide">
     <div class="row spread">
       <h3>运行状况</h3>
-      {#if health}<span class="muted">API 延迟 {health.checks?.apiLatencyMs}ms</span>{/if}
+      {#if health}
+        <span class="muted">
+          {badChecks.length ? `${badChecks.length} 项异常` : '全部正常'} · API 延迟 {health.checks?.apiLatencyMs ?? 0}ms
+        </span>
+      {/if}
     </div>
     {#if health}
       <div class="health">
-        {#each Object.entries(health.checks ?? {}) as [k, raw] (k)}
-          {#if k !== 'apiLatencyMs' && k !== 'cron' && k !== 'email'}
-            {@const chk = raw as any}
-            <span class="pill" class:good={chk.ok} class:bad={!chk.ok} title={chk.detail ?? ''}>
-              {{ d1: 'D1', r2: 'R2', kv: 'KV', emailQueue: '队列', secret: '密钥', md5: 'MD5' }[k] ?? k}{#if chk.detail} · {chk.detail}{/if}
-            </span>
-          {/if}
+        {#each pillDefs as p (p.key)}
+          <span class="pill" class:good={p.ok} class:bad={!p.ok} title={p.tip}>
+            {p.label}{#if p.detail} · {p.detail}{/if}
+          </span>
         {/each}
-        <span class="pill" class:good={health.checks?.email?.secretConfigured} class:bad={!health.checks?.email?.secretConfigured}>
-          邮件 · {health.checks?.email?.provider ?? 'smtp'}{#if health.checks?.email?.host} · {health.checks.email.host}{/if}
-        </span>
       </div>
-      {#if health.checks?.cron?.length}
+      {#if badChecks.length}
+        <p class="err">
+          异常项：{badChecks.map((b) => `${b.label} — ${b.detail}`).join('；')}
+        </p>
+      {/if}
+      {#if cronJobs.length}
         <div class="table-wrap">
           <table class="jobs">
-            <thead><tr><th>定时任务</th><th>状态</th><th>开始</th><th>摘要</th></tr></thead>
+            <thead>
+              <tr>
+                <th>定时任务</th>
+                <th>状态</th>
+                <th>最近一次开始</th>
+                <th>距今</th>
+                <th>耗时</th>
+                <th>摘要</th>
+              </tr>
+            </thead>
             <tbody>
-              {#each health.checks.cron as j (j.name + j.startedAt)}
+              {#each cronJobs as j (j.name)}
                 <tr>
-                  <td>{j.name}</td>
-                  <td><span class="badge" class:good={j.status === 'ok'} class:bad={j.status === 'error'}>{j.status}</span></td>
+                  <td>{JOB_LABELS[j.name] ?? j.name}</td>
+                  <td><span class="badge" class:good={j.status === 'ok'} class:bad={j.status !== 'ok'}>{j.status}</span></td>
                   <td class="muted">{new Date(j.startedAt * 1000).toLocaleString('zh-CN', { hour12: false })}</td>
+                  <td class="muted">{sinceText(j.startedAt)}</td>
+                  <td class="muted">{j.finishedAt ? `${Math.max(0, j.finishedAt - j.startedAt)} 秒` : '—'}</td>
                   <td class="muted">{j.detail ?? ''}</td>
                 </tr>
               {/each}
@@ -202,7 +292,9 @@
           </table>
         </div>
       {:else}
-        <p class="muted">定时任务尚未执行过（Cron 每天 02:00 UTC 运行，或在设置页手动触发）。</p>
+        <p class="muted">
+          还没有任何一次定时任务记录。Cron 在世界时 02:00（北京 10:00）跑一次；也可以在「设置」页底部手动触发。
+        </p>
       {/if}
     {:else}
       <p class="muted">加载中…</p>

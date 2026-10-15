@@ -167,6 +167,37 @@ if [ -n "$ADMIN_COOKIE" ]; then
   req GET /api/security 200 '' '我的信息：安全设置' "$ADMIN_COOKIE"
   req GET /api/security/totp/status 200 '' '验证器状态（含「登录时要动态码」这一自己的开关）' "$ADMIN_COOKIE"
   req GET '/api/admin/deletions' 200 '' '注销申请列表' "$ADMIN_COOKIE"
+
+  section '管理员：仪表盘与全站备份'
+  req GET '/api/admin/health-detail' 200 '' '运行状况明细' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q '"cron":\['     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '定时任务回的是数组（界面按数组遍历）'; }     || { FAIL=$((FAIL + 1)); FAILED+=('cron 不是数组'); printf '  ✗ %-56s
+' '定时任务回的是数组（界面按数组遍历）'; }
+  printf '%s' "$BODY_TEXT" | grep -q 'credentialSource'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '发信胶囊带凭据来源（后台填的密码也算）'; }     || { FAIL=$((FAIL + 1)); FAILED+=('缺 credentialSource'); printf '  ✗ %-56s
+' '发信胶囊带凭据来源（后台填的密码也算）'; }
+  req GET '/api/admin/stats/content' 200 '' '文章与时刻的递归计数' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q '"posts":'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '文章数按 posts 目录递归统计'; }     || { FAIL=$((FAIL + 1)); FAILED+=('stats/content 缺 posts'); printf '  ✗ %-56s
+' '文章数按 posts 目录递归统计'; }
+  req GET '/api/admin/backup/catalog' 200 '' '备份分区目录' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q '"media"'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '备份分区目录含媒体清单'; }     || { FAIL=$((FAIL + 1)); FAILED+=('备份目录缺分区'); printf '  ✗ %-56s
+' '备份分区目录含媒体清单'; }
+  req GET '/api/admin/backup/export' 200 '' '全站备份导出' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q '"version":2'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '导出的是 v2 分区结构'; }     || { FAIL=$((FAIL + 1)); FAILED+=('导出不是 v2'); printf '  ✗ %-56s
+' '导出的是 v2 分区结构'; }
+  printf '%s' "$BODY_TEXT" | grep -qi 'smtpPassword'     && { FAIL=$((FAIL + 1)); FAILED+=('备份文件里出现密钥配置项'); printf '  ✗ %-56s
+' '备份文件不含密钥配置'; }     || { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '备份文件不含密钥配置'; }
+  req GET '/api/admin/users' 200 '' '用户列表（含站长自己）' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q '"role":"admin"'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '站长那一行默认就在用户列表里'; }     || { FAIL=$((FAIL + 1)); FAILED+=('用户列表没有管理员'); printf '  ✗ %-56s
+' '站长那一行默认就在用户列表里'; }
+  printf '%s' "$BODY_TEXT" | grep -q '"authorVerified":true'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '管理员读出来恒为已认证作者'; }     || { FAIL=$((FAIL + 1)); FAILED+=('管理员未认证'); printf '  ✗ %-56s
+' '管理员读出来恒为已认证作者'; }
 else
   printf '\n\033[33m未提供 ADMIN_COOKIE，管理员接口的实际数据检查已跳过。\033[0m\n'
   printf '想跑全量：ADMIN_COOKIE=\x27zero_session=…\x27 bash scripts/smoke.sh\n'

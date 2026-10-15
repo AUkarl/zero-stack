@@ -15,13 +15,16 @@ import {
   type AuthUser,
 } from '../services/auth';
 import { writeAudit } from '../services/audit';
+import { ensureAdminAuthorIdentity, withAdminAuthorBits } from '../services/admin-author';
 import { getConfigBool, getAdminContactEmail } from '../services/config';
 import { consumeInvite, normalizeCode, registerPolicy } from '../services/invites';
 import {
   assignAccountSlug,
   checkTotp,
-  emailOtpAvailable,  loginPolicy,
-  planFactors,  sendEmailOtp,
+  emailOtpAvailable,
+  loginPolicy,
+  planFactors,
+  sendEmailOtp,
   verifyEmailOtp,
   type UserRow,
 } from '../services/account-shared';
@@ -68,23 +71,28 @@ function groupLabel(group: string): string {
  * 驼峰是给 CMS 用的，两套一起给，省得前端各写一套映射。
  */
 function accountPayload(row: UserRow) {
-  const group = displayUserGroup(row);
+  // 管理员恒为认证作者 + 全权限（见 services/admin-author.ts）：
+  // 那三个位是站长给别人授权用的开关，不该反过来把站长自己锁在未认证状态。
+  const me = withAdminAuthorBits(row);
+  const group = displayUserGroup(me);
   return {
-    account_slug: row.accountSlug,
-    accountSlug: row.accountSlug,
-    slug: row.accountSlug,
+    account_slug: me.accountSlug,
+    accountSlug: me.accountSlug,
+    slug: me.accountSlug,
+    /** 作者标识：前台 /author/<handle>/ 与 data/authors.yaml 的键 */
+    handle: me.handle ?? '',
     user_group: group,
     userGroup: group,
     userGroupName: groupLabel(group),
     /** 库里的原始值（PATCH /api/admin/users/:id 回填要用） */
-    userGroupStored: row.userGroup || 'friend',
-    email: row.email,
-    isAdmin: row.role === 'admin',
-    role: row.role,
-    author_verified: row.authorVerified,
-    can_publish: row.canPublish,
-    can_author: row.canAuthor,
-    totp_enabled: row.totpEnabled,
+    userGroupStored: me.userGroup || 'friend',
+    email: me.email,
+    isAdmin: me.role === 'admin',
+    role: me.role,
+    author_verified: me.authorVerified,
+    can_publish: me.canPublish,
+    can_author: me.canAuthor,
+    totp_enabled: me.totpEnabled,
   };
 }
 
@@ -155,6 +163,10 @@ app.post('/register', async (c) => {
   const slug = await assignAccountSlug(env, id, email);
 
   if (first) {
+    // 首个账号一注册就补齐作者身份：handle 按刚填的注册信息推导，
+    // 三个权限位与用户组全亮。以前这里硬编码 author_verified:false、handle 也不写，
+    // 结果站长既不是认证作者也没有作者标识，前台署名一直落在主题的占位作者上。
+    const identity = await ensureAdminAuthorIdentity(env, id);
     const { token, expiresAt } = await issueSession(env, id, { ip: clientIp(c), userAgent: userAgent(c) });
     sessionHeaders(c, token, expiresAt);
     return ok({
@@ -165,13 +177,14 @@ app.post('/register', async (c) => {
       account_slug: slug,
       accountSlug: slug,
       slug,
+      handle: identity.handle,
       user_group: 'owner',
       userGroup: 'owner',
       userGroupName: '站长',
       email,
-      author_verified: false,
-      can_publish: false,
-      can_author: false,
+      author_verified: true,
+      can_publish: true,
+      can_author: true,
       message: '首个账号已自动成为管理员',
     });
   }
@@ -251,20 +264,22 @@ app.post('/verify-email', async (c) => {
 /* ------------------------------------------------------------------ 密码登录 */
 
 function toAuthUser(row: UserRow): AuthUser {
+  const me = withAdminAuthorBits(row);
   return {
-    id: row.id,
-    email: row.email,
-    name: row.name,
-    role: row.role,
-    status: row.status,
-    emailVerified: row.emailVerified,
-    createdAt: row.createdAt,
-    canPublish: row.canPublish,
-    canAuthor: row.canAuthor,
-    authorVerified: row.authorVerified,
-    accountSlug: row.accountSlug,
-    userGroup: displayUserGroup(row),
-    totpEnabled: row.totpEnabled,
+    id: me.id,
+    email: me.email,
+    name: me.name,
+    role: me.role,
+    status: me.status,
+    emailVerified: me.emailVerified,
+    createdAt: me.createdAt,
+    handle: me.handle ?? '',
+    canPublish: me.canPublish,
+    canAuthor: me.canAuthor,
+    authorVerified: me.authorVerified,
+    accountSlug: me.accountSlug,
+    userGroup: displayUserGroup(me),
+    totpEnabled: me.totpEnabled,
   };
 }
 

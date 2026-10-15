@@ -431,6 +431,16 @@ export async function setConfig(env: Env, key: ConfigKey, value: string, valueTy
   cacheLoaded = false;
 }
 
+/**
+ * 直接写 site_config 的地方（备份恢复整批 upsert，里面可能有当前版本已不认识的键，
+ * 走 setConfig 会被键名校验挡掉）之后调一次。
+ * 不清缓存的话，恢复完最多 30 秒内读到的还是旧值，界面上看着像「导入没生效」。
+ */
+export function invalidateConfigCache(): void {
+  cache.clear();
+  cacheLoaded = false;
+}
+
 export async function getAllConfig(env: Env): Promise<Record<string, string>> {
   await loadRows(env);
   const out: Record<string, string> = {};

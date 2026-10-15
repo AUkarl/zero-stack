@@ -201,6 +201,43 @@ export async function listDirViaTarget(target: RepoTarget, dir: string): Promise
   return gh.listDir({ owner: target.owner, repo: target.repo, branch: target.branch, token: target.token, path: dir });
 }
 
+/**
+ * 递归列目录，只回文件路径。
+ * 备份与仪表盘的「文章数 / 时刻数」共用这一份：单层 listDir 在多语言或
+ * 页面包（post/index.md）布局下会把文章数成 0，两处都错过一次。
+ * 目录不存在时回空数组而不是抛：新装的站 moments 目录可能就是空的。
+ */
+export async function walkFiles(
+  target: RepoTarget,
+  dir: string,
+  opts: { exts?: string[]; cap?: number; maxDepth?: number } = {},
+): Promise<string[]> {
+  const exts = opts.exts ?? [];
+  const cap = opts.cap ?? 600;
+  const maxDepth = opts.maxDepth ?? 4;
+  const out: string[] = [];
+
+  const step = async (current: string, depth: number): Promise<void> => {
+    if (depth > maxDepth || out.length >= cap) return;
+    let entries: RepoEntry[];
+    try {
+      entries = await listDirViaTarget(target, current);
+    } catch {
+      return; // 目录不存在或读不到：当作没有内容，交给调用方按 0 处理
+    }
+    const subDirs: string[] = [];
+    for (const e of entries) {
+      if (out.length >= cap) break;
+      if (e.type === 'dir') subDirs.push(e.path);
+      else if (!exts.length || exts.some((x) => e.path.toLowerCase().endsWith(x))) out.push(e.path);
+    }
+    for (const d of subDirs) await step(d, depth + 1);
+  };
+
+  await step(dir.replace(/^\/+|\/+$/g, ''), 0);
+  return out;
+}
+
 /* ------------------------------------------------------------------
  * 本地目录后端
  * ----------------------------------------------------------------*/

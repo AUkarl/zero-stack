@@ -13,6 +13,7 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { users } from '../db/schema';
 import { writeAudit } from '../services/audit';
+import { withAdminAuthorBits } from '../services/admin-author';
 import { getConfigBool } from '../services/config';
 import { requireUser } from '../middleware/auth';
 import { clientIp } from '../lib/http';
@@ -113,15 +114,19 @@ export const authorsPublic = new Hono<AppEnv>();
 
 type AuthorRow = {
   id: string;
+  role?: string | null;
   handle: string | null;
   name: string | null;
   image: string | null;
   bio: string | null;
   website: string | null;
+  accountSlug?: string | null;
   authorVerified: boolean | null;
 };
 
-function toAuthorCard(row: AuthorRow) {
+function toAuthorCard(source: AuthorRow) {
+  // 管理员就是站点的认证作者，不用再去后台给自己点一遍「作者认证」
+  const row = withAdminAuthorBits(source);
   return {
     id: row.id,
     handle: row.handle,
@@ -144,18 +149,21 @@ authorsPublic.get('/', async (c) => {
   const rows = await db
     .select({
       id: users.id,
+      role: users.role,
       handle: users.handle,
       name: users.name,
       image: users.image,
       bio: users.bio,
       website: users.website,
+      accountSlug: users.accountSlug,
       authorVerified: users.authorVerified,
     })
     .from(users)
     .where(and(or(inArray(users.id, ids), inArray(users.handle, ids.map((s) => s.toLowerCase()))), eq(users.status, 'active')));
 
   const byKey = new Map<string, AuthorRow>();
-  for (const r of rows) {
+  for (const source of rows) {
+    const r = withAdminAuthorBits(source);
     byKey.set(r.id, r);
     if (r.handle) byKey.set(r.handle, r);
   }

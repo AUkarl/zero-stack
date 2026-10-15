@@ -15,7 +15,7 @@
  *   默认全部按「已通过」入库（历史评论再走一遍先审后发没有意义）。
  */
 import { and, eq, sql } from 'drizzle-orm';
-import { commenters, comments } from '../db/schema';
+import { commenters, comments, reactions, visits } from '../db/schema';
 import { createDb } from '../db/client';
 import { emailMd5, isEmail } from '../lib/avatar';
 import { newId } from '../lib/crypto';
@@ -196,7 +196,207 @@ export function parseCsvRows(text: string): Record<string, unknown>[] {
   });
 }
 
-/* ---------------------------------------------------------------- 格式识别 */
+/**
+ * 附属计数：Waline 除了 Comment 那张表，还会导出 Counter 那张（浏览量与表态数），
+ * 老版本是 {objectId, type:'Visit'|'Reaction', time}，1.4x 是 {url, time, reaction0..reaction8}。
+ * 按地址汇总成 {slug, likes, views}，交给 planCounters / applyCounters 做「只增不减」。
+ */
+export interface CounterEntry {
+  slug: string;
+  likes: number;
+  views: number;
+  /** 这批计数发生在什么时候（有就用来给补出来的明细行定位，没有就 0） */
+  at: number;
+}
+
+function counterTableOf(payload: unknown): Record<string, unknown>[] {
+  if (Array.isArray(payload)) return [];
+  const o = rec(payload);
+  const bucket = (v: unknown): Record<string, unknown>[] => {
+    const map = rec(v);
+    for (const [k, list] of Object.entries(map)) {
+      if (/counter|count|stat/i.test(k) && Array.isArray(list)) return list.map(rec);
+    }
+    return [];
+  };
+    const fromData = bucket(o.data);
+  if (fromData.length) return fromData;
+  const fromTables = bucket(o.tables);
+  return fromTables.length ? fromTables : bucket(o);
+}
+
+/** 一条 Counter 记录里挑出地址、浏览量与表态数 */
+function oneCounter(r: Record<string, unknown>): CounterEntry | null {
+  const slug = normSlug(
+    pickStr(r, ['url', 'pathname', 'path', 'page_url', 'url_for', 'articlePath', 'article_path', 'slug', 'permalink']) ||
+      (pickStr(r, ['objectId', 'oid', 'id']).includes('/') ? pickStr(r, ['objectId', 'oid', 'id']) : ''),
+  );
+  if (!slug || slug === '/') return null;
+  const type = pickStr(r, ['type']).toLowerCase();
+  const time = Math.max(0, Math.round(Number(pick(r, ['time', 'count', 'value']) ?? 0)) || 0);
+  let likes = 0;
+  for (let i = 0; i < 9; i++) likes += Math.max(0, Math.round(Number(r[`reaction${i}`] ?? 0)) || 0);
+  let views = 0;
+  if (type === 'reaction') likes += time;
+  else if (type === 'visit' || type === 'counter') views += time;
+  else if (type === 'comment') {
+    /* 评论数由评论本身决定，这张表里的 Comment 行不额外补任何东西 */
+  } else {
+    // 1.4x 的 Counter 没有 type：time 是浏览量，reactionN 是表态数
+    views += time;
+  }
+  const at = toUnix(pick(r, ['createdAt', 'created_at', 'updatedAt', 'insertedAt'])) ?? 0;
+  return likes || views ? { slug, likes, views, at } : null;
+}
+
+/** 同一地址可能出现多行（多语言、改版前后），按地址合并 */
+export function extractCounters(payload: unknown): CounterEntry[] {
+  const merged = new Map<string, CounterEntry>();
+  for (const row of counterTableOf(payload)) {
+    const one = oneCounter(row);
+    if (!one) continue;
+    const cur = merged.get(one.slug);
+    if (!cur) merged.set(one.slug, one);
+    else {
+      cur.likes += one.likes;
+      cur.views += one.views;
+      cur.at = cur.at || one.at;
+    }
+  }
+  return [...merged.values()];
+}
+
+/**
+ * 只增不减地并到本站：本站已经有更多的，就保持本站。
+ * 指纹写成 legacy:<slug 哈希>:kind:序号，重复导入同一份文件时靠唯一索引自然去重。
+ */
+export interface CounterMergeResult {
+  slugs: number;
+  likesAdded: number;
+  viewsAdded: number;
+  kept: number;
+}
+
+/**
+ * 地址 → 一小段稳定指纹，用作补出来的点赞 / 浏览行的 legacy 标记。
+ * 不是加密用途（只是「同一地址每次算出同一个串」），所以自己写个 djb2，不引 crypto。
+ */
+function legacyTag(slug: string): string {
+  let h = 5381;
+  for (let i = 0; i < slug.length; i++) h = ((h << 5) + h + slug.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+export async function planCounters(env: Env, entries: CounterEntry[]): Promise<CounterMergeResult> {
+  const db = createDb(env);
+  const out: CounterMergeResult = { slugs: 0, likesAdded: 0, viewsAdded: 0, kept: 0 };
+  for (const e of entries) {
+    if (!e.likes && !e.views) continue;
+    out.slugs++;
+    if (e.likes) {
+      const cur = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(reactions)
+        .where(and(eq(reactions.targetSlug, e.slug), eq(reactions.kind, 'like')))
+        .then((r) => Number(r[0]?.n ?? 0))
+        .catch(() => 0);
+      if (cur >= e.likes) out.kept++;
+      else out.likesAdded += e.likes - cur;
+    }
+    if (e.views) {
+      const cur = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(visits)
+        .where(eq(visits.path, e.slug))
+        .then((r) => Number(r[0]?.n ?? 0))
+        .catch(() => 0);
+      if (cur >= e.views) out.kept++;
+      else out.viewsAdded += e.views - cur;
+    }
+  }
+  return out;
+}
+
+/** 补出来的浏览明细挂在同一个 legacy 会话下，时间用导出里的时间，不去污染「今天」的趋势 */
+const VIEWS_PER_ROW_CAP = 20000;
+
+export async function applyCounters(env: Env, entries: CounterEntry[]): Promise<CounterMergeResult> {
+  const db = createDb(env);
+  const out: CounterMergeResult = { slugs: 0, likesAdded: 0, viewsAdded: 0, kept: 0 };
+
+  for (const e of entries) {
+    if (!e.likes && !e.views) continue;
+    out.slugs++;
+    const hash = legacyTag(e.slug);
+
+    if (e.likes) {
+      const cur = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(reactions)
+        .where(and(eq(reactions.targetSlug, e.slug), eq(reactions.kind, 'like')))
+        .then((r) => Number(r[0]?.n ?? 0))
+        .catch(() => -1);
+      if (cur < 0) out.kept++;
+      else if (cur >= e.likes) out.kept++;
+      else {
+        const rows = Array.from({ length: e.likes - cur }, (_, i) => ({
+          id: newId(),
+          targetSlug: e.slug,
+          kind: 'like',
+          userId: null,
+          fingerprint: `legacy:${hash}:like:${cur + i}`,
+          createdAt: e.at || Math.floor(Date.now() / 1000),
+        }));
+        try {
+          const res = await db.insert(reactions).values(rows).onConflictDoNothing();
+          out.likesAdded += Number((res as unknown as { meta?: { changes?: number } }).meta?.changes ?? rows.length);
+        } catch {
+          out.kept++;
+        }
+      }
+    }
+
+    if (e.views) {
+      const cur = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(visits)
+        .where(eq(visits.path, e.slug))
+        .then((r) => Number(r[0]?.n ?? 0))
+        .catch(() => -1);
+      if (cur < 0 || cur >= e.views) out.kept++;
+      else {
+        const need = Math.min(e.views - cur, VIEWS_PER_ROW_CAP);
+        const at = e.at || Math.floor(Date.now() / 1000);
+        const rows = Array.from({ length: need }, (_, i) => ({
+          id: newId(),
+          sessionId: `legacy:${hash}:views`,
+          ipHash: null,
+          path: e.slug,
+          referrer: null,
+          country: null,
+          device: null,
+          browser: null,
+          os: null,
+          duration: 0,
+          // 同一天只留一条足够：poststats 的浏览量按行数算，趋势按天聚合时不会全算到今天
+          createdAt: at,
+        }));
+        // D1 一条语句最多绑 100 个参数，visits 一行 11 个字段
+        for (let i = 0; i < rows.length; i += 8) {
+          try {
+            const res = await db.insert(visits).values(rows.slice(i, i + 8)).onConflictDoNothing();
+            out.viewsAdded += Number((res as unknown as { meta?: { changes?: number } }).meta?.changes ?? 8);
+          } catch {
+            /* 补不上就算了，浏览数从来不是要紧的数据 */
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+
 
 /**
  * 「表名 → 行数组」这种导出结构：Waline 1.4x 是 `{data: {Comment:[], Counter:[], Users:[]}}`，
