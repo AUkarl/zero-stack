@@ -118,6 +118,52 @@ export function hasWranglerConfig(): boolean {
   return existsSync(resolve(API_DIR, 'wrangler.jsonc'));
 }
 
+/* --------------------------- Cloudflare 登录态 --------------------------- */
+
+interface WhoamiRaw {
+  loggedIn?: boolean;
+  authType?: string;
+  email?: string;
+  accounts?: { id?: string; name?: string }[];
+  /** 更早的 wrangler 把身份放在 auth 里 */
+  auth?: { email?: string; accounts?: { id?: string; name?: string }[] };
+  /** 更早的 wrangler 把整包结果塞在 result 里 */
+  result?: WhoamiRaw;
+}
+
+export interface Whoami {
+  /** 展示用标识：OAuth 登录是邮箱；API Token 登录没有邮箱，退到账户名 */
+  label: string;
+  accountId: string | null;
+}
+
+/**
+ * 纯解析 wrangler 的 whoami 输出。
+ *
+ * 4.x 是平铺的 {loggedIn, authType, email, accounts}，3.x 之前包一层 result，
+ * 更早是 {auth:{email}} —— 只认其中一种就会出现「明明已登录却判成未登录」，
+ * 向导会白跑一遍浏览器授权然后死在「登录未完成」。三种都读，全认不出才算未登录。
+ */
+export function parseWhoami(raw: string): Whoami | null {
+  const json = parseJson<WhoamiRaw>(raw);
+  if (!json) return null;
+  const flat: WhoamiRaw = { ...json, ...(json.result ?? {}), ...(json.auth ?? {}) };
+  if (flat.loggedIn === false) return null;
+  const accounts = Array.isArray(flat.accounts) ? flat.accounts : [];
+  const email = typeof flat.email === 'string' ? flat.email.trim() : '';
+  const accountId = accounts.find((a) => a && typeof a.id === 'string')?.id ?? null;
+  const accountName = accounts.find((a) => a && typeof a.name === 'string')?.name ?? '';
+  const label = email || accountName || (flat.authType ? `${flat.authType}（无邮箱）` : '');
+  if (!label && !accountId) return null;
+  return { label: label || (accountId as string), accountId };
+}
+
+/** 当前 Cloudflare 登录身份；未登录或输出认不出时返回 null */
+export function whoami(): Whoami | null {
+  const raw = wranglerTry('whoami --json', { cwd: API_DIR });
+  return raw ? parseWhoami(raw) : null;
+}
+
 export function requireWranglerConfig(): void {
   if (hasWranglerConfig()) return;
   die('packages/api/wrangler.jsonc 不存在。请先运行 pnpm setup 创建 Cloudflare 资源并生成配置。');

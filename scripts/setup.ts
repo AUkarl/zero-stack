@@ -21,6 +21,7 @@ import {
   run,
   step,
   warn,
+  whoami,
   wrangler,
   wranglerTry,
 } from './_util.js';
@@ -69,21 +70,19 @@ async function confirm(message: string, initial = true): Promise<boolean> {
 
 /* --------------------------- Cloudflare 资源 --------------------------- */
 
-function loginEmail(): string | null {
-  const raw = wranglerTry('whoami --json', { cwd: API_DIR });
-  const data = raw ? parseJson<{ auth?: { email?: string } }>(raw) : null;
-  return data?.auth?.email ?? null;
-}
+/** ensureLogin 认出来的账户 id：后面「Cloudflare 邮件通道」那一问拿它当默认值 */
+let loginAccountId: string | null = null;
 
 function ensureLogin(): void {
-  let email = loginEmail();
-  if (!email) {
-    info('尚未登录，将打开浏览器完成授权');
+  let me = whoami();
+  if (!me) {
+    info('尚未登录（或 wrangler 的登录态读不出来），将打开浏览器完成授权');
     wrangler('login', { cwd: API_DIR });
-    email = loginEmail();
-    if (!email) die('登录未完成，请重新运行 pnpm setup');
+    me = whoami();
+    if (!me) die('登录未完成：wrangler whoami 仍读不到身份。也可以在环境变量里给 CLOUDFLARE_API_TOKEN 后重跑 pnpm setup');
   }
-  good(`已登录 Cloudflare：${email}`);
+  loginAccountId = me.accountId;
+  good(`已登录 Cloudflare：${me.label}${me.accountId ? `（账户 ${me.accountId}）` : ''}`);
 }
 
 /** D1 的 list 支持 --json，可精确定位同名库 */
@@ -259,7 +258,14 @@ const QUESTIONS: PromptObject[] = [
     name: 'resendApiKey',
     message: 'Resend API Key（只写入 secret）',
   },
-  { type: (p) => (p.emailProvider === 'cloudflare' ? 'text' : null), name: 'cfAccountId', message: 'Cloudflare 账户 ID' },
+  {
+    type: (p) => (p.emailProvider === 'cloudflare' ? 'text' : null),
+    name: 'cfAccountId',
+    message: 'Cloudflare 账户 ID',
+    /** whoami 认出来的账户直接当默认值，省得再去控制台抄一遍。
+        QUESTIONS 是模块级常量，必须写成函数取用，否则拿到的是 import 时的 null */
+    initial: () => loginAccountId ?? '',
+  },
   {
     type: (p) => (p.emailProvider === 'cloudflare' ? 'password' : null),
     name: 'cfEmailToken',
