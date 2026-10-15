@@ -292,7 +292,7 @@ function summary(a: Answers, workerUrl: string | null, pagesUrl: string | null):
   console.log(`  API  ：${workerUrl ?? '见上方 wrangler deploy 输出'}`);
   console.log(`  后台 ：${pagesUrl ?? a.cmsUrl}`);
   console.log('\n后续步骤：');
-  console.log(`  1. 打开后台并注册第一个账号 —— 它会自动成为管理员${workerUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
+  console.log(`  1. 建首个管理员账号（后台只有登录没有注册）：curl -X POST ${workerUrl ?? 'https://<worker 地址>'}/api/auth/register -H 'Content-Type: application/json' --data-binary '{"email":"你的邮箱","password":"至少 8 位","name":"站长"}' —— 库里第一个账号自动是 admin，之后用它在后台登录${workerUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
   console.log('  2. 后台「设置」补齐 siteUrl、emailFrom、smtpHost、smtpUser 等配置项');
   if (a.emailProvider === 'smtp') {
     console.log(`     （SMTP：${a.smtpHost ?? '待填'}:${a.smtpPort ?? '待填'}，账号 ${a.smtpUser ?? '待填'}；密码已存为 secret）`);

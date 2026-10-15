@@ -100,7 +100,12 @@
     <button class="primary go" type="submit" disabled={busy || !email || !password}>
       {busy ? '登录中…' : '登 录'}
     </button>
-    <p class="muted tip">首次部署时，通过 /api/auth/register 注册的首个账号即为管理员。</p>
+    <p class="muted tip">
+      这一页只有登录，没有注册。站点还没有账号时，先调一次
+      <code>POST /api/auth/register</code>（库里第一个账号自动成为管理员）再来登录；
+      前台已接好 API 的话，在账号页注册同一个邮箱效果一样。
+      「邮箱不存在」与「密码错误」提示的是同一句话（防账号枚举）。
+    </p>
   </form>
 </div>
 

@@ -91,9 +91,10 @@ async function main(): Promise<void> {
   info(`访问请用生产地址${url ? '（预览地址每次部署都变，别拿它当白名单）' : ''}。`);
   info(
     apiBase
-      ? `已内置 API 地址 ${apiBase}，直接注册第一个账号即可（自动成为管理员）；登录页手填的地址优先于内置值。`
-      : '首次使用：在登录页「API 地址」填 worker 域名，再注册第一个账号（自动成为管理员）。',
+      ? `已内置 API 地址 ${apiBase}，打开就能登录；登录页手填的地址优先于内置值。`
+      : '首次使用：在登录页「API 地址」填 worker 域名（本机只需填一次）。',
   );
+  info('后台只有登录、没有注册：首个管理员要调一次 POST /api/auth/register（见 docs/DEPLOYMENT.md 第 5 节）。');
   info('两边不同源，必须把这个后台地址写进 packages/api/wrangler.jsonc 的 ALLOWED_ORIGINS 并 pnpm deploy:api，否则浏览器报 Failed to fetch。');
 }
 
