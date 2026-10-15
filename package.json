@@ -5,7 +5,7 @@
   "description": "Hugo + Hono + SvelteKit full-stack CMS: comment components, API worker, and admin panel",
   "type": "module",
   "engines": {
-    "node": ">=20",
+    "node": ">=22",
     "pnpm": ">=9"
   },
   "scripts": {

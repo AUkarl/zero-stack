@@ -72,7 +72,7 @@ Hugo 主题之外的**全套动态后端**：评论、点赞 / 收藏、邮件�
 
 | 依赖 | 版本 | 校验 |
 | --- | --- | --- |
-| Node.js | ≥ 20（仓库 `engines` 已锁） | `node -v` |
+| Node.js | ≥ 22（wrangler 4.149+ 的要求，仓库 `engines` 已锁） | `node -v` |
 | pnpm | ≥ 9（workspace 协议必需，npm / yarn 装不上） | `pnpm -v` |
 | Hugo | extended，本地已验证 0.165.0；主题 `min_version = 0.128.0` | `hugo version` 必须带 `+extended` |
 | wrangler | 由依赖提供（`pnpm dlx wrangler` 也可） | `pnpm exec wrangler -v` |
