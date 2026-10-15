@@ -111,9 +111,10 @@ pnpm deploy:api -- --no-migrate   # 只改了代码时跳过迁移
 pnpm deploy:api -- --dry-run      # 只校验打包，不上传
 pnpm deploy:api -- --local        # 只把迁移打到本地 D1
 
-pnpm deploy:cms          # 构建 zero-cms 并部署到 Pages
+pnpm deploy:cms          # 构建 zero-cms 并部署到 Pages（会问一次 API 地址）
 pnpm deploy:cms -- --no-build     # 复用已有产物
 pnpm deploy:cms -- --project my-cms
+pnpm deploy:cms -- --api https://zero-api.xxx.workers.dev   # 不问，直接内置这个地址
 ```
 
 `deploy:cms` 会先确认 Pages 项目存在，没有就自己建（`pages project create <名称> --production-branch main`）。
@@ -127,8 +128,13 @@ npx wrangler pages project create zero-cms --production-branch main
 npx wrangler pages deploy .svelte-kit/cloudflare --project-name=zero-cms
 ```
 
-后台首次打开时，登录页要求填写 API 地址（保存在浏览器 `localStorage`）。
-构建前设置 `VITE_API_BASE` 可以把地址烧进产物，省掉这一步：
+后台取 API 地址的优先级：
+
+1. 登录页填的「API 地址」（浏览器 `localStorage`）—— 现场排查随时能改；
+2. 构建时内置的 `VITE_API_BASE` —— 来自 `--api`、环境变量或 `packages/cms/.zero-api-base`（上一个命令问过之后记下的，已 gitignore）；`pnpm setup` 直接把刚部署的 Worker 地址编进去；
+3. 都没有 = 同源。本地靠 vite 的 `/api` 代理没问题，**Pages 上没有这个代理，同源就是 404**。
+
+CI 或脚本里想跳过提问就给环境变量（`docs/deploy-template.yml` 用的就是仓库变量 `API_BASE_URL`）：
 
 ```bash
 VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
@@ -283,8 +289,8 @@ pnpm check   # 本地跑同一套校验
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 后台点「注册 / 登录」显示 `请求失败 (404)` | 登录页的「API 地址」留空了：留空 = 请求打到同源，只有本地 vite 有 `/api` 代理，Pages 上没有，于是后台自己的 SPA 壳回 404。在登录页填 worker 域名（存在浏览器 localStorage，填一次即可），或构建时给 `VITE_API_BASE` |
-| 填了 worker 地址后变成连不上 / 长时间转圈 | `*.workers.dev` 在部分网络不可达：先在浏览器直接打开 `https://<worker域名>/api/config` 验证，能出 JSON 才算通；不通就给 worker 绑自定义域名（Workers → 设置 → 域名和路由），并把该域名与后台地址一起写进 `ALLOWED_ORIGINS` 后重新 `pnpm deploy:api` |
+| 后台点「注册 / 登录」显示 `请求失败 (404)` | 登录页的「API 地址」留空了：留空 = 请求打到同源，只有本地 vite 有 `/api` 代理，Pages 上没有，于是后台自己的 SPA 壳回 404。在登录页填 worker 域名（存在浏览器 localStorage，填一次即可），或部署时用 `pnpm deploy:cms -- --api <worker 地址>` 内置进产物 |
+| 后台提示 `Failed to fetch` | 请求根本没完成，两种原因：① `*.workers.dev` 在部分网络不可达 —— 先在浏览器直接打开 `https://<worker 地址>/api/config`，能出 JSON 才算通，不通就给 worker 绑自定义域名（Workers → 设置 → 域名和路由），后台改填那个域名；② CORS 未放行 —— 把后台 origin 写进 `ALLOWED_ORIGINS` 后重新 `pnpm deploy:api` |
 | 部署后台报 `This command cannot be run in a non-interactive context` | Pages 项目不存在时 `pages deploy` 要问「要不要创建」。`pnpm deploy:cms` 与 `pnpm setup` 已改成先 `pages project create`（见第 4 节）；手写 CI 流水线时也要先建项目 |
 | `pnpm setup` 说「尚未登录」，但 `pnpm exec wrangler whoami` 明显示已登录 | wrangler 各版本的 `whoami --json` 形状不同（4.x 平铺 `{loggedIn,authType,email,accounts}`、3.x 包一层 `result`、更早是 `auth.email`）。脚本现按 `scripts/_util.ts` 的 `parseWhoami()` 三种都认，API Token 登录（没有 email）也认；仍不行就直接设环境变量 `CLOUDFLARE_API_TOKEN`（配合 `CLOUDFLARE_ACCOUNT_ID`）跳过浏览器授权 |
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |

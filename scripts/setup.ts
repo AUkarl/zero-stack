@@ -20,6 +20,7 @@ import {
   info,
   parseJson,
   run,
+  saveApiBase,
   step,
   warn,
   whoami,
@@ -212,11 +213,12 @@ function deployWorker(): string | null {
   return out.match(/https:\/\/[a-z0-9.-]*workers\.dev/i)?.[0] ?? null;
 }
 
-function deployCms(): string | null {
+function deployCms(apiBase: string | null): string | null {
   step('构建评论组件包（主题引用产物）');
   run('npm run build', { cwd: COMMENT_DIR });
-  step(`构建 ${PAGES_PROJECT}`);
-  run('npm run build', { cwd: CMS_DIR });
+  step(apiBase ? `构建 ${PAGES_PROJECT}（内置 API 地址 ${apiBase}）` : `构建 ${PAGES_PROJECT}`);
+  run('npm run build', { cwd: CMS_DIR, env: { VITE_API_BASE: apiBase ?? '' } });
+  if (apiBase) saveApiBase(apiBase);
   step(`准备 Pages 项目 ${PAGES_PROJECT}`);
   good(ensurePagesProject(PAGES_PROJECT) ? `Pages 项目 ${PAGES_PROJECT} 已创建（生产分支 main）` : `Pages 项目 ${PAGES_PROJECT} 已存在，沿用`);
   step(`部署 ${PAGES_PROJECT} 到 Cloudflare Pages`);
@@ -290,7 +292,7 @@ function summary(a: Answers, workerUrl: string | null, pagesUrl: string | null):
   console.log(`  API  ：${workerUrl ?? '见上方 wrangler deploy 输出'}`);
   console.log(`  后台 ：${pagesUrl ?? a.cmsUrl}`);
   console.log('\n后续步骤：');
-  console.log('  1. 打开后台并注册第一个账号 —— 它会自动成为管理员');
+  console.log(`  1. 打开后台并注册第一个账号 —— 它会自动成为管理员${workerUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
   console.log('  2. 后台「设置」补齐 siteUrl、emailFrom、smtpHost、smtpUser 等配置项');
   if (a.emailProvider === 'smtp') {
     console.log(`     （SMTP：${a.smtpHost ?? '待填'}:${a.smtpPort ?? '待填'}，账号 ${a.smtpUser ?? '待填'}；密码已存为 secret）`);
@@ -333,7 +335,7 @@ async function main(): Promise<void> {
   good('D1 表结构已同步');
 
   const workerUrl = deployWorker();
-  const pagesUrl = deployCms();
+  const pagesUrl = deployCms(workerUrl);
   summary(a, workerUrl, pagesUrl);
 }
 

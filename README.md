@@ -222,7 +222,9 @@ pnpm setup -- --no-deploy      # 只准备资源与配置，不部署
    `routes`，比 `*.workers.dev` 在国内更可达。
 
 5. **部署后台**：`pnpm deploy:cms` → Cloudflare Pages 项目 `zero-cms`。
-   后台是纯 SPA（`adapter-static`），路由回退已配好，直接访问子路径不会 404。
+   过程中会问一次「后台要连的 API 地址」，填了就编进产物（并记在 `packages/cms/.zero-api-base`，
+   下次自动沿用），打开后台直接就能注册，不用再在登录页手填；`-- --api <地址>` 可跳过提问。
+   后台是纯 SPA（`adapter-cloudflare` + `ssr = false`），路由回退已配好，直接访问子路径不会 404。
 
 6. **Cron 与队列消费者**：`wrangler.jsonc` 里 `triggers.crons = ["0 2 * * *"]`、
    `queues.consumers` 指向 `zero-email`。`pnpm deploy:api` 会一起生效，
@@ -291,7 +293,7 @@ pnpm setup -- --no-deploy      # 只准备资源与配置，不部署
 
 | 路径 | 干什么 |
 | --- | --- |
-| `/login` | 管理员登录（API 地址留空即同源）；按登录方式可能要动态码或邮箱验证码 |
+| `/login` | 管理员登录；API 地址优先取这里填的，其次取构建时内置的值，本地开发两者都不填走同源代理。按登录方式可能要动态码或邮箱验证码 |
 | `/` | 仪表盘：待办数量、最近评论 / 申请 / 任务、快捷入口 |
 | `/stats` | 访问统计：趋势、热门页面、来源、设备、CSV 导出 |
 | `/content` | 文章结构化编辑：字段 + 正文 + 短代码面板 + 封面选图、本地暂存与「保存到 Git（N）」批量推送、删除会连构建产物一起清 |
@@ -432,7 +434,7 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 | --- | --- |
 | `pnpm setup` | 交互式部署向导（资源 → 配置 → 密钥 → 迁移 → 发布），`-- --no-deploy` 只准备资源 |
 | `pnpm deploy:api` | 同步 D1 迁移并部署 Worker，`-- --no-migrate` / `-- --dry-run` / `-- --local` |
-| `pnpm deploy:cms` | 构建后台并部署 Pages，`-- --no-build` / `-- --project <名称>` |
+| `pnpm deploy:cms` | 构建后台并部署 Pages，`-- --api <worker 地址>` / `-- --no-build` / `-- --project <名称>` |
 | `pnpm create:site` | 生成私密的 `zero-site` 内容仓库骨架（含 CI 与 submodule） |
 | `pnpm migrate:waline` | Waline / Twikoo 导出 → D1 评论表 |
 | `pnpm dev:api` / `pnpm dev:cms` | 本地开发（8787 / 5173） |

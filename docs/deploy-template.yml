@@ -64,6 +64,12 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install
       - name: Build CMS
+        # VITE_API_BASE 有值就编进后台产物：打开登录页不用再手填 worker 域名。
+        # 在仓库 Settings → Secrets and variables → Actions → Variables 建一个 API_BASE_URL，
+        # 填 Worker 地址（https://zero-api.xxx.workers.dev）。不建 = 留空 = 回到登录页手填的老行为；
+        # 改了它必须重新跑这条流水线才生效。
+        env:
+          VITE_API_BASE: ${{ vars.API_BASE_URL }}
         run: pnpm --filter zero-cms build
       - name: Ensure Pages project exists
         # pages deploy 遇到不存在的项目会问「要不要创建」，CI 是非交互上下文 → 直接报

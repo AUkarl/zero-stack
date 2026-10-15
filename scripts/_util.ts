@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,6 +29,8 @@ export interface RunOptions {
   input?: string;
   /** 静默执行并返回输出，失败时抛出 */
   capture?: boolean;
+  /** 追加/覆盖的环境变量（vite 的 VITE_* 就在这儿传，不进命令行参数） */
+  env?: Record<string, string>;
 }
 
 /** shell: true —— Windows 需要 cmd 来执行 .cmd 包装脚本 */
@@ -38,6 +40,7 @@ export function run(command: string, opts: RunOptions = {}): string {
     shell: true,
     encoding: 'utf-8',
     input: opts.input,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
     stdio: [opts.input ? 'pipe' : 'inherit', opts.capture ? 'pipe' : 'inherit', opts.capture ? 'pipe' : 'inherit'],
   });
   const stdout = res.stdout ?? '';
@@ -202,4 +205,23 @@ export function whoami(): Whoami | null {
 export function requireWranglerConfig(): void {
   if (hasWranglerConfig()) return;
   die('packages/api/wrangler.jsonc 不存在。请先运行 pnpm setup 创建 Cloudflare 资源并生成配置。');
+}
+
+/** 上次部署后台时用的 API 地址，存在本机（不入库），下次部署不用再问 */
+const API_BASE_FILE = resolve(CMS_DIR, '.zero-api-base');
+
+export function readSavedApiBase(): string {
+  try {
+    return readFileSync(API_BASE_FILE, 'utf-8').trim();
+  } catch {
+    return '';
+  }
+}
+
+export function saveApiBase(url: string): void {
+  try {
+    writeFileSync(API_BASE_FILE, url.trim() + '\n');
+  } catch {
+    warn(`没能记住 API 地址（${API_BASE_FILE} 写不进去），下次部署要重新填`);
+  }
 }
