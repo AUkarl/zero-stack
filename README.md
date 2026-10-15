@@ -253,10 +253,11 @@ pnpm setup -- --no-deploy      # 只准备资源与配置，不部署
 
 # 三、上线后的配置教程（按这个顺序做）
 
-1. **建第一个账号** —— 它就是站长 / `admin`。后台登录页**只有登录没有注册**，所以先调一次接口：
-   `curl -X POST https://<worker 地址>/api/auth/register -H 'Content-Type: application/json' --data-binary '{"email":"你@域名","password":"至少 8 位","name":"站长"}'`
-   （前台 `apiBaseURL` 已配好时，在 `/account/` 注册同一个账号也一样）。回 `role: "admin"` 就说明建好了，
-   回后台用这个邮箱密码登录即可。之后在「设置 → 注册与邀请码」里
+1. **建第一个账号** —— 它就是站长 / `admin`。库里还没有账号时，后台登录页会自己变成
+   「建为站长并登录」表单：填邮箱 + 两遍密码，第一个账号跳过邮箱验证，建完这表单就消失。
+   等价的手动做法是
+   `curl -X POST https://<worker 地址>/api/auth/register -H 'Content-Type: application/json' --data-binary '{"email":"你@域名","password":"至少 8 位"}'`。
+   之后在「设置 → 注册与邀请码」里
    按需关闭注册、打开邀请码（随机码在「用户」页生成，可设可用次数与有效期）。
 2. **基本信息**（前端管理 → 基本信息）：站点名、Logo、Favicon、导航项、社交链接 ——
    写进 `data/*.json`，一处改全站生效（标题、RSS、落地页、404 都读它）。

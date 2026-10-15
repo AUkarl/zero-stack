@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { getApiBase, setApiBase, post, type ApiError } from '#lib/api';
+  import { getApiBase, setApiBase, get, post, type ApiError } from '#lib/api';
   import { session } from '#lib/session.svelte';
 
   let api = $state(getApiBase());
@@ -13,6 +14,25 @@
   let totp = $state('');
   let code = $state('');
   let codeSent = $state(false);
+  /** 空库时这一页变成「初始化为站长」，建完自动回到普通登录 */
+  let pending = $state(false);
+  let confirm = $state('');
+  let nickname = $state('');
+
+  async function checkPending() {
+    error = '';
+    try {
+      const d = await get<{ data: { pending: boolean } }>('/api/auth/init-status');
+      pending = !!d.data.pending;
+    } catch {
+      // 地址没填、接口不可达时不猜：按普通登录页处理
+      pending = false;
+    }
+  }
+
+  onMount(() => {
+    void checkPending();
+  });
 
   async function login() {
     if (busy) return;
@@ -55,31 +75,73 @@
       busy = false;
     }
   }
+  async function initAdmin() {
+    if (busy) return;
+    if (password.length < 8) {
+      error = '密码至少 8 位';
+      return;
+    }
+    if (password !== confirm) {
+      error = '两次输入的密码不一致';
+      return;
+    }
+    busy = true;
+    error = '';
+    setApiBase(api);
+    try {
+      await post('/api/auth/register', { email, password, name: nickname.trim() || undefined });
+      pending = false;
+      busy = false;
+      await login();
+    } catch (e) {
+      error = e instanceof Error ? e.message : '初始化失败';
+    } finally {
+      busy = false;
+    }
+  }
+
+  function submit() {
+    if (pending) void initAdmin();
+    else void login();
+  }
 </script>
 
 <div class="wrap">
-  <form class="card" onsubmit={(e) => { e.preventDefault(); void login(); }}>
+  <form class="card" onsubmit={(e) => { e.preventDefault(); submit(); }}>
     <h2>Zero 管理后台</h2>
-    <p class="muted sub">登录后管理文章、评论、时刻、友链与站点配置</p>
+    <p class="muted sub">{pending ? '站点还没有任何账号：先建站长账号，这一步只有第一次会看到' : '登录后管理文章、评论、时刻、友链与站点配置'}</p>
 
     <label>
       <span>API 地址（只有本地开发能留空 —— Pages 上没有 /api 代理，留空就是 404）</span>
-      <input placeholder="https://zero-api.xxx.workers.dev" bind:value={api} autocomplete="off" />
+      <input placeholder="https://zero-api.xxx.workers.dev" bind:value={api} autocomplete="off" onchange={checkPending} />
     </label>
     <p class="muted sub">
       部署版必填 worker 域名（保存在浏览器本地，只需填一次）。
       <code>*.workers.dev</code> 在部分网络不可达时，给 worker 绑一个自定义域名再填那个地址。
     </p>
     <label>
-      <span>管理员邮箱</span>
+      <span>{pending ? '站长邮箱' : '管理员邮箱'}</span>
       <input type="email" bind:value={email} required autocomplete="username" />
     </label>
     <label>
-      <span>密码</span>
-      <input type="password" bind:value={password} required autocomplete="current-password" />
+      <span>{pending ? '设置密码（至少 8 位）' : '密码'}</span>
+      <input type="password" bind:value={password} required autocomplete={pending ? 'new-password' : 'current-password'} />
     </label>
 
-    {#if need === 'totp'}
+    {#if pending}
+      <label>
+        <span>确认密码</span>
+        <input type="password" bind:value={confirm} required autocomplete="new-password" />
+      </label>
+      <label>
+        <span>昵称（可留空，默认 admin）</span>
+        <input bind:value={nickname} maxlength="64" autocomplete="nickname" />
+      </label>
+      <p class="muted tip">
+        库里第一个账号会自动成为管理员并跳过邮箱验证，之后注册的都是普通读者；
+        这个表单在建完账号后就消失了。
+      </p>
+    {:else if need === 'totp'}
       <label>
         <span>身份验证器动态码（6 位）</span>
         <input inputmode="numeric" maxlength="8" placeholder="000000" bind:value={totp} autocomplete="one-time-code" />
@@ -97,15 +159,12 @@
     {/if}
 
     {#if error}<p class="err">{error}</p>{/if}
-    <button class="primary go" type="submit" disabled={busy || !email || !password}>
-      {busy ? '登录中…' : '登 录'}
+    <button class="primary go" type="submit" disabled={busy || !email || !password || (pending && !confirm)}>
+      {busy ? (pending ? '创建中…' : '登录中…') : pending ? '建为站长并登录' : '登 录'}
     </button>
-    <p class="muted tip">
-      这一页只有登录，没有注册。站点还没有账号时，先调一次
-      <code>POST /api/auth/register</code>（库里第一个账号自动成为管理员）再来登录；
-      前台已接好 API 的话，在账号页注册同一个邮箱效果一样。
-      「邮箱不存在」与「密码错误」提示的是同一句话（防账号枚举）。
-    </p>
+    {#if !pending}
+      <p class="muted tip">这一页只有登录，没有注册；站点还没有账号时它会自动变成初始化表单（改完上面「API 地址」会重新探测）。「邮箱不存在」与「密码错误」提示的是同一句话（防账号枚举）。</p>
+    {/if}
   </form>
 </div>
 

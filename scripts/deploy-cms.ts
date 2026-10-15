@@ -94,7 +94,7 @@ async function main(): Promise<void> {
       ? `已内置 API 地址 ${apiBase}，打开就能登录；登录页手填的地址优先于内置值。`
       : '首次使用：在登录页「API 地址」填 worker 域名（本机只需填一次）。',
   );
-  info('后台只有登录、没有注册：首个管理员要调一次 POST /api/auth/register（见 docs/DEPLOYMENT.md 第 5 节）。');
+  info('库里还没有账号时，登录页会自己变成「建为站长并登录」表单（等价于 POST /api/auth/register）。');
   info('两边不同源，必须把这个后台地址写进 packages/api/wrangler.jsonc 的 ALLOWED_ORIGINS 并 pnpm deploy:api，否则浏览器报 Failed to fetch。');
 }
 

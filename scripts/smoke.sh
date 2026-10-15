@@ -59,6 +59,10 @@ printf '%s' "$BODY_TEXT" | grep -q '"commentEmojiPacks"' \
 printf '%s' "$BODY_TEXT" | grep -q '"commentShowMeta"' \
   && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '公开配置含 commentShowMeta（属地/设备开关）'; } \
   || { FAIL=$((FAIL + 1)); FAILED+=('公开配置缺 commentShowMeta'); printf '  \033[31m✗\033[0m %-56s\n' '公开配置含 commentShowMeta'; }
+req GET /api/auth/init-status 200 '' '初始化状态'
+printf '%s' "$BODY_TEXT" | grep -q '"pending"' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '初始化状态含 pending 字段'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=('初始化状态缺 pending 字段'); printf '  \033[31m✗\033[0m %-56s\n' '初始化状态含 pending 字段'; }
 req GET /api/comments/posts/nowork?depth=2 200 '' '文章评论列表（ASCII slug）'
 req GET '/api/comments/posts/%E7%9F%A5%E6%AD%A2' 200 '' '文章评论列表（中文 slug 解码一致）'
 req GET /api/moments 200 '' '时刻接口不再返回 D1 内容'

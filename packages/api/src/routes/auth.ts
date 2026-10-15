@@ -103,6 +103,15 @@ function sessionHeaders(c: Ctx, token: string, expiresAt: number): void {
   c.header('Set-Cookie', sessionCookie(token, expiresAt - nowSec(), isSecure(c)));
 }
 
+/* ---------------------------------------------------- 初始化状态（公开） */
+
+/**
+ * 库里还没有任何账号时回 pending=true，后台登录页据此显示「初始化为站长」表单。
+ * 不泄露账号数量，只是一个布尔值；而「谁能抢到第一个账号」这件事
+ * /api/auth/register 本来就对所有人开放，所以这里没有新增攻击面。
+ */
+app.get('/init-status', async (c) => ok({ pending: await isFirstUser(c.env) }));
+
 /* ------------------------------------------------------------------ 注册 */
 
 /** 注册：站点首个账号免邮箱验证并成为 admin，省去手工初始化 */
