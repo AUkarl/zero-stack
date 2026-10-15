@@ -90,7 +90,7 @@ const QUESTIONS: PromptObject[] = [
 
 function hugoToml(a: Answers): string {
   return `baseURL = "${a.siteUrl.replace(/\/$/, '')}/"
-languageCode = "zh-CN"
+locale = "zh-CN"
 title = "${a.siteName}"
 theme = "zero"
 defaultContentLanguage = "zh"
@@ -196,12 +196,25 @@ draft: false
 时刻内容也可以直接在 zero-cms 后台发布并存入 D1，这里的 Markdown 只是静态兜底。
 `;
 
-const FRIENDS_DATA = `# 友链数据。若后台已启用友链管理，请以后台为准，此文件仅作备份。
-- name: Example Blog
-  url: https://example.com
-  description: 示例站点
-  avatar: /images/avatar/example.png
-  rss: https://example.com/index.xml
+const FRIENDS_DATA = `# 友链名单。后台启用友链管理后以后台（D1）为准，这里留空即可；
+# 写在这里的条目会被当作备份/兜底展示，所以不要放示例地址。
+[]
+`;
+
+/** 主题的模板是 layouts/links/list.html，内容分区必须叫 links，叫 friends 的话 /links/ 直接 404 */
+const LINKS_INDEX = `---
+title: "友链"
+description: "朋友们的最近动态、左邻右舍与站点联盟，以及友链申请方式。"
+comments: true
+---
+
+## 友链要求
+
+想要互换链接，请先确认：站点可正常访问、有 RSS、内容以原创为主、近三个月有更新。
+
+符合的话，用下面的申请表单提交即可，站长会在后台审核。
+
+<!-- 左邻右舍与站点联盟的名单由 zero-cms 后台「友链」维护，此页只写要求与说明。 -->
 `;
 
 async function main(): Promise<void> {
@@ -213,7 +226,7 @@ async function main(): Promise<void> {
   if (existsSync(siteDir) && readdirSync(siteDir).length > 0) die(`${siteDir} 已存在且非空，请换一个仓库名或先手动清理`);
 
   step('创建目录与示例内容');
-  const dirs = ['content/posts', 'content/moments', 'content/friends', 'static/images', 'data', '.github/workflows'];
+  const dirs = ['content/posts', 'content/moments', 'content/links', 'static/images', 'data', '.github/workflows'];
   for (const d of dirs) mkdirSync(resolve(siteDir, d), { recursive: true });
   info(siteDir);
 
@@ -222,7 +235,7 @@ async function main(): Promise<void> {
   write(rel('content/posts/hello-world.md'), SAMPLE_POST);
   write(rel('content/moments/first-moment.md'), SAMPLE_MOMENT);
   write(rel('data/friends.yml'), FRIENDS_DATA);
-  write(rel('content/friends/.gitkeep'), '');
+  write(rel('content/links/_index.md'), LINKS_INDEX);
   write(rel('static/images/.gitkeep'), '');
   write(rel('.gitignore'), `.hugo_build.lock
 public/
