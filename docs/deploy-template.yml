@@ -26,6 +26,16 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install
+      - name: Check wrangler config exists
+        # packages/api/wrangler.jsonc 里有你自己的 D1 / R2 / KV 真实 id，仓库刻意不入库。
+        # CI 里必须让它存在，否则 wrangler 认不出配置、退回框架自动探测，
+        # 认出 Hono 后直接报「cannot be automatically configured」。
+        # 两种做法：① 把它提交进你自己的（私有）仓库 —— 那些 id 不是密钥；
+        #          ② 用 Secrets/Variables 在这里渲染出来，见 docs/DEPLOYMENT.md 第 2 节。
+        run: |
+          if [ ! -f packages/api/wrangler.jsonc ]; then
+            echo "::error::缺少 packages/api/wrangler.jsonc —— 见本步骤注释"; exit 1;
+          fi
       - name: Apply D1 migrations
         uses: cloudflare/wrangler-action@v3
         with:

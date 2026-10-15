@@ -392,6 +392,12 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 # 八、注意事项
 
 - **`GIT_LOCAL_DIR` 只能本地用**：线上 Worker 上它是一个无效路径，设了会让回写静默失败。
+- **CI 里没有 `packages/api/wrangler.jsonc` 就一定红**：真实配置不入库（里面是各人自己的 D1 / R2 / KV id），
+  而 `wrangler deploy`（含 `--dry-run`）找不到配置时会退回「框架自动探测」，认出 Hono 后直接报
+  `The detected framework ("Hono") cannot be automatically configured`。
+  `ci.yml` 已从 `.example` 复制一份占位（构建只做打包校验，占位 id 无妨）；
+  要真部署的那份（`docs/deploy-template.yml`）会先检查文件存在并给出提示 —— 
+  把你的 `wrangler.jsonc` 提交进私有仓库，或用 Secrets/变量渲染出来。
 - **`SESSION_SECRET` 不能随便换**：它同时是验证器密钥的加密主密钥，换了已绑定的
   身份验证器全部失效（用户需要重新扫码）。
 - **备份文件是敏感数据**：`/api/admin/backup` 导出含邮箱、昵称、评论正文，别提交进公开仓库。

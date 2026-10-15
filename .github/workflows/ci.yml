@@ -25,5 +25,11 @@ jobs:
         run: pnpm typecheck:scripts
       - name: Type check
         run: pnpm -r typecheck
+      - name: Prepare wrangler config
+        # packages/api/wrangler.jsonc 被 gitignore（里面是各人自己的 D1/R2/KV id）。
+        # 少了它，wrangler 会退回「框架自动探测」，认出 Hono 后直接报
+        # 「The detected framework ("Hono") cannot be automatically configured」而构建失败。
+        # 构建这步只是 --dry-run 验打包，用 .example 的占位 id 就够。
+        run: cp packages/api/wrangler.jsonc.example packages/api/wrangler.jsonc
       - name: Build
         run: pnpm -r build
