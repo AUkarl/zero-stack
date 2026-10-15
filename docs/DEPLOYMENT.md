@@ -37,7 +37,10 @@ pnpm setup
 向导会依次完成：
 
 1. 检测 `wrangler whoami`，未登录时拉起浏览器授权；
-2. 询问站点名称、前台地址、后台地址、邮件通道（SMTP / Resend / Cloudflare / 暂不配置）、是否启用「文章提交回 Git」；
+2. 询问站点名称、前台地址、后台地址、API 地址（给 Worker 绑的自定义域名，留空则用刚部署出的
+   `*.workers.dev`）、邮件通道（SMTP / Resend / Cloudflare / 暂不配置）、是否启用「文章提交回 Git」；
+   三个地址里前两个会整段写成 `ALLOWED_ORIGINS`（CORS 精确匹配），重跑向导时它们默认取
+   `wrangler.jsonc` 里现有的值，被丢掉的来源会先警告再覆盖；
 3. 创建（或复用）以下 Cloudflare 资源；
 4. 由 `packages/api/wrangler.jsonc.example` 渲染出真实的 `packages/api/wrangler.jsonc`；
 5. 写入 secrets；
@@ -94,6 +97,8 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 只在本地 `.dev.vars` 里用；线上不要设 `GIT_LOCAL_DIR`，否则 Worker 上会退化成无效的本地路径。
 
 重跑 `pnpm setup` 会重新生成 `AUTH_SECRET` / `SESSION_SECRET`，已登录的会话会失效（评论者不受影响）。
+三个地址默认沿用 `wrangler.jsonc` 里现有的值（直接回车就是不改），但 `ALLOWED_ORIGINS` 仍是由
+「后台地址 + 前台地址」两答整段生成 —— 手加进去的第三个来源不在答案里就会被删掉，脚本会先打印警告。
 手动补写某个密钥：
 
 ```bash
@@ -131,7 +136,7 @@ npx wrangler pages deploy .svelte-kit/cloudflare --project-name=zero-cms
 后台取 API 地址的优先级：
 
 1. 登录页填的「API 地址」（浏览器 `localStorage`）—— 现场排查随时能改；
-2. 构建时内置的 `VITE_API_BASE` —— 来自 `--api`、环境变量或 `packages/cms/.zero-api-base`（上一个命令问过之后记下的，已 gitignore）；`pnpm setup` 直接把刚部署的 Worker 地址编进去；
+2. 构建时内置的 `VITE_API_BASE` —— 来自 `--api`、环境变量或 `packages/cms/.zero-api-base`（上一个命令问过之后记下的，已 gitignore）；`pnpm setup` 内置的是向导里「API 地址」那一答，留空才退回刚部署输出的 `*.workers.dev`；
 3. 都没有 = 同源。本地靠 vite 的 `/api` 代理没问题，**Pages 上没有这个代理，同源就是 404**。
 
 CI 或脚本里想跳过提问就给环境变量（`docs/deploy-template.yml` 用的就是仓库变量 `API_BASE_URL`）：
@@ -291,7 +296,7 @@ pnpm check   # 本地跑同一套校验
 |---|---|
 | 后台点「注册 / 登录」显示 `请求失败 (404)` | 登录页的「API 地址」留空了：留空 = 请求打到同源，只有本地 vite 有 `/api` 代理，Pages 上没有，于是后台自己的 SPA 壳回 404。在登录页填 worker 域名（存在浏览器 localStorage，填一次即可），或部署时用 `pnpm deploy:cms -- --api <worker 地址>` 内置进产物 |
 | 后台登录提示 `邮箱或密码不正确` | 多半是**库里还没有这个账号**：接口对「邮箱不存在」和「密码错」回同一句话（防账号枚举）。空库时登录页会自动变成「建为站长」表单（第 5 节，第一个账号自动是 `admin`，注册关闭也拦不住它）；若注册时回 `409 该邮箱已注册`，说明账号确实在，走前台 `/account/` 的找回密码或后台「一键重置密码」 |
-| 后台提示 `Failed to fetch` | 请求根本没完成，两种原因：① `*.workers.dev` 在部分网络不可达 —— 先在浏览器直接打开 `https://<worker 地址>/api/config`，能出 JSON 才算通，不通就给 worker 绑自定义域名（Workers → 设置 → 域名和路由），后台改填那个域名；② CORS 未放行 —— 把后台 origin 写进 `ALLOWED_ORIGINS` 后重新 `pnpm deploy:api` |
+| 后台提示 `Failed to fetch` | 请求根本没完成，两种原因：① `*.workers.dev` 在部分网络不可达 —— 先在浏览器直接打开 `https://<worker 地址>/api/config`，能出 JSON 才算通，不通就给 worker 绑自定义域名（Workers → 设置 → 域名和路由），后台改填那个域名；② CORS 未放行 —— 把后台 origin 写进 `ALLOWED_ORIGINS` 后重新 `pnpm deploy:api`。重跑 `pnpm setup` 时这一行是按「后台地址 + 前台地址」两答整段重新生成的，自定义域名没答进去就会被挤掉 |
 | 部署后台报 `This command cannot be run in a non-interactive context` | Pages 项目不存在时 `pages deploy` 要问「要不要创建」。`pnpm deploy:cms` 与 `pnpm setup` 已改成先 `pages project create`（见第 4 节）；手写 CI 流水线时也要先建项目 |
 | `pnpm setup` 说「尚未登录」，但 `pnpm exec wrangler whoami` 明显示已登录 | wrangler 各版本的 `whoami --json` 形状不同（4.x 平铺 `{loggedIn,authType,email,accounts}`、3.x 包一层 `result`、更早是 `auth.email`）。脚本现按 `scripts/_util.ts` 的 `parseWhoami()` 三种都认，API Token 登录（没有 email）也认；仍不行就直接设环境变量 `CLOUDFLARE_API_TOKEN`（配合 `CLOUDFLARE_ACCOUNT_ID`）跳过浏览器授权 |
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |

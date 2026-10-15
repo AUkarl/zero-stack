@@ -171,7 +171,8 @@ ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh     # 追加后台接口
 
 ```bash
 pnpm setup                     # 交互式：登录检查 → 建 / 复用 D1、R2、KV、Queue → 渲染 wrangler.jsonc
-                               #           → 写 secrets → 应用远程迁移 → 部署 API 与后台
+                               #           前台 / 后台 / API 三个地址默认取现有配置，直接回车就是不改
+                               #           → 写 secrets → 应用远程迁移 → 部署 Worker 与后台
 pnpm setup -- --no-deploy      # 只准备资源与配置，不部署
 ```
 

@@ -34,6 +34,7 @@ interface Answers {
   siteName: string;
   siteUrl: string;
   cmsUrl: string;
+  apiUrl?: string;
   emailProvider: EmailProvider;
   smtpHost?: string;
   smtpPort?: string;
@@ -154,6 +155,33 @@ function readExistingIds(): ResourceIds | null {
   return { dbId, cacheId, sessionId };
 }
 
+/**
+ * 重跑 setup 时读回现有地址。这三问的答案会整段覆盖 wrangler.jsonc 里的
+ * SITE_URL / ALLOWED_ORIGINS —— 不读回来，手改的值（尤其是给 Worker 绑的自定义域名）
+ * 就会被占位默认值无声冲掉，表现为后台突然 Failed to fetch。
+ */
+function readExistingUrls(): { siteUrl: string; cmsUrl: string; apiUrl: string; origins: string[] } {
+  const empty = { siteUrl: '', cmsUrl: '', apiUrl: '', origins: [] as string[] };
+  const file = resolve(API_DIR, 'wrangler.jsonc');
+  if (!existsSync(file)) return empty;
+  const raw = readFileSync(file, 'utf-8');
+  const clean = (v: string | undefined): string => {
+    const s = (v ?? '').trim();
+    return !s || s.includes('example.com') || s.includes('<') ? '' : s;
+  };
+  const origins = clean(raw.match(/"ALLOWED_ORIGINS"\s*:\s*"([^"]*)"/)?.[1])
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const hostname = raw.match(/"custom_domains"\s*:\s*\[[^\]]*"hostname"\s*:\s*"([^"]+)"/)?.[1];
+  return {
+    siteUrl: clean(raw.match(/"SITE_URL"\s*:\s*"([^"]*)"/)?.[1]) || origins[1] || '',
+    cmsUrl: origins[0] || '',
+    apiUrl: hostname ? `https://${hostname}` : '',
+    origins,
+  };
+}
+
 /* --------------------------- 配置与密钥 --------------------------- */
 
 function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
@@ -229,14 +257,28 @@ function deployCms(apiBase: string | null): string | null {
 
 /* --------------------------- 交互 --------------------------- */
 
+/** 模块加载时读一次：这时 wrangler.jsonc 还没被本次运行改写，拿到的就是上一版的地址 */
+const prev = readExistingUrls();
+
 const QUESTIONS: PromptObject[] = [
   { type: 'text', name: 'siteName', message: '站点名称', initial: 'My Zero Site' },
-  { type: 'text', name: 'siteUrl', message: '站点前台地址（Hugo 站点）', initial: 'https://example.com' },
+  {
+    type: 'text',
+    name: 'siteUrl',
+    message: '站点前台地址（Hugo 站点，与后台地址一起构成 CORS 白名单）',
+    initial: () => prev.siteUrl || 'https://example.com',
+  },
   {
     type: 'text',
     name: 'cmsUrl',
-    message: '后台地址（写入 CORS 白名单）',
-    initial: `https://${PAGES_PROJECT}.pages.dev`,
+    message: '后台地址（绑了自定义域名就填它，否则是 Pages 给的 *.pages.dev）',
+    initial: () => prev.cmsUrl || `https://${PAGES_PROJECT}.pages.dev`,
+  },
+  {
+    type: 'text',
+    name: 'apiUrl',
+    message: '后台与前台要访问的 API 地址（给 Worker 绑的自定义域名，例如 https://api.example.com；留空 = 用刚部署出的 *.workers.dev）',
+    initial: () => prev.apiUrl,
   },
   {
     type: 'select',
@@ -287,18 +329,18 @@ const QUESTIONS: PromptObject[] = [
   },
 ];
 
-function summary(a: Answers, workerUrl: string | null, pagesUrl: string | null): void {
+function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string): void {
   console.log('\n\x1b[32m✅ 部署完成\x1b[0m\n');
-  console.log(`  API  ：${workerUrl ?? '见上方 wrangler deploy 输出'}`);
+  console.log(`  API  ：${apiUrl ?? '见上方 wrangler deploy 输出'}${apiUrl ? apiUrlNote : ''}`);
   console.log(`  后台 ：${pagesUrl ?? a.cmsUrl}`);
   console.log('\n后续步骤：');
-  console.log(`  1. 打开后台：库里还没有账号时，登录页会自己变成「建为站长并登录」表单，填邮箱 + 两遍密码即可（第一个账号自动是 admin，跳过邮箱验证）${workerUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
+  console.log(`  1. 打开后台：库里还没有账号时，登录页会自己变成「建为站长并登录」表单，填邮箱 + 两遍密码即可（第一个账号自动是 admin，跳过邮箱验证）${apiUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
   console.log('  2. 后台「设置」补齐 siteUrl、emailFrom、smtpHost、smtpUser 等配置项');
   if (a.emailProvider === 'smtp') {
     console.log(`     （SMTP：${a.smtpHost ?? '待填'}:${a.smtpPort ?? '待填'}，账号 ${a.smtpUser ?? '待填'}；密码已存为 secret）`);
   }
-  console.log('  3. pnpm create:site 生成私密内容仓库，并把前台地址加入后台 CORS 白名单');
-  console.log(`  4. 主题侧 hugo.toml 设置 params.apiBaseURL = ${workerUrl ?? 'https://<worker>.workers.dev'}`);
+  console.log(`  3. pnpm create:site 生成私密内容仓库，然后在「设置 → 内容仓库」填 owner / repo / token`);
+  console.log(`  4. 主题侧 hugo.toml 设置 params.apiBaseURL = ${apiUrl ?? 'https://<worker>.workers.dev'}（前台与后台都走这一个地址，CORS 已放行 ${a.siteUrl}）`);
   console.log('  5. 迁移旧评论：pnpm migrate:waline（详见 docs/DEPLOYMENT.md）');
 }
 
@@ -314,6 +356,18 @@ async function main(): Promise<void> {
 
   const a = await ask(QUESTIONS);
   if (!a.siteName || !a.siteUrl || !a.cmsUrl) die('站点名称与两个地址均为必填项');
+  const apiUrl = (a.apiUrl ?? '').trim().replace(/\/+$/, '');
+  if (apiUrl && !/^https?:\/\/[^\s/]+\.[^\s/]+/i.test(apiUrl)) {
+    die(`API 地址不像完整 URL：${apiUrl}\n要形如 https://api.你的域名（协议 + 域名都写全），或直接留空用 *.workers.dev`);
+  }
+  for (const [name, value] of [['站点前台地址', a.siteUrl], ['后台地址', a.cmsUrl], ['API 地址', apiUrl]] as const) {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(value)) die(`${name} 还是本地地址：线上 CORS 按精确字符串匹配，浏览器一访问就会被拒`);
+  }
+  const dropped = prev.origins.filter((o) => o && o !== a.cmsUrl && o !== a.siteUrl);
+  if (dropped.length) {
+    warn(`wrangler.jsonc 里原有这些来源不在本次两答里，会被覆盖掉：${dropped.join(' / ')}`);
+    info('CORS 是精确匹配，少一个就等于那个站点全挂；要保留就把它填进上面两问之一。');
+  }
 
   if (!(await confirm(`即将在 Cloudflare 上创建/复用资源并${noDeploy ? '写入配置' : '部署 worker 与页面'}，继续？`))) {
     die('已取消，未做任何改动');
@@ -335,8 +389,10 @@ async function main(): Promise<void> {
   good('D1 表结构已同步');
 
   const workerUrl = deployWorker();
-  const pagesUrl = deployCms(workerUrl);
-  summary(a, workerUrl, pagesUrl);
+  /** 绑了自定义域名就用它编进后台产物：*.workers.dev 在很多网络根本连不通 */
+  const finalApiUrl = apiUrl || workerUrl;
+  const pagesUrl = deployCms(finalApiUrl);
+  summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）');
 }
 
 main().catch((e: unknown) => {
