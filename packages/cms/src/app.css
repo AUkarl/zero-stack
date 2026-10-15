@@ -1,0 +1,263 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --border: #e5e7eb;
+  --fg: #1f2328;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-soft: #eff6ff;
+  --good: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --radius: 10px;
+  /* 全站统一的间距，窄屏在下面的媒体查询里一次性收小 */
+  --pad: 1.1rem;
+  --gap: 0.6rem;
+  --card-pad: 1rem 1.1rem;
+}
+
+/* 平板：卡片内边距与栅格间隙收一点，避免两列被挤到换行 */
+@media (max-width: 900px) {
+  :root {
+    --pad: 0.85rem;
+    --card-pad: 0.8rem 0.85rem;
+  }
+}
+
+/* 手机：控件最小高度抬到 36px 以上，方便触摸 */
+@media (max-width: 640px) {
+  :root {
+    --pad: 0.7rem;
+    --gap: 0.5rem;
+    --card-pad: 0.75rem 0.8rem;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    min-height: 36px;
+  }
+  button.sm {
+    min-height: 30px;
+  }
+  textarea {
+    font-size: 16px; /* iOS Safari 小于 16px 的输入框聚焦会自动放大页面 */
+  }
+}
+
+/* 窄屏撑破页面的通常是「长内容 + 不换行」，把横向滚动限制在明确的容器里，
+   而不是给 html/body 加 overflow-x:hidden —— 那会让侧栏的 position:sticky 失效 */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap > table {
+  min-width: 100%;
+}
+/* 列数多的表在窄屏上不靠压缩列宽，而是给一个横向滚动的最小宽度，
+   具体数值由各页在 scoped 样式里按需设定 */
+.table-wrap > table.cols-wide {
+  min-width: 720px;
+}
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  height: auto;
+}
+input,
+select,
+textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+.card,
+.box {
+  min-width: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.6rem;
+  font-weight: 650;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 0.42rem 0.95rem;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover {
+  filter: brightness(1.08);
+  color: #fff;
+}
+button.danger {
+  color: var(--bad);
+  border-color: #fecaca;
+}
+button.sm {
+  padding: 0.18rem 0.6rem;
+  font-size: 0.82rem;
+}
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+button.ghost:hover {
+  border-color: var(--accent);
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.46rem 0.65rem;
+  background: var(--panel);
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+textarea {
+  resize: vertical;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--card-pad);
+}
+
+.muted {
+  color: var(--muted);
+}
+.muted.small {
+  margin-left: 0.4rem;
+}
+.err {
+  color: var(--bad);
+  font-size: 0.85rem;
+}
+.ok {
+  color: var(--good);
+  font-size: 0.85rem;
+}
+.warn {
+  color: var(--warn);
+  font-size: 0.85rem;
+}
+
+.row {
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.spread {
+  justify-content: space-between;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+th {
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+/* 邮箱、URL 这类长串在没有空格可断时会顶破单元格，允许它们按需断行 */
+td {
+  overflow-wrap: break-word;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.badge.pending {
+  background: #fef3c7;
+  color: var(--warn);
+}
+.badge.bad {
+  background: #fee2e2;
+  color: var(--bad);
+}
+.badge.good {
+  background: #dcfce7;
+  color: var(--good);
+}

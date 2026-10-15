@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `totp_at_login` integer DEFAULT true NOT NULL;

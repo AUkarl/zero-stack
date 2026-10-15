@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# ============================================================
+# smoke.sh — 接口冒烟测试
+# ------------------------------------------------------------
+# 用法：
+#   bash scripts/smoke.sh                                  # 只跑公开接口与「未登录必须 401」的守卫检查
+#   API=http://127.0.0.1:8787 bash scripts/smoke.sh
+#   ADMIN_COOKIE='zero_session=xxx' bash scripts/smoke.sh  # 追加跑需要管理员的接口
+#
+# 取 ADMIN_COOKIE：浏览器登录后台后，开发者工具里复制 zero_session 的值。
+# 本脚本不写库、不删数据；匿名评论那条会在结尾自己删掉（靠 ownerKey）。
+# ============================================================
+set -uo pipefail
+
+API="${API:-http://127.0.0.1:8787}"
+ADMIN_COOKIE="${ADMIN_COOKIE:-}"
+PASS=0
+FAIL=0
+FAILED=()
+BODY_TEXT=''
+# 每轮用一个独立的文章标识，绕开「同 IP + 同文章每小时 10 条」的评论限流
+SMOKE_SLUG="/posts/smoke-$(date +%s)-$((10000+RANDOM))/"
+
+CURL=(curl -sS --max-time 20 -H 'accept: application/json' -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36')
+
+req() {
+  local method="$1" path="$2" expect="$3" data="${4:-}" label="${5:-}" cookie="${6:-}"
+  local args=("${CURL[@]}" -X "$method" "$API$path")
+  [ -n "$data" ] && args+=(-H 'content-type: application/json' -d "$data")
+  [ -n "$cookie" ] && args+=(-H "cookie: $cookie")
+  local out code
+  out="$("${args[@]}" -w $'\n%{http_code}' 2>/dev/null)"
+  code="${out##*$'\n'}"
+  BODY_TEXT="${out%$'\n'*}"
+  local name="${label:-$method $path}" ok=false a
+  local IFS=','
+  for a in $expect; do [ "$a" = "$code" ] && ok=true; done
+  unset IFS
+  if $ok; then
+    PASS=$((PASS + 1))
+    printf '  \033[32m✓\033[0m %-56s %s\n' "$name" "$code"
+  else
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name -> 期望 $expect 实际 $code: $(printf '%s' "$BODY_TEXT" | head -c 160)")
+    printf '  \033[31m✗\033[0m %-56s %s (期望 %s)\n' "$name" "$code" "$expect"
+  fi
+}
+
+field() { printf '%s' "$BODY_TEXT" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" | head -1; }
+section() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
+
+# ---------------------------------------------------------------- 公开接口
+section '公开：配置与内容'
+req GET /api/health 200 '' '健康检查'
+req GET /api/config 200 '' '运行时公开配置'
+printf '%s' "$BODY_TEXT" | grep -q '"commentEmojiPacks"' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '公开配置含 commentEmojiPacks（表情包）'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=('公开配置缺 commentEmojiPacks'); printf '  \033[31m✗\033[0m %-56s\n' '公开配置含 commentEmojiPacks（表情包）'; }
+printf '%s' "$BODY_TEXT" | grep -q '"commentShowMeta"' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '公开配置含 commentShowMeta（属地/设备开关）'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=('公开配置缺 commentShowMeta'); printf '  \033[31m✗\033[0m %-56s\n' '公开配置含 commentShowMeta'; }
+req GET /api/comments/posts/nowork?depth=2 200 '' '文章评论列表（ASCII slug）'
+req GET '/api/comments/posts/%E7%9F%A5%E6%AD%A2' 200 '' '文章评论列表（中文 slug 解码一致）'
+req GET /api/moments 200 '' '时刻接口不再返回 D1 内容'
+req GET /api/authors?ids=zhizhi 200 '' '作者卡片公开接口'
+req GET /api/friends 200 '' '友链列表'
+req GET /api/subscribe/status?email=nobody@example.invalid 200,400,404 '' '订阅状态查询'
+
+# ---------------------------------------------------------------- 匿名评论闭环
+section '匿名评论：邮箱必填 → 掩码 → 属地设备 → 点赞 → 自删'
+req POST /api/comments 200 "{\"postSlug\":\"$SMOKE_SLUG\",\"content\":\"冒烟测试：匿名评论（会自动删除）\",\"email\":\"zhangsan@qq.com\"}" '匿名提交（只给邮箱）'
+SMOKE_ID="$(field id)"
+OWNER_KEY="$(field ownerKey)"
+SUBMIT_BODY="$BODY_TEXT"
+[ -n "$SMOKE_ID" ] && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s %s\n' '拿到评论 id' "${SMOKE_ID:0:12}…"; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=("匿名评论未返回 id: $SUBMIT_BODY"); printf '  \033[31m✗\033[0m %-56s\n' '拿到评论 id'; }
+[ -n "$OWNER_KEY" ] && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '拿到 ownerKey（自删凭证）'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=('响应缺 ownerKey'); printf '  \033[31m✗\033[0m %-56s\n' '拿到 ownerKey（自删凭证）'; }
+printf '%s' "$SUBMIT_BODY" | grep -qF 'z***@qq.com' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '昵称按邮箱掩码 z***@qq.com'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=("昵称未按邮箱掩码: $SUBMIT_BODY"); printf '  \033[31m✗\033[0m %-56s\n' '昵称按邮箱掩码 z***@qq.com'; }
+printf '%s' "$SUBMIT_BODY" | grep -qE '"browser":"(Chrome|Firefox|Safari|Edge|Opera)"' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '评论带浏览器/系统/设备信息'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=("评论缺浏览器信息: $SUBMIT_BODY"); printf '  \033[31m✗\033[0m %-56s\n' '评论带浏览器/系统/设备信息'; }
+printf '%s' "$SUBMIT_BODY" | grep -qE '"avatar":"https://(cravatar\.cn|q1\.qlogo\.cn)' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '邮箱头像走 Cravatar / QQ 头像'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=('邮箱头像未按服务生成'); printf '  \033[31m✗\033[0m %-56s\n' '邮箱头像走 Cravatar / QQ 头像'; }
+
+req POST /api/comments 400 "{\"postSlug\":\"${SMOKE_SLUG}noemail/\",\"content\":\"缺邮箱必须被拒\"}" '缺邮箱 → 400'
+req POST /api/comments 400 "{\"postSlug\":\"${SMOKE_SLUG}badmail/\",\"content\":\"邮箱格式错\",\"email\":\"not-a-mail\"}" '邮箱格式错 → 400'
+req GET "/api/comments${SMOKE_SLUG}?owners=%7B%22${SMOKE_ID}%22%3A%22${OWNER_KEY}%22%7D&depth=6" 200 '' '带 ownerKey 能看见自己的待审评论'
+printf '%s' "$BODY_TEXT" | grep -Eq '"ipHash":|"ip_hash":' \
+  && { FAIL=$((FAIL + 1)); FAILED+=('评论响应泄漏了 ipHash'); printf '  \033[31m✗\033[0m %-56s\n' '评论响应不含 ipHash'; } \
+  || { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '评论响应不外泄 ipHash/明文邮箱'; }
+
+if [ -n "$SMOKE_ID" ]; then
+  req POST "/api/comments/$SMOKE_ID/like" 200,404 '' '评论点赞（待审时拒绝也算通过）'
+  req PATCH "/api/comments/$SMOKE_ID?owner=$OWNER_KEY" 200 "{\"content\":\"冒烟测试：已编辑 $OWNER_KEY\",\"ownerKey\":\"$OWNER_KEY\"}" '匿名编辑自己的评论'
+  req DELETE "/api/comments/$SMOKE_ID?owner=$OWNER_KEY" 200 '' '匿名自删（ownerKey 生效）'
+  req DELETE "/api/comments/$SMOKE_ID?owner=wrong-key" 401,403,404 '' '错误凭证不能删除'
+fi
+
+# ---------------------------------------------------------------- 点赞与收藏
+section '反应：点赞与收藏'
+req POST /api/reactions 200 '{"slug":"/posts/nowork","kind":"like"}' '匿名点赞（toggle）'
+req POST /api/reactions 200,403 '{"slug":"/posts/nowork","kind":"star"}' '匿名收藏（关掉则 403）'
+req GET '/api/reactions?slugs=/posts/nowork&kind=like' 200 '' '计数查询'
+
+# ---------------------------------------------------------------- 守卫：未登录必须 401
+section '守卫：管理员接口未登录必须 401'
+for p in /api/admin/config /api/admin/content /api/admin/users /api/admin/subscribers \
+         /api/admin/posts /api/admin/media/buckets /api/admin/broadcast/jobs \
+         /api/admin/spam/pattern-file /api/admin/deletions /api/account/overview /api/security; do
+  req GET "$p" 401 '' "401 $p"
+done
+
+# ---------------------------------------------------------------- 管理员（需要 ADMIN_COOKIE）
+if [ -n "$ADMIN_COOKIE" ]; then
+  section '管理员：内容与时刻'
+  req GET '/api/admin/content?path=content/zh/posts' 200 '' '文章目录列表' "$ADMIN_COOKIE"
+  req GET '/api/admin/content/file?path=content/zh/posts/nowork.md' 200 '' '读单篇文章' "$ADMIN_COOKIE"
+  req GET '/api/admin/posts' 200 '' '已发布文章下拉数据' "$ADMIN_COOKIE"
+  req PUT /api/admin/content/file 200 '{"path":"content/zh/posts/zz-smoke-tmp.md","front":{"title":"smoke tmp title","date":"2026-01-01T00:00:00Z","draft":true},"body":"smoke body","message":"smoke"}' '结构化发布文章（写本地仓库）' "$ADMIN_COOKIE"
+  req GET '/api/admin/content/file?path=content/zh/posts/zz-smoke-tmp.md' 200 '' '读回刚发布的文章' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -qF '"exists":true' \
+    && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s\n' '刚发布的文章能读回并带 front'; } \
+    || { FAIL=$((FAIL + 1)); FAILED+=('刚发布的文章读不回'); printf '  [31m✗[0m %-56s\n' '刚发布的文章能读回并带 front'; }
+  req DELETE '/api/admin/content/file?path=content/zh/posts/zz-smoke-tmp.md' 200 '' '删除冒烟临时文章' "$ADMIN_COOKIE"
+  # 时刻是朋友圈式动态：没有标题也能发布，靠 content/file 的结构化通道
+  req PUT /api/admin/content/file 200 '{"path":"content/zh/moments/zz-smoke-moment.md","front":{"date":"2026-01-01T00:00:00Z","draft":true,"link":{"url":"https://example.com/x","title":"smoke link"}},"body":"smoke moment body","message":"smoke"}' '发布无标题时刻（写本地仓库）' "$ADMIN_COOKIE"
+  req GET '/api/admin/content/file?path=content/zh/moments/zz-smoke-moment.md' 200 '' '读回刚发布的时刻' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -qF '"exists":true'     && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s
+' '无标题时刻确实落进仓库'; }     || { FAIL=$((FAIL + 1)); FAILED+=('无标题时刻没落盘'); printf '  [31m✗[0m %-56s
+' '无标题时刻确实落进仓库'; }
+  req DELETE '/api/admin/content/file?path=content/zh/moments/zz-smoke-moment.md' 200 '' '删除冒烟临时时刻' "$ADMIN_COOKIE"
+  req GET '/api/admin/frontend' 200 '' '前端管理八段读取' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q '"nav"'     && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s
+' '前端管理返回 nav/home/footer/about/works'; }     || { FAIL=$((FAIL + 1)); FAILED+=('前端管理缺段'); printf '  [31m✗[0m %-56s
+' '前端管理返回 nav/home/footer/about/works'; }
+  printf '%s' "$BODY_TEXT" | grep -q '"seo"' && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s\n' '前端管理返回 seo 段'; }     || { FAIL=$((FAIL + 1)); FAILED+=('前端管理缺 seo 段'); printf '  [31m✗[0m %-56s\n' '前端管理缺 seo 段'; }
+  SMOKE_BATCH_BODY="$(pwd)/.smoke-batch-body.json"
+  printf '%s' '{"files":[{"path":"content/zh/posts/zz-smoke-batch.md","front":{"title":"冒烟批量自测","date":"2026-01-02T03:00:00+08:00","draft":false},"body":"批量正文"}]}' > "$SMOKE_BATCH_BODY"
+  req POST /api/admin/content/batch 200 "@$SMOKE_BATCH_BODY" '批量推送一篇' "$ADMIN_COOKIE"
+  rm -f "$SMOKE_BATCH_BODY"
+  printf '%s' "$BODY_TEXT" | grep -q '"done":1' && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s\n' '批量推送回执 done=1'; }     || { FAIL=$((FAIL + 1)); FAILED+=('批量推送回执不对'); printf '  [31m✗[0m %-56s\n' '批量推送回执不对'; }
+  req GET '/api/admin/content/file?path=content/zh/posts/zz-smoke-batch.md' 200 '' '批量推送的落点可读' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q '冒烟批量自测' && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s\n' '批量推送内容一致'; }     || { FAIL=$((FAIL + 1)); FAILED+=('批量推送内容不符'); printf '  [31m✗[0m %-56s\n' '批量推送内容不符'; }
+  req DELETE '/api/admin/content/file?path=content/zh/posts/zz-smoke-batch.md' 200 '' '删除批量自测文章' "$ADMIN_COOKIE"
+  req GET '/api/account/author-request' 200 '' '作者认证入口状态' "$ADMIN_COOKIE"
+  req PUT /api/admin/content/file 400 '{"path":"config/_default/params.toml","content":"nope"}' '拒绝写 content 之外的路径' "$ADMIN_COOKIE"
+
+  section '管理员：订阅、群发、广告、媒体、作者表'
+  req GET '/api/admin/subscribers?status=confirmed' 200 '' '订阅列表' "$ADMIN_COOKIE"
+  req GET '/api/admin/broadcast/jobs' 200 '' '群发任务列表' "$ADMIN_COOKIE"
+  req GET '/api/admin/spam/pattern-file' 200 '' '正则文件读取' "$ADMIN_COOKIE"
+  req GET '/api/admin/media/buckets' 200 '' '存储桶列表（脱敏）' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -q 'secretAccessKey' && printf '  \033[33m!\033[0m 存储桶响应里出现了 secretAccessKey，请核对脱敏\n'
+  req GET '/api/admin/authors/file' 200,404 '' '作者表读取' "$ADMIN_COOKIE"
+  req GET '/api/admin/drafts?status=pending' 200 '' '投稿列表' "$ADMIN_COOKIE"
+  req GET '/api/admin/friends' 200 '' '友链与站点联盟分组列表' "$ADMIN_COOKIE"
+  req GET '/api/admin/stats' 200 '' '后台统计汇总' "$ADMIN_COOKIE"
+  req GET '/api/admin/translate/status' 200 '' '翻译可用引擎' "$ADMIN_COOKIE"
+  req GET /api/security 200 '' '我的信息：安全设置' "$ADMIN_COOKIE"
+  req GET /api/security/totp/status 200 '' '验证器状态（含「登录时要动态码」这一自己的开关）' "$ADMIN_COOKIE"
+  req GET '/api/admin/deletions' 200 '' '注销申请列表' "$ADMIN_COOKIE"
+else
+  printf '\n\033[33m未提供 ADMIN_COOKIE，管理员接口的实际数据检查已跳过。\033[0m\n'
+  printf '想跑全量：ADMIN_COOKIE=\x27zero_session=…\x27 bash scripts/smoke.sh\n'
+fi
+
+# ---------------------------------------------------------------- 汇总
+printf '\n\033[1m== 汇总 ==\033[0m\n'
+printf '  通过 %s / 失败 %s\n' "$PASS" "$FAIL"
+if [ "$FAIL" -gt 0 ]; then
+  printf '\n失败明细：\n'
+  for f in "${FAILED[@]}"; do printf '  · %s\n' "$f"; done
+  exit 1
+fi
+printf '  \033[32m全绿\033[0m\n'

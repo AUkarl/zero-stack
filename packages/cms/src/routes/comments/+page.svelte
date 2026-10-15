@@ -1,0 +1,136 @@
+<script lang="ts">
+  import { get, post, timeAgo } from '#lib/api';
+
+  interface Row {
+    id: string;
+    postSlug: string;
+    content: string;
+    authorName: string;
+    authorEmail: string | null;
+    status: string;
+    createdAt: number;
+    depth: number;
+    isLegacy?: boolean;
+  }
+
+  let rows = $state<Row[]>([]);
+  let filter = $state<'pending' | 'approved' | 'spam' | 'all'>('pending');
+  let loading = $state(false);
+  let error = $state('');
+
+  async function load() {
+    loading = true;
+    error = '';
+    try {
+      const d = await get<{ data: Row[] }>(`/api/admin/comments?status=${filter}`);
+      rows = d.data;
+    } catch (e) {
+      error = e instanceof Error ? e.message : '加载失败';
+    } finally {
+      loading = false;
+    }
+  }
+
+  $effect(() => void load());
+
+  async function act(id: string, action: 'approve' | 'reject' | 'spam') {
+    if (action === 'reject' && !confirm('确定删除该评论及其所有子回复？')) return;
+    try {
+      await post(`/api/admin/comments/${id}/moderate`, { action });
+      rows = rows.filter((r) => r.id !== id);
+      error = '';
+    } catch (e) {
+      error = e instanceof Error ? e.message : '操作失败';
+    }
+  }
+
+  const TABS = [
+    ['pending', '待审核'],
+    ['approved', '已通过'],
+    ['spam', '垃圾'],
+    ['all', '全部'],
+  ] as const;
+</script>
+
+<div class="row spread head">
+  <h2>评论管理</h2>
+  <button onclick={() => void load()} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button>
+</div>
+
+<div class="tabs">
+  {#each TABS as [key, label] (key)}
+    <button class="sm" class:on={filter === key} onclick={() => { filter = key; void load(); }}>{label}</button>
+  {/each}
+</div>
+
+{#if error}<p class="err">{error}</p>{/if}
+{#if rows.length === 0 && !loading}<p class="muted">{filter === 'pending' ? '没有待审核的评论。' : '暂无记录'}</p>{/if}
+
+<div class="list">
+  {#each rows as r (r.id)}
+    <div class="card item">
+      <div class="row spread">
+        <div class="who">
+          <b>{r.authorName}</b>
+          <span class="muted">{r.authorEmail ?? ''}</span>
+          {#if r.depth > 1}<span class="badge">第 {r.depth} 层</span>{/if}
+          {#if r.isLegacy}<span class="badge pending">迁移</span>{/if}
+          <span class="badge" class:good={r.status === 'approved'} class:pending={r.status === 'pending'} class:bad={r.status === 'spam'}>{r.status}</span>
+        </div>
+        <span class="muted t">{timeAgo(r.createdAt)}</span>
+      </div>
+      <p class="content">{r.content}</p>
+      <div class="row slug">
+        <a href={r.postSlug} target="_blank" rel="noreferrer">{r.postSlug}</a>
+      </div>
+      <div class="ops">
+        {#if r.status !== 'approved'}<button class="sm primary" onclick={() => void act(r.id, 'approve')}>通过</button>{/if}
+        {#if r.status !== 'spam'}<button class="sm" onclick={() => void act(r.id, 'spam')}>标为垃圾</button>{/if}
+        <button class="sm danger" onclick={() => void act(r.id, 'reject')}>删除</button>
+      </div>
+    </div>
+  {/each}
+</div>
+
+<style>
+  .head {
+    margin-bottom: 0.7rem;
+  }
+  .tabs {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.9rem;
+  }
+  .tabs .on {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .item .who {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .item .t {
+    font-size: 0.8rem;
+  }
+  .content {
+    margin: 0.5rem 0;
+    white-space: pre-wrap;
+    line-height: 1.6;
+  }
+  .slug {
+    font-size: 0.8rem;
+  }
+  .ops {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.4rem;
+  }
+</style>

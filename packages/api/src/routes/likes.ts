@@ -1,0 +1,219 @@
+import { Hono } from 'hono';
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import type { Context } from 'hono';
+import { createDb } from '../db/client';
+import { commentLikes, comments, reactions } from '../db/schema';
+import { getConfigBool } from '../services/config';
+import { anonymousFingerprint, newId } from '../lib/crypto';
+import { fail, ok } from '../lib/errors';
+import { clientIp, userAgent } from '../lib/http';
+import { rateLimit } from '../lib/rate-limit';
+import { visitorFingerprint } from '../lib/ua';
+import { canonSlug } from '../lib/slug';
+import type { AuthUser } from '../services/auth';
+import type { AppEnv } from '../lib/app';
+
+const app = new Hono<AppEnv>();
+
+function secret(env: Env): string {
+  if (!env.AUTH_SECRET) fail(500, '服务端未配置 AUTH_SECRET，请执行 wrangler secret put AUTH_SECRET');
+  return env.AUTH_SECRET!;
+}
+
+/* ------------------------------------------------------------------
+ * 评论点赞的共用逻辑（路由挂在 routes/comments.ts 的 /api/comments/:id/like）
+ *
+ * 与文章点赞同一套思路，只是目标从 slug 换成 comment_id：
+ *   登录 → 记 user_id；匿名 → 记 hashIp+UA 指纹，同一个人同一条只算一次。
+ * ----------------------------------------------------------------*/
+
+/** 当前访客在 comment_likes 里的身份：登录用 user，匿名用指纹 */
+async function likeActor(env: Env, c: Context, user: AuthUser | null): Promise<{ userId: string | null; fingerprint: string | null }> {
+  if (user) return { userId: user.id, fingerprint: null };
+  return { userId: null, fingerprint: await visitorFingerprint(env, clientIp(c), userAgent(c)) };
+}
+
+/**
+ * 整篇文章一次拿齐赞数：评论列表最多 2000 条，把 id 全塞进 IN 里 SQL 会很长，
+ * 用子查询按 post_slug 圈范围，D1 走 comment_likes_comment_idx 足够快。
+ */
+export async function commentLikeStatsForSlug(
+  env: Env,
+  c: Context,
+  slug: string,
+  user: AuthUser | null,
+): Promise<{ counts: Map<string, number>; liked: Set<string> }> {
+  const counts = new Map<string, number>();
+  const liked = new Set<string>();
+  const db = createDb(env);
+  const inPost = sql`${commentLikes.commentId} IN (SELECT ${comments.id} FROM ${comments} WHERE ${comments.postSlug} = ${slug})`;
+
+  const agg = await db
+    .select({ commentId: commentLikes.commentId, n: sql<number>`count(*)` })
+    .from(commentLikes)
+    .where(inPost)
+    .groupBy(commentLikes.commentId);
+  for (const r of agg) counts.set(r.commentId, Number(r.n));
+
+  const mine = await commentLikesOfActor(db, env, c, user, inPost);
+  for (const r of mine) liked.add(r.commentId);
+  return { counts, liked };
+}
+
+/** 当前访客在这批评论里点过赞的 id（登录按 user_id，匿名按指纹） */
+async function commentLikesOfActor(
+  db: ReturnType<typeof createDb>,
+  env: Env,
+  c: Context,
+  user: AuthUser | null,
+  scope: SQL,
+): Promise<{ commentId: string }[]> {
+  const actor = await likeActor(env, c, user);
+  if (!actor.userId && !actor.fingerprint) return [];
+  return db
+    .select({ commentId: commentLikes.commentId })
+    .from(commentLikes)
+    .where(and(scope, actor.userId ? eq(commentLikes.userId, actor.userId) : eq(commentLikes.fingerprint, actor.fingerprint ?? '')));
+}
+
+/** 一条评论的赞数（列表外的单点场景，比如刚点完赞要回显） */
+export async function commentLikeCount(env: Env, commentId: string): Promise<number> {
+  const db = createDb(env);
+  const rows = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(commentLikes)
+    .where(eq(commentLikes.commentId, commentId));
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** POST /api/comments/:id/like 的实现：点过就取消，没点过就加上 */
+export async function toggleCommentLike(env: Env, c: Context, commentId: string, user: AuthUser | null) {
+  if (!(await getConfigBool(env, 'likeEnabled', true))) fail(403, '点赞功能已关闭');
+  if (!user && !(await getConfigBool(env, 'likeAllowAnonymous', true))) fail(403, '需登录后才能点赞');
+
+  await rateLimit(c, 'comment-like', 120, 3600, commentId);
+
+  const db = createDb(env);
+  const actor = await likeActor(env, c, user);
+
+  const existing = await db
+    .select({ id: commentLikes.id })
+    .from(commentLikes)
+    .where(
+      and(
+        eq(commentLikes.commentId, commentId),
+        actor.userId ? eq(commentLikes.userId, actor.userId) : eq(commentLikes.fingerprint, actor.fingerprint ?? ''),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length) {
+    await db.delete(commentLikes).where(eq(commentLikes.id, existing[0]!.id));
+  } else {
+    await db.insert(commentLikes).values({
+      id: newId(),
+      commentId,
+      userId: actor.userId,
+      fingerprint: actor.fingerprint,
+      createdAt: Math.floor(Date.now() / 1000),
+    });
+  }
+
+  return {
+    commentId,
+    liked: existing.length === 0,
+    likeCount: await commentLikeCount(env, commentId),
+  };
+}
+
+/** POST /api/reactions { slug, kind } —— 点赞/收藏，已点则取消 */
+app.post('/', async (c) => {
+  const env = c.env;
+  const body = (await c.req.json().catch(() => null)) as { slug?: string; kind?: string } | null;
+  const kind = body?.kind === 'star' ? 'star' : 'like';
+  const slug = canonSlug(body?.slug ?? '');
+  if (!slug || slug === '/') fail(400, '缺少目标文章');
+
+  const enabled = await getConfigBool(env, kind === 'star' ? 'starEnabled' : 'likeEnabled', true);
+  if (!enabled) fail(403, kind === 'star' ? '收藏功能已关闭' : '点赞功能已关闭');
+
+  const user = c.get('user');
+  if (!user && !(await getConfigBool(env, 'likeAllowAnonymous', true))) fail(403, '需登录后才能点赞');
+
+  await rateLimit(c, 'reaction', 60, 3600, slug);
+  const db = createDb(env);
+  const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c), userAgent(c));
+
+  const existing = await db
+    .select({ id: reactions.id })
+    .from(reactions)
+    .where(
+      and(
+        eq(reactions.targetSlug, slug),
+        eq(reactions.kind, kind),
+        user ? eq(reactions.userId, user.id) : eq(reactions.fingerprint, fingerprint ?? ''),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length) {
+    await db.delete(reactions).where(eq(reactions.id, existing[0]!.id));
+  } else {
+    await db.insert(reactions).values({
+      id: newId(),
+      targetSlug: slug,
+      kind,
+      userId: user?.id ?? null,
+      fingerprint,
+      createdAt: Math.floor(Date.now() / 1000),
+    });
+  }
+
+  const count = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(reactions)
+    .where(and(eq(reactions.targetSlug, slug), eq(reactions.kind, kind)));
+
+  return ok({ slug, kind, active: existing.length === 0, count: Number(count[0]?.n ?? 0) });
+});
+
+/** GET /api/reactions?slugs=/a/,/b&kind=like —— 列表页批量取计数与本人状态 */
+app.get('/', async (c) => {
+  const env = c.env;
+  const raw = (c.req.query('slugs') ?? '').split(',').filter(Boolean);
+  const kind = c.req.query('kind') === 'star' ? 'star' : 'like';
+  if (raw.length === 0) return ok({});
+  const slugs = [...new Set(raw.map(canonSlug))];
+
+  const db = createDb(env);
+  const counts = await db
+    .select({ slug: reactions.targetSlug, n: sql<number>`count(*)` })
+    .from(reactions)
+    .where(and(inArray(reactions.targetSlug, slugs), eq(reactions.kind, kind)))
+    .groupBy(reactions.targetSlug);
+
+  const byCanon: Record<string, { count: number; active: boolean }> = {};
+  for (const s of slugs) byCanon[s] = { count: 0, active: false };
+  for (const r of counts) if (byCanon[r.slug]) byCanon[r.slug]!.count = Number(r.n);
+
+  const user = c.get('user');
+  const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c), userAgent(c));
+  const mine = await db
+    .select({ slug: reactions.targetSlug })
+    .from(reactions)
+    .where(
+      and(
+        inArray(reactions.targetSlug, slugs),
+        eq(reactions.kind, kind),
+        user ? eq(reactions.userId, user.id) : eq(reactions.fingerprint, fingerprint ?? ''),
+      ),
+    );
+  for (const m of mine) if (byCanon[m.slug]) byCanon[m.slug]!.active = true;
+
+  const out: Record<string, { count: number; active: boolean }> = {};
+  for (const s of raw) out[s] = byCanon[canonSlug(s)] ?? { count: 0, active: false };
+
+  return ok(out);
+});
+
+export default app;

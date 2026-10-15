@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+.svelte-kit/
+.output/
+
+# wrangler 本地状态与真实配置（真实配置由各人 setup 生成，仓库只保留 .example）
+.wrangler/
+.env
+.env.local
+.env.*.local
+packages/api/wrangler.jsonc
+packages/cms/wrangler.toml
+
+# 迁移脚本产物
+scripts/*.sql
+scripts/*-export.json
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+# wrangler 本地密钥（不入库）
+.dev.vars
+
+# 本地验证时临时落地的会话文件（含管理员 Cookie，绝不提交）
+.scratch-*

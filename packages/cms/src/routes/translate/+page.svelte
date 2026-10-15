@@ -1,0 +1,451 @@
+<script lang="ts">
+  import { get, patch, post } from '#lib/api';
+
+  /**
+   * 中文翻译工作台（纯中文站）：选文章（原文可为任意语言）→ 选翻译服务 → 一键译成中文
+   * → 可编辑预览 → 发布中文稿（固定写入 content/zh/posts）。没有「目标语言」概念。
+   *
+   * 后端口子（都在 /api/admin/translate 下）：
+   *   GET  /status      provider / 是否就绪 / 可选 provider 清单（含是否需要 key）
+   *   GET  /documents   列 content/zh/posts 已发布文章（后端缓存 5 分钟），无语言参数
+   *   POST /document    {path} 正文按段落译成简体中文，返回可编辑草稿，不写盘
+   *   POST /publish     {path,front,body,message,overwrite} 写入 content/zh/posts/<源文件名>.md 并触发重建
+   *   PATCH /api/admin/config  写 translateProvider / translateEndpoint / translateModel / translateKey
+   *
+   * provider 的 kind 字符串必须与后端 services/translate.ts 的 PRESETS、设置页下拉完全一致。
+   */
+
+  interface ProviderInfo {
+    kind: string;
+    label: string;
+    needsKey: boolean;
+    family: 'none' | 'workers' | 'chat' | 'free';
+  }
+  interface TrStatus {
+    provider: string;
+    model: string;
+    ready: boolean;
+    hint: string;
+    family: string;
+    needsKey: boolean;
+    providers: ProviderInfo[];
+  }
+  interface Doc {
+    id: string;
+    path: string;
+    title: string;
+    date: string;
+  }
+
+  /** 与后端 PRESETS 对齐的默认端点/模型：切换 provider 时预填，可手动改 */
+  const PRESET_DEFAULTS: Record<string, { endpoint: string; model: string }> = {
+    none: { endpoint: '', model: '' },
+    'workers-ai': { endpoint: '', model: '@cf/meta/m2m100-1.2b' },
+    openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    deepseek: { endpoint: 'https://api.deepseek.com', model: 'deepseek-chat' },
+    qianwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+    moonshot: { endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+    doubao: { endpoint: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k' },
+    grok: { endpoint: 'https://api.x.ai/v1', model: 'grok-2-latest' },
+    zhipu: { endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+    mymemory: { endpoint: 'https://api.mymemory.translated.net/get', model: '' },
+    libretranslate: { endpoint: 'https://translate.libretranslate.com/translate', model: '' },
+    google: { endpoint: 'https://translate.googleapis.com/translate_a/single', model: '' },
+  };
+
+  let status = $state<TrStatus | null>(null);
+  let loading = $state(false);
+  let error = $state('');
+  let notice = $state('');
+
+  /* -------- 配置区（provider / 端点 / 模型 / 密钥） -------- */
+  let provider = $state('none');
+  let endpoint = $state('');
+  let model = $state('');
+  let apiKey = $state('');
+  let savedProvider = $state('none');
+  let savedEndpoint = $state('');
+  let savedModel = $state('');
+  let dirty = $derived(provider !== savedProvider || endpoint !== savedEndpoint || model !== savedModel);
+
+  /* -------- 工作台：原文（可为外文）→ 中文，单向流程 -------- */
+  let docs = $state<Doc[]>([]);
+  let docPath = $state('');
+  let docLoading = $state(false);
+  let translating = $state(false);
+
+  let zhFront = $state<Record<string, unknown>>({});
+  let trTitle = $state('');
+  let trDescription = $state('');
+  let trSummary = $state('');
+  let trBody = $state('');
+  let srcTitle = $state('');
+  let withInfo = $state<{ provider: string; segments: number; retries: number } | null>(null);
+
+  /* -------- 发布中文稿 -------- */
+  let publishMsg = $state('');
+  let overwrite = $state(false);
+  let publishing = $state(false);
+  let published: { path: string; backend: string; build: { triggered: boolean; error?: string } } | null | undefined = $state(undefined);
+
+  const selectedDoc = $derived(docs.find((d) => d.path === docPath) ?? null);
+  const currentProviders = $derived(status?.providers ?? []);
+  const activeProviderInfo = $derived(currentProviders.find((p) => p.kind === provider) ?? null);
+
+  function flash(msg: string) {
+    notice = msg;
+    setTimeout(() => (notice = ''), 2600);
+  }
+
+  async function load() {
+    loading = true;
+    error = '';
+    try {
+      const [st, cfg] = await Promise.all([
+        get<{ data: TrStatus }>('/api/admin/translate/status'),
+        get<{ data: Record<string, string> }>('/api/admin/config'),
+      ]);
+      status = st.data;
+      provider = cfg.data.translateProvider || st.data.provider || 'none';
+      endpoint = cfg.data.translateEndpoint || '';
+      model = cfg.data.translateModel || '';
+      savedProvider = provider;
+      savedEndpoint = endpoint;
+      savedModel = model;
+    } catch (e) {
+      error = e instanceof Error ? e.message : '读取翻译状态失败';
+      status = null;
+    } finally {
+      loading = false;
+    }
+  }
+
+  function onProviderChange() {
+    const def = PRESET_DEFAULTS[provider] ?? { endpoint: '', model: '' };
+    endpoint = def.endpoint;
+    model = def.model;
+  }
+
+  /** 若 provider/端点/模型相对后端有改动，先写回配置，保证 /document 用的是当前选择 */
+  async function ensureConfig() {
+    const body: Record<string, string> = { translateProvider: provider, translateEndpoint: endpoint, translateModel: model };
+    if (apiKey.trim()) body.translateKey = apiKey.trim();
+    await patch('/api/admin/config', body);
+    savedProvider = provider;
+    savedEndpoint = endpoint;
+    savedModel = model;
+    apiKey = '';
+    const st = await get<{ data: TrStatus }>('/api/admin/translate/status');
+    status = st.data;
+  }
+
+  async function loadDocs() {
+    docLoading = true;
+    error = '';
+    try {
+      const d = await get<{ data: { documents: Doc[] } }>('/api/admin/translate/documents');
+      docs = d.data.documents ?? [];
+      docPath = docs[0]?.path ?? '';
+    } catch (e) {
+      error = e instanceof Error ? e.message : '读取文章列表失败';
+      docs = [];
+    } finally {
+      docLoading = false;
+    }
+  }
+
+  async function doTranslate() {
+    error = '';
+    published = undefined;
+    if (!docPath) {
+      flash('先选一篇要翻译的文章');
+      return;
+    }
+    translating = true;
+    try {
+      if (dirty || apiKey.trim()) await ensureConfig();
+      const d = await post<{
+        data: {
+          source: { path: string; title: string };
+          zh: { front: Record<string, unknown>; body: string; translatedWith: { provider: string; segments: number; retries: number } };
+        };
+      }>('/api/admin/translate/document', { path: docPath });
+      const r = d.data;
+      zhFront = r.zh.front ?? {};
+      trTitle = String(r.zh.front?.title ?? '');
+      trDescription = String(r.zh.front?.description ?? '');
+      trSummary = String(r.zh.front?.summary ?? '');
+      trBody = r.zh.body ?? '';
+      srcTitle = r.source?.title ?? '';
+      withInfo = r.zh.translatedWith ?? null;
+      publishMsg = `发布中文稿：${srcTitle}`.slice(0, 180);
+      flash(`已译成中文（${withInfo?.provider ?? '?'} · ${withInfo?.segments ?? 0} 段${withInfo?.retries ? ` · 重试 ${withInfo.retries}` : ''}）`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : '翻译失败';
+    } finally {
+      translating = false;
+    }
+  }
+
+  async function doPublish() {
+    error = '';
+    if (!docPath || (!trBody && !trTitle)) {
+      flash('没有可发布的中文稿，请先翻译');
+      return;
+    }
+    publishing = true;
+    published = undefined;
+    try {
+      const front = { ...zhFront, title: trTitle, description: trDescription, summary: trSummary };
+      const d = await post<{
+        data: { path: string; backend: string; build: { triggered: boolean; error?: string } };
+      }>('/api/admin/translate/publish', {
+        path: docPath,
+        front,
+        body: trBody,
+        message: publishMsg || undefined,
+        overwrite,
+      });
+      published = d.data;
+      flash(`已写入 ${d.data.path}`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : '发布失败';
+    } finally {
+      publishing = false;
+    }
+  }
+
+  /** 当前编辑态拼出将要发布的完整 markdown，用于诚实预览 */
+  const previewMd = $derived.by(() => {
+    const lines: string[] = [];
+    const front = { ...zhFront, title: trTitle, description: trDescription, summary: trSummary };
+    lines.push('---');
+    for (const [k, v] of Object.entries(front)) {
+      if (v === null || v === undefined || v === '') continue;
+      if (Array.isArray(v)) {
+        lines.push(`${k}:`);
+        for (const it of v) lines.push(`  - ${String(it)}`);
+      } else if (typeof v === 'object') {
+        lines.push(`${k}:`);
+        for (const [sk, sv] of Object.entries(v as Record<string, string>)) lines.push(`  ${sk}: ${String(sv)}`);
+      } else lines.push(`${k}: ${String(v)}`);
+    }
+    lines.push('---', '', trBody);
+    return lines.join('\n');
+  });
+
+  const hasResult = $derived(Boolean(withInfo) && (trBody !== '' || trTitle !== ''));
+
+  $effect(() => {
+    void (async () => {
+      await load();
+      void loadDocs();
+    })();
+  });
+</script>
+
+<div class="row spread head">
+  <h2>中文翻译工作台</h2>
+  <div class="row">
+    <span class="muted small">
+      当前：{status ? `${status.provider}${status.model ? ` · ${status.model}` : ''}` : '—'}
+      {#if status}<span class="badge {status.ready ? 'good' : 'pending'}">{status.ready ? '可用' : '未就绪'}</span>{/if}
+    </span>
+    <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
+  </div>
+</div>
+
+{#if error}<p class="err">{error}</p>{/if}
+{#if notice}<p class="ok">{notice}</p>{/if}
+
+{#if status && !status.ready}
+  <section class="card blk guide">
+    <h3>还没有可用的翻译服务</h3>
+    <p class="muted small">{status.hint || '未配置翻译服务。'}</p>
+    <p class="small">
+      最快上手（免密钥）：在下方「服务」里选 <strong>mymemory</strong> / <strong>libretranslate</strong> / <strong>google</strong>，
+      然后点「一键译成中文」即可自动保存并试译。质量与配额较低，适合先跑通。
+    </p>
+    <p class="small">
+      要更好的效果：选 <strong>deepseek / qianwen / moonshot / doubao / grok / zhipu / openai</strong> 之一，
+      在「密钥」里填对应 API Key（端点与模型已按预设填好），保存后即可用。也可到
+      <a href="/settings">「设置 - 机器翻译」</a> 调更多项。所有译文固定为简体中文。
+    </p>
+  </section>
+{/if}
+
+<section class="card blk">
+  <h3>工作台：原文（可为外文）→ 中文</h3>
+  <div class="work">
+    <div class="col">
+      <span class="lbl">1 · 原文（可为任意语言）</span>
+      <label>
+        文章（仅已发布）
+        <select bind:value={docPath} disabled={docLoading}>
+          {#if docLoading}<option value="">读取中…</option>{/if}
+          {#if !docLoading && !docs.length}<option value="">（没有可选文章）</option>{/if}
+          {#each docs as d (d.path)}
+            <option value={d.path}>{d.title || d.path}</option>
+          {/each}
+        </select>
+      </label>
+      <button class="sm" onclick={() => void loadDocs()} disabled={docLoading}>{docLoading ? '读取中…' : '刷新文章列表'}</button>
+      {#if selectedDoc}<p class="muted small path">{selectedDoc.path}</p>{/if}
+      <p class="muted small">原文可能仍是外文，也可能已是中文；译文一律是简体中文。</p>
+    </div>
+
+    <div class="col">
+      <span class="lbl">2 · 翻译服务（固定译为简体中文）</span>
+      <label>
+        服务
+        <select bind:value={provider} onchange={onProviderChange}>
+          {#each currentProviders as p (p.kind)}
+            <option value={p.kind}>{p.label}{p.needsKey ? '（需密钥）' : '（免密钥）'}</option>
+          {/each}
+        </select>
+      </label>
+      <div class="two">
+        <label class="tight">端点<input bind:value={endpoint} placeholder="留空用服务默认" /></label>
+        <label class="tight">模型<input bind:value={model} placeholder="如 gpt-4o-mini" /></label>
+      </div>
+      <label class="tight">密钥（留空不改）<input type="password" bind:value={apiKey} placeholder="deepseek / qianwen 等需填" /></label>
+      {#if activeProviderInfo?.family === 'free'}
+        <p class="muted small">免费公共接口，无需密钥，配额低，失败会原样报错。</p>
+      {/if}
+      <button class="primary" onclick={() => void doTranslate()} disabled={translating || !docPath}>
+        {translating ? '翻译中…' : '一键译成中文'}
+      </button>
+    </div>
+  </div>
+</section>
+
+{#if hasResult}
+  <section class="card blk edit">
+    <h3>3 · 编辑中文稿</h3>
+    {#if withInfo}
+      <p class="muted small">
+        由 {withInfo.provider} 译成中文 · {withInfo.segments} 段{withInfo.retries ? ` · 重试 ${withInfo.retries} 次` : ''} ·
+        date/author/comments 等字段保持不变，仅标题/摘要/描述与正文为中文。
+      </p>
+    {/if}
+    <div class="fields">
+      <label class="tight">标题<input bind:value={trTitle} /></label>
+      <label class="tight">摘要 description<input bind:value={trDescription} /></label>
+      <label class="tight">导语 summary<input bind:value={trSummary} /></label>
+    </div>
+    <label class="tight">正文（Markdown，可编辑）
+      <textarea rows="14" bind:value={trBody}></textarea>
+    </label>
+
+    <div class="pubrow">
+      <label class="tight grow">提交说明（可选）<input bind:value={publishMsg} placeholder="写进仓库的说明" /></label>
+      <label class="chk"><input type="checkbox" bind:checked={overwrite} /> 覆盖已存在文件</label>
+      <button class="primary" onclick={() => void doPublish()} disabled={publishing}>{publishing ? '发布中…' : '发布中文稿'}</button>
+    </div>
+    <p class="muted small">中文稿固定写入 content/zh/posts/&lt;源文件名&gt;.md；源文件本身已在中文目录时后端会拒绝（避免译自己覆盖自己）。</p>
+
+    {#if published}
+      <p class="ok">
+        已写入：<strong>{published.path}</strong>（后端 {published.backend}） ·
+        重建：{published.build.triggered ? '已触发 Pages 构建' : `未触发——${published.build.error ?? '等下一次自动构建'}`}
+      </p>
+    {/if}
+  </section>
+
+  <section class="card blk">
+    <h3>预览（将写入仓库的完整 md）</h3>
+    <pre class="md">{previewMd}</pre>
+  </section>
+{/if}
+
+<style>
+  .head {
+    margin-bottom: 0.7rem;
+  }
+  .small {
+    font-size: 0.76rem;
+  }
+  .blk {
+    margin-bottom: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .blk h3 {
+    margin: 0;
+    font-size: 0.98rem;
+  }
+  .guide {
+    border-color: var(--accent);
+  }
+  .work {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.9rem;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border-left: 2px solid var(--border);
+    padding-left: 0.7rem;
+  }
+  .lbl {
+    font-size: 0.78rem;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .two {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+    gap: 0.5rem;
+  }
+  .tight {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .grow {
+    flex: 1;
+  }
+  .fields {
+    display: grid;
+    gap: 0.5rem;
+  }
+  .pubrow {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+  }
+  .chk {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  textarea,
+  pre.md {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.84rem;
+    line-height: 1.6;
+  }
+  pre.md {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--bg-soft, rgba(0, 0, 0, 0.03));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.7rem;
+    max-height: 360px;
+    overflow: auto;
+    margin: 0;
+  }
+  .path {
+    word-break: break-all;
+  }
+</style>

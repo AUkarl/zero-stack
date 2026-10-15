@@ -1,0 +1,64 @@
+# ============================================================
+# 用户可选部署模板 —— 复制到你自己仓库的
+# .github/workflows/deploy.yml 即可启用。
+#
+# 需要在仓库 Secrets 中配置：
+#   CF_API_TOKEN   Cloudflare API Token（需 Workers / Pages / D1 权限）
+#   CF_ACCOUNT_ID  Cloudflare 账户 ID
+# ============================================================
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: packages/api
+          command: d1 migrations apply zero-db --remote
+      - name: Deploy API
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: packages/api
+          command: deploy
+
+  deploy-cms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install
+      - name: Build CMS
+        run: pnpm --filter zero-cms build
+      - name: Deploy CMS
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: packages/cms
+          command: pages deploy .svelte-kit/cloudflare --project-name=zero-cms

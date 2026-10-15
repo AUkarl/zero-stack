@@ -1,0 +1,37 @@
+{
+  "name": "zero-stack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hugo + Hono + SvelteKit full-stack CMS: comment components, API worker, and admin panel",
+  "type": "module",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "setup": "tsx scripts/setup.ts",
+    "create:site": "tsx scripts/create-site.ts",
+    "deploy:api": "tsx scripts/deploy-api.ts",
+    "deploy:cms": "tsx scripts/deploy-cms.ts",
+    "build:comment": "pnpm --filter zero-comment build",
+    "mock:translate": "node scripts/mock-translate.mjs",
+    "repo:bridge": "node scripts/local-repo-bridge.mjs",
+    "dev:api": "pnpm --filter zero-api dev",
+    "dev:cms": "pnpm --filter zero-cms dev",
+    "db:migrate:local": "pnpm --filter zero-api db:migrate:local",
+    "db:migrate:remote": "pnpm --filter zero-api db:migrate:remote",
+    "migrate:waline": "tsx scripts/migrate-waline.ts",
+    "typecheck": "pnpm -r typecheck",
+    "typecheck:scripts": "tsc -p tsconfig.json",
+    "build": "pnpm -r build",
+    "check": "pnpm typecheck:scripts && pnpm -r typecheck && pnpm -r build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/prompts": "^2.4.9",
+    "prompts": "^2.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.149.0"
+  }
+}

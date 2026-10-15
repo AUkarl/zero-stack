@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1791643830420,
+      "tag": "0000_graceful_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791657952625,
+      "tag": "0001_optimal_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791692940166,
+      "tag": "0002_regular_red_wolf",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791699252964,
+      "tag": "0003_careful_carlie_cooper",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791748474864,
+      "tag": "0004_round2_add",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791748495259,
+      "tag": "0005_round2_drop_ip",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791748511063,
+      "tag": "0006_round2_drop_moments",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791790708989,
+      "tag": "0007_friends_kind_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791965919486,
+      "tag": "0008_swift_sandman",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791995043074,
+      "tag": "0009_smooth_vulcan",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1792041351426,
+      "tag": "0010_complete_night_thrasher",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+packages:
+  - 'packages/*'
+
+# pnpm 默认屏蔽依赖的 postinstall 脚本：
+# esbuild（tsx / vite 需要其二进制）与 workerd（wrangler 本地运行需要）必须放行。
+allowBuilds:
+  esbuild: true
+  workerd: true

@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zero-api",
+  "main": "./src/index.ts",
+  "compatibility_date": "2025-08-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zero-db",
+      "database_id": "<从 wrangler d1 create 获取>",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "zero-media"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "<CACHE KV ID>" },
+    { "binding": "SESSION", "id": "<SESSION KV ID>" }
+  ],
+  "queues": {
+    "producers": [{ "binding": "EMAIL_QUEUE", "queue": "zero-email" }],
+    "consumers": [
+      {
+        "queue": "zero-email",
+        "max_batch_size": 10,
+        "max_retries": 3
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["0 2 * * *"]
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "COMMENT_MAX_DEPTH": "6",
+    "SITE_NAME": "Zero Site",
+    // 前台主题与后台 CMS 都是跨源调这个 Worker，两个站点地址都要写进来，
+    // 逗号分隔；写 * 等于对任意来源开放带 Cookie 的跨源请求，只在本地开发用。
+    "ALLOWED_ORIGINS": "https://zero-cms.pages.dev,https://zero-site.pages.dev"
+  }
+}

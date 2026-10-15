@@ -1,0 +1,304 @@
+<script lang="ts">
+  import { get, put } from '#lib/api';
+
+  /**
+   * 主题配置文件：直接读写仓库里的 params.toml / config.toml / menus.zh.toml / links.yaml。
+   *
+   * 后端只放开这四份路径，所以下拉就只列这四项；这里不解析也不重排文本，
+   * 编辑器里是什么就提交什么（注释与空行因此能原样保留）。
+   */
+  const FILES = [
+    { path: 'config/_default/params.toml', label: 'config/_default/params.toml（站点覆盖项）' },
+    { path: 'config/_default/config.toml', label: 'config/_default/config.toml（Hugo 基础配置）' },
+    { path: 'config/_default/menus.zh.toml', label: 'config/_default/menus.zh.toml（导航菜单）' },
+    { path: 'data/links.yaml', label: 'data/links.yaml（友链数据）' },
+  ] as const;
+
+  interface RepoFile {
+    exists: boolean;
+    path: string;
+    content: string;
+    sha: string;
+    bytes?: number;
+  }
+  interface WriteResult {
+    path: string;
+    sha: string;
+    bytes: number;
+    message?: string;
+    build?: { triggered?: boolean; error?: string } | null;
+  }
+
+  let path = $state<string>(FILES[0].path);
+  let content = $state('');
+  let baseline = $state('');
+  let sha = $state('');
+  let loaded = $state(false);
+  let exists = $state(true);
+  let bytes = $state(0);
+  let loading = $state(false);
+  let saving = $state(false);
+  let error = $state('');
+  let notice = $state('');
+  let note = $state<string | null>(null);
+  /** 保存后固定为 true，配合「重新读取」按钮给出下一步动作 */
+  let conflict = $state(false);
+  let triggerBuild = $state(true);
+
+  const dirty = $derived(loaded && content !== baseline);
+
+  const errText = (e: unknown): string => {
+    const m = e instanceof Error ? e.message : '请求失败';
+    return m === 'AUTH_EXPIRED' ? '登录已过期，请重新登录后台' : m;
+  };
+
+  /**
+   * #lib/api 只把 message 抛出来、不带状态码，而后端 409 的文案是固定的，
+   * 所以只能按文案识别冲突（拿不到状态码时的兜底格式是「请求失败 (409)」）。
+   */
+  function isConflict(m: string): boolean {
+    return m.includes('409') || m.includes('已被改动') || m.includes('重新读取后再保存');
+  }
+
+  async function readFile(target: string) {
+    loading = true;
+    error = '';
+    notice = '';
+    note = null;
+    conflict = false;
+    try {
+      const d = await get<{ data: RepoFile }>(`/api/admin/repo/file?path=${encodeURIComponent(target)}`);
+      const f = d.data;
+      path = f.path || target;
+      content = f.content ?? '';
+      baseline = content;
+      sha = f.sha ?? '';
+      exists = f.exists !== false;
+      bytes = f.bytes ?? content.length;
+      loaded = true;
+      if (!exists) error = `仓库里还没有 ${path}，编辑器里是空白；保存会新建这份文件，主题读不到它时才会回落到默认值。`;
+    } catch (e) {
+      const m = errText(e);
+      error = `读取 ${target} 失败：${m}`;
+      content = '';
+      baseline = '';
+      sha = '';
+      loaded = false;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function switchFile(next: string, sel?: HTMLSelectElement) {
+    if (next === path) return;
+    if (dirty && !confirm(`切换文件会丢掉 ${path} 里未保存的改动（没点「保存」的内容不会写进仓库）。仍要切到 ${next} 吗？`)) {
+      // 单向绑定的 select 不会因为状态没变而回滚，手动把下拉拨回去
+      if (sel) sel.value = path;
+      return;
+    }
+    // 先清掉上一份的 sha，避免手滑把 A 文件的 sha 当成 B 文件的用
+    loaded = false;
+    content = '';
+    baseline = '';
+    sha = '';
+    error = '';
+    notice = '';
+    note = null;
+    conflict = false;
+    path = next;
+    await readFile(next);
+  }
+
+  async function save() {
+    error = '';
+    notice = '';
+    note = null;
+    conflict = false;
+    if (!loaded) {
+      error = '还没读到文件内容，先点「读取」。空内容提交会把文件清空。';
+      return;
+    }
+    if (
+      !confirm(
+        `把编辑器里的内容整份覆盖写入 ${path}？\n\n这会生成一次仓库提交，注释和空白都按你现在看到的样子保存${
+          triggerBuild ? '，并请求站点重新构建' : ''
+        }。${loaded && exists && content.trim() === '' ? '\n\n注意：编辑器里是空的，保存会把这份已有文件清空。' : ''}`,
+      )
+    ) {
+      return;
+    }
+    saving = true;
+    try {
+      const d = await put<{ data: WriteResult }>('/api/admin/repo/file', {
+        path,
+        content,
+        // 乐观锁：带上读取时的 sha，后端比对不上就回 409
+        sha: sha || undefined,
+        triggerBuild,
+      });
+      const r = d.data;
+      const msg = r.message || '已写入仓库';
+      let build: string | null = null;
+      if (r.build?.triggered) build = '已请求 Cloudflare Pages 重新构建，前台几分钟内更新。';
+      else if (r.build && r.build.triggered === false) build = `站点构建没有自动触发：${r.build.error ?? '未配置 Pages 重建 Hook'}，等下一次自动构建或手动点一次。`;
+      else if (triggerBuild) build = '后端没有返回构建结果，按未触发处理；前台没更新就手动重建一次。';
+      // 回读而不是直接用 PUT 返回的 sha：本地仓库后端提交后回的是 local:<时间戳> 这类临时值，
+      // 只有再读一次拿到的才是下次乐观锁能比对上的 sha
+      await readFile(path);
+      notice = msg;
+      note = build;
+    } catch (e) {
+      const m = errText(e);
+      error = m;
+      if (isConflict(m)) {
+        conflict = true;
+        error = `${m}（已被他人改动，请重新读取）`;
+      }
+    } finally {
+      saving = false;
+    }
+  }
+
+  $effect(() => {
+    // 只自动读默认那一份，其余文件由下拉或「读取」按钮触发
+    void readFile(FILES[0].path);
+  });
+</script>
+
+<div class="wrap">
+  <p class="muted small intro">
+    这里改的是<em>仓库里的源配置文件</em>，不是「设置」页的运行时开关：整份文本原样写回 Git，注释、空行、顺序都不会被重排。
+    前台主题的取值优先级是 <code>data/*.json</code>（上面几个子标签保存的覆盖文件）&gt; 站点的
+    <code>config/_default/params.toml</code> &gt; 主题的 <code>config/_default/params.toml</code>（全部默认值与逐项注释）。
+    站点那份只写与默认值不同的那几项就行，要改别的项从主题那份里把键名抄过来；
+    在「前端管理」里配过的项，改 params 也不会生效，要先删掉对应的覆盖文件。
+  </p>
+
+  <div class="card box">
+    <div class="row controls">
+      <label class="pick">
+        配置文件
+        <select
+          value={path}
+          disabled={loading || saving}
+          onchange={(e) => void switchFile(e.currentTarget.value, e.currentTarget)}
+        >
+          {#each FILES as f (f.path)}<option value={f.path}>{f.label}</option>{/each}
+        </select>
+      </label>
+      <button class="sm" onclick={() => void readFile(path)} disabled={loading || saving}>
+        {loading ? '读取中…' : '读取'}
+      </button>
+      <button class="primary sm" onclick={() => void save()} disabled={saving || loading || !loaded}>
+        {saving ? '保存中…' : '保存到仓库'}
+      </button>
+      <label class="switch">
+        <input type="checkbox" bind:checked={triggerBuild} disabled={saving} />
+        <span>保存后触发站点构建</span>
+      </label>
+    </div>
+
+    <div class="row meta">
+      {#if loaded}
+        <span class="badge good">已读取</span>
+        <span class="muted small"><code>{path}</code></span>
+        <span class="muted small">{bytes} 字符</span>
+        {#if sha}<span class="muted small" title={sha}>sha {sha.slice(0, 12)}</span>{/if}
+        {#if dirty}<span class="badge pending">有未保存改动</span>{/if}
+      {:else}
+        <span class="badge bad">未读取</span>
+        <span class="muted small">点「读取」把仓库里的内容拿进来；未读取时不能保存。</span>
+      {/if}
+    </div>
+
+    {#if error}<p class="err">{error}</p>{/if}
+    {#if notice}<p class="ok">{notice}</p>{/if}
+    {#if note}<p class="muted small">{note}</p>{/if}
+    {#if conflict}
+      <p class="err small">
+        保存被拦下：这份文件在你编辑期间被改动过，你手上的 sha 已经过期。点「读取」拿到最新内容，把改动重新贴上去再保存，别直接覆盖。
+      </p>
+    {/if}
+
+    <textarea
+      class="mono"
+      rows="24"
+      spellcheck="false"
+      placeholder="选好文件后点「读取」，仓库里的完整文本会出现在这里"
+      bind:value={content}
+      disabled={!loaded}
+    ></textarea>
+
+    <p class="muted small tips">
+      改错了就用「读取」把仓库内容拉回来（未保存的改动会丢）；想回到上一个版本请看仓库的提交历史。
+      TOML 里字符串要带引号、布尔用 true/false，YAML 靠缩进分层级，改完建议先读一遍再保存。
+    </p>
+  </div>
+</div>
+
+<style>
+  .wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .intro {
+    margin: 0;
+    line-height: 1.75;
+  }
+  .intro code {
+    background: #f3f4f6;
+    border-radius: 4px;
+    padding: 0 0.22rem;
+  }
+  .box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .controls {
+    gap: 0.5rem;
+  }
+  .pick {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.84rem;
+  }
+  .pick select {
+    min-width: min(300px, 100%);
+    padding: 0.2rem 0.4rem;
+    font-size: 0.82rem;
+  }
+  .switch {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--fg);
+  }
+  .meta {
+    gap: 0.5rem;
+  }
+  .meta code {
+    background: #f3f4f6;
+    border-radius: 4px;
+    padding: 0 0.25rem;
+  }
+  .mono {
+    font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    font-size: 0.84rem;
+    line-height: 1.6;
+    tab-size: 2;
+    white-space: pre;
+    overflow-wrap: normal;
+    resize: vertical;
+  }
+  .small {
+    font-size: 0.76rem;
+  }
+  .tips {
+    margin: 0;
+    line-height: 1.7;
+  }
+</style>
