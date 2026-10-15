@@ -89,18 +89,33 @@ const worksSchema = z.object({
  * （siteName / siteUrl / siteDescription / siteLogo / siteFavicon / author），
  * 免得前台改了名字而邮件、群发与备份文件里还是旧的。
  */
+/*
+ * 站点基本信息（data/site.json）。
+ *
+ * 键全部带默认值：这份文件可能由人手写过、也可能只被「站长作者资料」写过一行
+ * defaultAuthor，缺键要让 schema 补默认，否则 GET 解析失败 → 页面显示空白 →
+ * 下一次保存把仓库里已有的内容整份覆盖掉。主题侧是按键 `| default` 回落 params.toml 的
+ * （partials/site-config.html），空串等于「这一项没在 data 里定」，不会盖掉 params。
+ */
 const siteSchema = z.object({
-  name: short,
+  name: short.default(''),
   navName: short.default(''),
   siteUrl: href.default(''),
-  description: long,
+  description: long.default(''),
   keywords: z.array(short).max(40).default([]),
-  logo: href,
+  logo: href.default(''),
   showLogo: z.boolean().default(true),
   showName: z.boolean().default(true),
-  favicon: href,
-  /** 作者署名与默认作者标识不在这一页：作者资料只有一处真值，
-      在「我的信息 → 站长作者资料」（写 data/authors.yaml）里维护 */
+  favicon: href.default(''),
+  /**
+   * 作者署名与默认作者标识不在这一页编辑：作者资料只有一处真值，
+   * 在「我的信息 → 站长作者资料」（写 data/authors.yaml）里维护。
+   * defaultAuthor 是本页唯一「不在这页改、但必须保住」的键：主题在构建期按
+   * 「data 优先、params 兜底」取它，只存进 site_config 前台是读不到的 ——
+   * 所以「站长作者资料」保存时会把它写进这份 site.json。
+   * 登记进 schema + 下面保存时带回旧值，免得改一次导航栏就把站长标识抹成空。
+   */
+  defaultAuthor: short.default(''),
   ogImage: href.default(''),
 });
 
@@ -198,6 +213,44 @@ async function readSection(env: Env, dir: string, key: SectionKey): Promise<{ va
   }
 }
 
+/**
+ * 把站长标识写进 data/site.json 的 defaultAuthor。
+ *
+ * 主题是在构建期取这个键的（data 优先、params 兜底），只存进 site_config 前台看不到，
+ * 署名会一直顶着主题自带的占位作者。所以「我的信息 → 站长作者资料」保存时要落到这里。
+ *
+ * 只增改 defaultAuthor 这一个键，其余键原样留着：这份文件可能带着本站自己填过的值，
+ * 甚至可能有 schema 没登记的键（siteSchema 是给「基本信息」表单校验用的，parse 会把
+ * 没登记的键整条抹掉），所以这里不能拿 schema 过一遍。文件不存在就只写这一行，
+ * 主题其它键照旧回落 params.toml。
+ */
+export async function setSiteDefaultAuthor(env: Env, handle: string): Promise<{ ok: boolean; detail: string }> {
+  const dir = await dataDir(env);
+  const path = dataPath(dir, SECTIONS.site.file);
+  const existing = await readRepoFile(env, path).catch(() => null);
+  let merged: Record<string, unknown> = {};
+  if (existing?.content.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(existing.content);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { ok: false, detail: `${path} 不是对象，没敢覆盖` };
+      }
+      merged = parsed as Record<string, unknown>;
+    } catch {
+      return { ok: false, detail: `${path} 不是合法 JSON，没敢覆盖` };
+    }
+  }
+  if (String(merged.defaultAuthor ?? '') === handle) return { ok: true, detail: `${path} 已是该标识` };
+  const res = await writeRepoFile(
+    env,
+    path,
+    JSON.stringify({ ...merged, defaultAuthor: handle }, null, 2) + '\n',
+    `zero-cms: 默认作者标识 ${handle}`,
+    { action: 'config' },
+  );
+  return { ok: res.success, detail: res.success ? path : res.error ?? '写入失败' };
+}
+
 app.get('/', async (c) => {
   requireAdmin(c);
   const dir = await dataDir(c.env);
@@ -243,7 +296,14 @@ app.post('/', async (c) => {
     }
     const res = SECTIONS[key].schema.safeParse(raw);
     if (!res.success) fail(400, `${SECTIONS[key].label}保存失败：${res.error.issues[0]?.message ?? '字段不合法'}`);
-    pending.push({ key, content: JSON.stringify(res.data, null, 2) + '\n' });
+    let value = res.data as Record<string, unknown>;
+    if (key === 'site' && !String(value.defaultAuthor ?? '').trim()) {
+      // 基本信息页没有这个输入框：保存时带回仓库里的现值，别把它抹成空串
+      const prev = await readSection(c.env, await dataDir(c.env), 'site');
+      const old = (prev?.value as { defaultAuthor?: string } | undefined)?.defaultAuthor ?? '';
+      if (old) value = { ...value, defaultAuthor: old };
+    }
+    pending.push({ key, content: JSON.stringify(value, null, 2) + '\n' });
   }
   if (!pending.length) fail(400, '没有要保存的内容');
 

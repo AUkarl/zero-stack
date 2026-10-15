@@ -21,6 +21,7 @@ import {
   validateAuthorsYaml,
 } from '../services/authors';
 import { deleteCommentSubtree } from '../services/comment-tree';
+import { setSiteDefaultAuthor } from './frontend';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
 import { clientIp } from '../lib/http';
 import { errorMessage, fail, ok } from '../lib/errors';
@@ -1255,7 +1256,8 @@ app.get('/authors/me', async (c) => {
 /**
  * PUT /api/admin/authors/me { name, avatar, email, bio, website, social }
  * 只改作者身份信息：写 data/authors.yaml 里本人那一条（整份合并，不动别人的条目），
- * 顺手把 config 的 defaultAuthor 指向本人标识，供邮件落款与 SEO 兜底。
+ * 并把 config 与 data/site.json 的 defaultAuthor 都指向本人标识 —— 前者供邮件落款与 SEO，
+ * 后者才是主题构建期取署名的地方。两处都同步过一次 Pages 重建才有意义。
  * 账号资料（昵称/头像/简介）在 /api/account/profile 那套里改，两者互不覆盖。
  */
 app.put('/authors/me', async (c) => {
@@ -1311,14 +1313,23 @@ app.put('/authors/me', async (c) => {
     fail(502, e instanceof Error ? e.message : '作者资料写入失败');
   }
   await setConfig(c.env, 'defaultAuthor', handle);
+  // 前台署名是 Hugo 构建期读 data/site.json 的 defaultAuthor，不同步进仓库就一直是主题自带的占位作者
+  const siteDefault = await setSiteDefaultAuthor(c.env, handle).catch((e) => ({
+    ok: false,
+    detail: e instanceof Error ? e.message : '写入失败',
+  }));
+  const build = await triggerPagesBuild(c.env).catch((e) => ({
+    triggered: false,
+    error: e instanceof Error ? e.message : '触发失败',
+  }));
   await writeAudit(c.env, {
     actor: admin,
     action: 'authorRequest',
     target: handle,
-    detail: { event: 'self-author-profile', path: written.path, created: written.created },
+    detail: { event: 'self-author-profile', path: written.path, created: written.created, defaultAuthor: siteDefault, build },
     ip: clientIp(c),
   });
-  return ok({ ...written, handle });
+  return ok({ ...written, handle, defaultAuthor: siteDefault, build });
 });
 
 /**

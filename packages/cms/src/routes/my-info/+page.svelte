@@ -253,7 +253,14 @@
         const v = (authorSocial[f.key] ?? '').trim();
         if (v) social[f.key] = v;
       }
-      const d = await put<{ data: { path: string; created: boolean } }>(EP.authorsMe, {
+      const d = await put<{
+        data: {
+          path: string;
+          created: boolean;
+          defaultAuthor?: { ok: boolean; detail: string };
+          build?: { triggered: boolean; error?: string };
+        };
+      }>(EP.authorsMe, {
         name: authorName.trim(),
         avatar: authorAvatar.trim(),
         email: authorEmail.trim(),
@@ -263,7 +270,18 @@
         donate: authorDonate.map((s) => s.trim()).filter(Boolean),
       });
       authorDefault = authorHandle;
-      notice = `作者资料已写入 ${d.data?.path ?? 'data/authors.yaml'}${d.data?.created ? '（新增条目）' : ''}，站点重新构建后前台生效。`;
+      /* 署名的真实来源是仓库里的 data/site.json，构建没触发就只是「改了但前台看不到」，
+         所以把两件事的结果都写进提示，而不是含糊一句「构建后生效」。 */
+      const da = d.data?.defaultAuthor;
+      const build = d.data?.build;
+      const parts = [`作者资料已写入 ${d.data?.path ?? 'data/authors.yaml'}${d.data?.created ? '（新增条目）' : ''}`];
+      parts.push(
+        da?.ok
+          ? `默认作者标识已同步到 ${da.detail}`
+          : `默认作者标识没能写进仓库（${da?.detail ?? '接口没回结果'}），前台署名不会跟着变，请到「前端管理 → 站点信息」检查`,
+      );
+      parts.push(build?.triggered ? '已触发站点重建，构建完成后前台生效' : `站点重建没触发（${build?.error ?? '接口没回结果'}），请稍后手动重建`);
+      notice = parts.join('；');
     } catch (e) {
       error = errText(e);
     } finally {
