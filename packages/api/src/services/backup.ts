@@ -189,8 +189,11 @@ export async function importBackup(env: Env, raw: unknown, opts: { dryRun?: bool
 
     let inserted = 0;
     let skipped = 0;
-    for (let i = 0; i < prepared.length; i += 100) {
-      const batch = prepared.slice(i, i + 100);
+    /* D1 的限制在「一条语句绑定多少个参数」（上限 100），不是行数：
+       原先按 100 行一批发，commenters 七个字段就是 700 个参数，整批直接失败。 */
+    const perBatch = Math.max(1, Math.floor(90 / Math.max(1, columns.size)));
+    for (let i = 0; i < prepared.length; i += perBatch) {
+      const batch = prepared.slice(i, i + perBatch);
       try {
         const res = await db.insert(table).values(batch).onConflictDoNothing();
         const changes = Number((res as unknown as { meta?: { changes?: number } }).meta?.changes ?? batch.length);
@@ -198,7 +201,7 @@ export async function importBackup(env: Env, raw: unknown, opts: { dryRun?: bool
         skipped += batch.length - changes;
       } catch (e) {
         // 单批失败不影响其它表，错误攒起来一起回报
-        outcome.errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+        outcome.errors.push(`${name}: ${briefError(e)}`);
       }
     }
     outcome.tables.push({ name, rows: prepared.length, inserted, skipped, note: null });
@@ -221,6 +224,13 @@ function normalizePayload(raw: unknown): BackupPayload {
     counts: p.counts ?? {},
     tables: p.tables as BackupPayload['tables'],
   };
+}
+
+/** 导入失败时 D1 会把整条 SQL 连同绑定参数（邮箱、昵称、IP…）一起回显，
+    这些内容会进后台提示与 audit_logs，所以只留「params:」之前的原因部分。 */
+function briefError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.split(/\s+params:/i)[0].slice(0, 200);
 }
 
 function pickKnown(row: Record<string, unknown>, columns: Set<string>): Record<string, unknown> {
