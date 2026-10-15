@@ -283,10 +283,13 @@ pnpm check   # 本地跑同一套校验
 
 | 现象 | 原因 / 处理 |
 |---|---|
+| 后台点「注册 / 登录」显示 `请求失败 (404)` | 登录页的「API 地址」留空了：留空 = 请求打到同源，只有本地 vite 有 `/api` 代理，Pages 上没有，于是后台自己的 SPA 壳回 404。在登录页填 worker 域名（存在浏览器 localStorage，填一次即可），或构建时给 `VITE_API_BASE` |
+| 填了 worker 地址后变成连不上 / 长时间转圈 | `*.workers.dev` 在部分网络不可达：先在浏览器直接打开 `https://<worker域名>/api/config` 验证，能出 JSON 才算通；不通就给 worker 绑自定义域名（Workers → 设置 → 域名和路由），并把该域名与后台地址一起写进 `ALLOWED_ORIGINS` 后重新 `pnpm deploy:api` |
 | 部署后台报 `This command cannot be run in a non-interactive context` | Pages 项目不存在时 `pages deploy` 要问「要不要创建」。`pnpm deploy:cms` 与 `pnpm setup` 已改成先 `pages project create`（见第 4 节）；手写 CI 流水线时也要先建项目 |
 | `pnpm setup` 说「尚未登录」，但 `pnpm exec wrangler whoami` 明显示已登录 | wrangler 各版本的 `whoami --json` 形状不同（4.x 平铺 `{loggedIn,authType,email,accounts}`、3.x 包一层 `result`、更早是 `auth.email`）。脚本现按 `scripts/_util.ts` 的 `parseWhoami()` 三种都认，API Token 登录（没有 email）也认；仍不行就直接设环境变量 `CLOUDFLARE_API_TOKEN`（配合 `CLOUDFLARE_ACCOUNT_ID`）跳过浏览器授权 |
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |
 | 后台提示 `AUTH_EXPIRED` / 401 | Cookie 跨域丢失：检查 `ALLOWED_ORIGINS` 是否包含后台 origin；换域名后需重新登录 |
+| 后台能打开、接口却全部失败，控制台报 CORS | `ALLOWED_ORIGINS` 是**精确字符串**匹配，差一个字符就不放行。Pages 每次预览部署的地址都不同（`https://<hash>.<项目名>.pages.dev`），只有生产地址稳定 —— 白名单填生产地址，并用生产地址访问后台；前台站点、自定义域名 Worker 各自都要列进来，逗号分隔，改完必须 `pnpm deploy:api` 才生效 |
 | 邮件全部 `failed` | `SMTP_PASSWORD` 未写入，或后台 `smtpHost/smtpPort/smtpUser/emailFrom` 未填；465 需要 `smtpSecure=true`，587 用 `false` |
 | 群发/订阅推送显示「整批未发送」，任务仍留在排队 | 当日发信额度不够这次收件人数（`emailDailyLimit`，默认 100 封/天）。第二天 Cron 会自动续跑；要当天发完就把上限调到 ≥ 订阅人数，或分批发 |
 | QQ / 163 邮箱收不到信 | 必须用「授权码」而不是登录密码，且发件人地址要与 SMTP 账号一致；`smtpSecure=true` 只在 465 端口生效（隐式 TLS），587 / 2525 留 `false` 走 STARTTLS |

@@ -36,7 +36,14 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
     const text = typeof data?.message === 'string' && data.message.trim() ? data.message.trim() : 'AUTH_EXPIRED';
     throw apiError(text, data);
   }
-  if (!res.ok) throw apiError(data?.message || `请求失败 (${res.status})`, data);
+  if (!res.ok) {
+    /* 地址留空 = 打到同源。这在 vite 开发服务器里有 /api 代理，在 Pages 上没有 ——
+       结果是后台自己的 SPA 壳子回一个 404，看着像「接口不存在」。说白点让用户去填地址。 */
+    if (!base && res.status === 404) {
+      throw apiError('API 地址没填：Pages 部署没有 /api 代理，请在上方「API 地址」填 worker 域名（如 https://zero-api.xxx.workers.dev）', data);
+    }
+    throw apiError(data?.message || `请求失败 (${res.status})`, data);
+  }
   return data as T;
 }
 

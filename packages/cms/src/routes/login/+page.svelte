@@ -63,9 +63,13 @@
     <p class="muted sub">登录后管理文章、评论、时刻、友链与站点配置</p>
 
     <label>
-      <span>API 地址（留空表示同源，本地开发用）</span>
+      <span>API 地址（只有本地开发能留空 —— Pages 上没有 /api 代理，留空就是 404）</span>
       <input placeholder="https://zero-api.xxx.workers.dev" bind:value={api} autocomplete="off" />
     </label>
+    <p class="muted sub">
+      部署版必填 worker 域名（保存在浏览器本地，只需填一次）。
+      <code>*.workers.dev</code> 在部分网络不可达时，给 worker 绑一个自定义域名再填那个地址。
+    </p>
     <label>
       <span>管理员邮箱</span>
       <input type="email" bind:value={email} required autocomplete="username" />
