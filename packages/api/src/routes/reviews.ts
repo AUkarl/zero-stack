@@ -76,10 +76,12 @@ function parseTags(raw: string): string[] {
   }
 }
 
-/** 内容目录来自后台配置，缺省 content；拼出的路径必须仍在 content/ 下 */
+/** 文章落盘目录：以后台「设置 → 内容仓库 → 文章目录」为准；没配就退回 <内容目录>/<语言>/posts */
 async function postPath(env: Env, row: typeof postDrafts.$inferSelect): Promise<string> {
+  const configured = (await getConfig(env, 'githubPostsDir'))?.trim();
   const base = normalizeDir((await getConfig(env, 'githubContentDir')) ?? 'content');
-  const path = `${base}/zh/posts/${row.slug}.md`;
+  const dir = configured ? normalizeDir(configured) : `${base}/${row.lang || 'zh'}/posts`;
+  const path = `${dir}/${row.slug}.md`;
   // 与后台文章保存同一套判法：目录穿越与控制/保留字符才拒，中文与全角标点放行
   const segs = path.split('/');
   if (segs.some((s) => s === '' || s === '.' || s === '..') || segs[0] !== 'content') {

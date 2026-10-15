@@ -223,6 +223,8 @@
   let newTitle = $state('');
   let newSlug = $state('');
   let newDir = $state('content/zh/posts');
+  /** 后台「设置 → 内容仓库 → 文章目录」的值；非空时新建文章默认落这里，不再猜语言段 */
+  let postsDirCfg = $state('');
   let dated = $state(false);
 
   // 分类 / 标签输入
@@ -316,7 +318,8 @@
       dir = path;
       if (path === contentDir) {
         langDirs = entries.filter((e) => e.type === 'dir').map((e) => e.name);
-        if (!langDirs.includes(newDir.split('/')[1] ?? '')) newDir = `${contentDir}/zh/posts`;
+        // 配了「文章目录」就以它为准，不再按语言段猜（扁平布局的站点没有 zh 这一层）
+        if (!postsDirCfg && !langDirs.includes(newDir.split('/')[1] ?? '')) newDir = `${contentDir}/zh/posts`;
       }
     } catch (e) {
       error = e instanceof Error ? e.message : '无法读取内容目录，请确认已在设置页配置 Git 仓库并部署 GITHUB_TOKEN';
@@ -445,10 +448,12 @@
     try {
       const d = await get<{ data: Record<string, string> }>('/api/admin/config');
       contentDir = (d.data?.githubContentDir || 'content').replace(/\/+$/, '');
+      postsDirCfg = (d.data?.githubPostsDir || '').trim().replace(/\/+$/, '');
     } catch {
       contentDir = 'content';
+      postsDirCfg = '';
     }
-    newDir = `${contentDir}/zh/posts`;
+    newDir = postsDirCfg || `${contentDir}/zh/posts`;
     await browse(contentDir);
     void loadTranslate();
   }

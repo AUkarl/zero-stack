@@ -286,8 +286,14 @@ export async function contentRoot(env: Env): Promise<string> {
   return dir.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') || 'content';
 }
 
-/** 文章目录：站点只有中文，语言段写死 zh */
+/**
+ * 文章目录。以前语言段写死 zh（content/zh/posts），单语言扁平布局的站点
+ * （content/posts）发出去的文章就落在 Hugo 认不到的目录里，前台看不到。
+ * 现在以后台「设置 → 内容仓库 → 文章目录」为准，缺省仍是 content/zh/posts。
+ */
 export async function postsDir(env: Env): Promise<string> {
+  const dir = await getConfig(env, 'githubPostsDir');
+  if (dir) return dir.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
   return `${await contentRoot(env)}/zh/posts`;
 }
 

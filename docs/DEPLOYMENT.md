@@ -257,6 +257,24 @@ setx GOPRIVATE "github.com/AUkarl/*"
 
 如果不想装 Go、也不想动 PATH，就用上表的「复制目录」或「Git Submodule + 本地构建」，两者都不依赖 Go。
 
+### 6.2 后台「设置 → 内容仓库」的路径要按你的目录布局填
+
+后台写文件的路径全部来自这几项配置（缺省值按多语言布局写，扁平布局必须改，
+否则文章会落到 Hugo 认不到的目录里 —— 表现为"后台说发布成功了，前台却没有"）：
+
+| 配置项 | 后台里的名字 | 多语言布局（`[languages.zh] contentDir = "content/zh"`） | 单语言扁平布局（内容直接在 `content/`） |
+|---|---|---|---|
+| `githubContentDir` | 内容目录 | `content` | `content` |
+| `githubPostsDir` | 文章目录 | `content/zh/posts` | `content/posts` |
+| `githubMomentsDir` | 时刻目录 | `content/zh/moments` | `content/moments` |
+| `githubLinksFile` | 友链文件 | `data/links.yaml` | `data/friends.yml`（看你仓库里实际叫什么） |
+| `githubAuthorsFile` | 作者数据文件 | `data/authors.yaml` | 同左 |
+| `githubDataDir` | 前端数据目录 | `data` | 同左 |
+
+改完不用重新部署 Worker（这些值存在 D1，约 60 秒缓存刷新）；只有 `wrangler.jsonc` 里的 vars 与代码改动才需要 `pnpm deploy:api`。
+
+> `pnpm create:site` 生成的是扁平布局，所以向导跑完后要把「文章目录 / 时刻目录」改成 `content/posts`、`content/moments`。
+
 ---
 
 ## 7. 迁移旧评论数据

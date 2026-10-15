@@ -137,6 +137,7 @@ export type ConfigKey =
   | 'mediaBuckets'
   | 'mediaPublicUrl'
   /* 仓库写入路径 */
+  | 'githubPostsDir'
   | 'githubMomentsDir'
   | 'githubAuthorsFile'
   | 'githubDataDir'
@@ -247,6 +248,7 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'spamProviderSecret',
   'mediaBuckets',
   'mediaPublicUrl',
+  'githubPostsDir',
   'githubMomentsDir',
   'githubAuthorsFile',
   'githubDataDir',
@@ -373,6 +375,7 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   spamProviderSecret: '',
   mediaBuckets: '[{"id":"r2","label":"默认 R2","kind":"r2","binding":"R2","baseUrl":""}]',
   mediaPublicUrl: '',
+  githubPostsDir: 'content/zh/posts',
   githubMomentsDir: 'content/zh/moments',
   githubAuthorsFile: 'data/authors.yaml',
   githubDataDir: 'data',
