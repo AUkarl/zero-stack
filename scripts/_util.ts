@@ -118,6 +118,41 @@ export function hasWranglerConfig(): boolean {
   return existsSync(resolve(API_DIR, 'wrangler.jsonc'));
 }
 
+/* --------------------------- Cloudflare Pages 项目 --------------------------- */
+
+/** 表格输出（`│ zero-cms │ …`）拆成单元格：边框字符不是空白，不能用 \b 切词 */
+function tableCells(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .flatMap((line) => line.split(/[│|]/).map((cell) => cell.trim()))
+    .filter(Boolean);
+}
+
+export function pagesProjectExists(name: string): boolean {
+  const raw = wranglerTry('pages project list', { cwd: ROOT });
+  return !!raw && tableCells(raw).includes(name);
+}
+
+/**
+ * 先把 Pages 项目建出来，pages deploy 只推产物。
+ *
+ * pages deploy 遇到不存在的项目会弹「要不要创建」，而非交互上下文里它直接报
+ * 「This command cannot be run in a non-interactive context」—— CI 必然踩到，
+ * 本地也躲不掉：脚本为了从输出里取 pages.dev 地址会把 stdout 接成管道，
+ * wrangler 就此判定为非交互。所以这一步必须显式做，不能指望它问。
+ */
+export function ensurePagesProject(name: string, productionBranch = 'main'): boolean {
+  if (pagesProjectExists(name)) return false;
+  wranglerTry(`pages project create ${name} --production-branch ${productionBranch}`, { cwd: ROOT });
+  if (!pagesProjectExists(name)) {
+    die(
+      `创建 Pages 项目 ${name} 失败。手动执行看具体报错：\n` +
+        `  cd packages/cms && npx wrangler pages project create ${name} --production-branch ${productionBranch}`,
+    );
+  }
+  return true;
+}
+
 /* --------------------------- Cloudflare 登录态 --------------------------- */
 
 interface WhoamiRaw {

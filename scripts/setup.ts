@@ -14,6 +14,7 @@ import {
   R2_NAME,
   WORKER_NAME,
   die,
+  ensurePagesProject,
   extractId,
   good,
   info,
@@ -216,6 +217,8 @@ function deployCms(): string | null {
   run('npm run build', { cwd: COMMENT_DIR });
   step(`构建 ${PAGES_PROJECT}`);
   run('npm run build', { cwd: CMS_DIR });
+  step(`准备 Pages 项目 ${PAGES_PROJECT}`);
+  good(ensurePagesProject(PAGES_PROJECT) ? `Pages 项目 ${PAGES_PROJECT} 已创建（生产分支 main）` : `Pages 项目 ${PAGES_PROJECT} 已存在，沿用`);
   step(`部署 ${PAGES_PROJECT} 到 Cloudflare Pages`);
   const out = wrangler(`pages deploy .svelte-kit/cloudflare --project-name=${PAGES_PROJECT}`, { cwd: CMS_DIR, capture: true });
   console.log(out);

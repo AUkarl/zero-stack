@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CMS_DIR, PAGES_PROJECT, die, good, info, run, step, wrangler } from './_util.js';
+import { CMS_DIR, PAGES_PROJECT, die, ensurePagesProject, good, info, run, step, wrangler } from './_util.js';
 
 /**
  * 构建并部署 zero-cms 后台：pnpm deploy:cms [--no-build] [--project <名称>]
@@ -20,6 +20,9 @@ if (!noBuild) {
 } else if (!existsSync(output)) {
   die('.svelte-kit/cloudflare 不存在，请先完整构建一次（去掉 --no-build）');
 }
+
+step(`准备 Pages 项目 ${project}`);
+good(ensurePagesProject(project) ? `Pages 项目 ${project} 已创建（生产分支 main）` : `Pages 项目 ${project} 已存在，沿用`);
 
 step(`部署 ${project} 到 Cloudflare Pages`);
 const out = wrangler(`pages deploy .svelte-kit/cloudflare --project-name=${project}`, { cwd: CMS_DIR, capture: true });

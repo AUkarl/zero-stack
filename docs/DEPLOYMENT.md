@@ -116,12 +116,26 @@ pnpm deploy:cms -- --no-build     # 复用已有产物
 pnpm deploy:cms -- --project my-cms
 ```
 
+`deploy:cms` 会先确认 Pages 项目存在，没有就自己建（`pages project create <名称> --production-branch main`）。
+不能省这一步：`pages deploy` 碰到不存在的项目要问「要不要创建」，非交互上下文里它不问而是直接报
+`This command cannot be run in a non-interactive context` —— CI 必然如此，本地也一样
+（脚本为了从输出里取 `*.pages.dev` 地址，把 stdout 接成了管道）。手工等价命令：
+
+```bash
+cd packages/cms
+npx wrangler pages project create zero-cms --production-branch main
+npx wrangler pages deploy .svelte-kit/cloudflare --project-name=zero-cms
+```
+
 后台首次打开时，登录页要求填写 API 地址（保存在浏览器 `localStorage`）。
 构建前设置 `VITE_API_BASE` 可以把地址烧进产物，省掉这一步：
 
 ```bash
 VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
 ```
+
+> 上面这种「前缀赋值」写法只在 bash / zsh 里有效。PowerShell 用
+> `$env:VITE_API_BASE="https://zero-api.xxx.workers.dev"; pnpm deploy:cms`，cmd 用 `set VITE_API_BASE=…`。
 
 前后端不同源时，前台与后台的 origin 都必须在 `packages/api/wrangler.jsonc` 的 `ALLOWED_ORIGINS` 里
 （逗号分隔，改动后需重新 `pnpm deploy:api`）。登录会话是 `HttpOnly` Cookie，浏览器本地联调用同源代理，见第 8 节。
@@ -269,6 +283,7 @@ pnpm check   # 本地跑同一套校验
 
 | 现象 | 原因 / 处理 |
 |---|---|
+| 部署后台报 `This command cannot be run in a non-interactive context` | Pages 项目不存在时 `pages deploy` 要问「要不要创建」。`pnpm deploy:cms` 与 `pnpm setup` 已改成先 `pages project create`（见第 4 节）；手写 CI 流水线时也要先建项目 |
 | `pnpm setup` 说「尚未登录」，但 `pnpm exec wrangler whoami` 明显示已登录 | wrangler 各版本的 `whoami --json` 形状不同（4.x 平铺 `{loggedIn,authType,email,accounts}`、3.x 包一层 `result`、更早是 `auth.email`）。脚本现按 `scripts/_util.ts` 的 `parseWhoami()` 三种都认，API Token 登录（没有 email）也认；仍不行就直接设环境变量 `CLOUDFLARE_API_TOKEN`（配合 `CLOUDFLARE_ACCOUNT_ID`）跳过浏览器授权 |
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |
 | 后台提示 `AUTH_EXPIRED` / 401 | Cookie 跨域丢失：检查 `ALLOWED_ORIGINS` 是否包含后台 origin；换域名后需重新登录 |

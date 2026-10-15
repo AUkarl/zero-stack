@@ -65,6 +65,16 @@ jobs:
       - run: pnpm install
       - name: Build CMS
         run: pnpm --filter zero-cms build
+      - name: Ensure Pages project exists
+        # pages deploy 遇到不存在的项目会问「要不要创建」，CI 是非交互上下文 → 直接报
+        # 「This command cannot be run in a non-interactive context」。先显式建项目；
+        # 已存在时 wrangler 会失败，这条用 continue-on-error 放过。
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages project create zero-cms --production-branch main
       - name: Deploy CMS
         uses: cloudflare/wrangler-action@v3
         with:
