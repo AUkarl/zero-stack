@@ -44,7 +44,16 @@ async function readError(res: Response): Promise<string> {
     detail = res.statusText;
   }
   if (res.status === 401) return 'GitHub 令牌无效或已过期，请重新生成并更新 GITHUB_TOKEN 密钥';
-  if (res.status === 403) return `GitHub 拒绝访问（多为令牌权限不足或触发限流）：${detail}`;
+  if (res.status === 403) {
+    // GitHub 对「认证通过但没这个仓库的权限」统一回 403 Forbidden（不回 404，避免泄露仓库是否存在），
+    // 绝大多数情况是 fine-grained PAT 没把目标仓库勾进 Selected repositories，或没给 Contents: Read and write。
+    return (
+      `GitHub 拒绝访问（403）：${detail || 'Forbidden'}。` +
+      '逐项确认：① 令牌的账号就是 githubOwner 本人；② Fine-grained PAT 要在 Selected repository 里显式加上这个仓库，' +
+      '且 Permissions → Contents = Read and write（Only select repositories 里没列到的仓库就是 403）；' +
+      '③ Classic PAT 要有 repo 作用域（私密仓库没有 repo 就是 403）；④ 账号若开了 IP allow list 或 SAML SSO，还要给这个令牌/IP 授权。'
+    );
+  }
   if (res.status === 404) return `仓库或路径不存在：${detail}`;
   return `GitHub ${res.status}：${detail}`;
 }
