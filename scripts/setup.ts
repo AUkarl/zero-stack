@@ -20,6 +20,7 @@ import {
   info,
   parseJson,
   run,
+  readSavedApiBase,
   saveApiBase,
   step,
   warn,
@@ -174,10 +175,12 @@ function readExistingUrls(): { siteUrl: string; cmsUrl: string; apiUrl: string; 
     .map((s) => s.trim())
     .filter(Boolean);
   const hostname = raw.match(/"custom_domains"\s*:\s*\[[^\]]*"hostname"\s*:\s*"([^"]+)"/)?.[1];
+  // 控制台绑的自定义域名不会写进 wrangler.jsonc，退而用 deploy:cms 记下的上次地址
+  const saved = readSavedApiBase();
   return {
     siteUrl: clean(raw.match(/"SITE_URL"\s*:\s*"([^"]*)"/)?.[1]) || origins[1] || '',
     cmsUrl: origins[0] || '',
-    apiUrl: hostname ? `https://${hostname}` : '',
+    apiUrl: hostname ? `https://${hostname}` : clean(saved),
     origins,
   };
 }
