@@ -24,8 +24,9 @@ import {
   saveApiBase,
   step,
   warn,
-  whoami,
+  whoamiDetail,
   wrangler,
+  wranglerLogin,
   wranglerTry,
 } from './_util.js';
 
@@ -78,15 +79,23 @@ async function confirm(message: string, initial = true): Promise<boolean> {
 let loginAccountId: string | null = null;
 
 function ensureLogin(): void {
-  let me = whoami();
-  if (!me) {
+  let detail = whoamiDetail();
+  if (!detail.me) {
     info('尚未登录（或 wrangler 的登录态读不出来），将打开浏览器完成授权');
-    wrangler('login', { cwd: API_DIR });
-    me = whoami();
-    if (!me) die('登录未完成：wrangler whoami 仍读不到身份。也可以在环境变量里给 CLOUDFLARE_API_TOKEN 后重跑 pnpm setup');
+    /** 不把真实报错打出来，「配置坏了」就会被当成「我没登录」反复重跑授权 */
+    if (detail.error) info(detail.error.split('\n').slice(0, 8).join('\n'));
+    wranglerLogin();
+    detail = whoamiDetail();
+    if (!detail.me) {
+      die(
+        '登录未完成：wrangler whoami 仍读不到身份。\n' +
+          (detail.error ? `  它的原始报错：\n${detail.error.split('\n').slice(0, 8).join('\n')}\n` : '') +
+          '  也可以在环境变量里给 CLOUDFLARE_API_TOKEN 后重跑 pnpm setup',
+      );
+    }
   }
-  loginAccountId = me.accountId;
-  good(`已登录 Cloudflare：${me.label}${me.accountId ? `（账户 ${me.accountId}）` : ''}`);
+  loginAccountId = detail.me.accountId;
+  good(`已登录 Cloudflare：${detail.me.label}${detail.me.accountId ? `（账户 ${detail.me.accountId}）` : ''}`);
 }
 
 /** D1 的 list 支持 --json，可精确定位同名库 */
@@ -189,11 +198,17 @@ function readExistingUrls(): { siteUrl: string; cmsUrl: string; apiUrl: string; 
 
 function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
   const example = readFileSync(resolve(API_DIR, 'wrangler.jsonc.example'), 'utf-8');
-  const vars = [`"SITE_URL": ${JSON.stringify(a.siteUrl)}`, `"SITE_NAME": ${JSON.stringify(a.siteName)}`];
+  /** JSON.stringify(undefined) 返回 undefined 本身，拼进模板就成了配置里的裸字面量 undefined，
+      整份文件不再是合法 JSONC，之后 wrangler 在这个目录里连 whoami 都跑不动 */
+  const jstr = (v: string | undefined): string => JSON.stringify(v ?? '');
+  const vars = [`"SITE_URL": ${jstr(a.siteUrl)}`, `"SITE_NAME": ${jstr(a.siteName)}`];
   if (a.useGithub) {
-    vars.push(`"GITHUB_OWNER": ${JSON.stringify(a.githubOwner)}`);
-    vars.push(`"GITHUB_REPO": ${JSON.stringify(a.githubRepo)}`);
-    vars.push(`"GITHUB_BRANCH": ${JSON.stringify(a.githubBranch)}`);
+    if (!a.githubOwner?.trim() || !a.githubRepo?.trim()) {
+      die('勾了「文章提交回 Git」但没拿到 GitHub 用户名 / 仓库名，配置不能这么留空。重跑向导并把这两问填上');
+    }
+    vars.push(`"GITHUB_OWNER": ${jstr(a.githubOwner)}`);
+    vars.push(`"GITHUB_REPO": ${jstr(a.githubRepo)}`);
+    vars.push(`"GITHUB_BRANCH": ${jstr(a.githubBranch ?? 'main')}`);
   }
 
   const cfg = example
@@ -207,6 +222,8 @@ function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
     );
 
   if (/"<[^>]+>"/.test(cfg)) die('wrangler.jsonc.example 中仍有未替换的占位符，请核对占位符文本');
+  const badKey = cfg.match(/"([A-Z_]+)"\s*:\s*(undefined|NaN|null)\s*,?/);
+  if (badKey) die(`生成的 wrangler.jsonc 里 ${badKey[1]} 的值是 ${badKey[2]}，这份配置 wrangler 读不了。请把这一行贴出来反馈`);
   writeFileSync(resolve(API_DIR, 'wrangler.jsonc'), cfg);
   good(`已生成 packages/api/wrangler.jsonc（worker：${WORKER_NAME}）`);
 }
@@ -263,6 +280,27 @@ function deployCms(apiBase: string | null): string | null {
 /** 模块加载时读一次：这时 wrangler.jsonc 还没被本次运行改写，拿到的就是上一版的地址 */
 const prev = readExistingUrls();
 
+/**
+ * 条件追问的判定。
+ *
+ * prompts 给 type 回调的第一个参数是「上一题的答案值」，不是已答集合：
+ * 写成 (p) => p.useGithub 时 p 是布尔 true，true.useGithub 永远 undefined，
+ * 于是所有追问一次都不会问 —— 选了 SMTP 不问端口账号，勾了回 Git 不问仓库，
+ * 答案缺失又被 JSON.stringify 拼成字面量 undefined 写进 wrangler.jsonc，
+ * 之后每条 wrangler 命令都读不懂那份配置（表现为「明明登录了却说没登录」）。
+ * 已答集合是第二个参数，判定一律走它。
+ */
+type Condition = (all: Partial<Answers>) => boolean;
+type PromptKind = Extract<PromptObject['type'], string>;
+const when =
+  (cond: Condition, kind: PromptKind) =>
+  (_prev: unknown, all: Partial<Answers>): PromptKind | null =>
+    cond(all) ? kind : null;
+const isSmtp = (a: Partial<Answers>): boolean => a.emailProvider === 'smtp';
+const isResend = (a: Partial<Answers>): boolean => a.emailProvider === 'resend';
+const isCloudflareMail = (a: Partial<Answers>): boolean => a.emailProvider === 'cloudflare';
+const usesGithub = (a: Partial<Answers>): boolean => a.useGithub === true;
+
 const QUESTIONS: PromptObject[] = [
   { type: 'text', name: 'siteName', message: '站点名称', initial: 'My Zero Site' },
   {
@@ -280,7 +318,7 @@ const QUESTIONS: PromptObject[] = [
   {
     type: 'text',
     name: 'apiUrl',
-    message: '后台与前台要访问的 API 地址（给 Worker 绑的自定义域名，例如 https://api.example.com；留空 = 用刚部署出的 *.workers.dev）',
+    message: 'API 地址（Worker 绑的自定义域名，如 https://api.example.com；留空用 *.workers.dev）',
     initial: () => prev.apiUrl,
   },
   {
@@ -295,41 +333,25 @@ const QUESTIONS: PromptObject[] = [
     ],
     initial: 0,
   },
-  { type: (p) => (p.emailProvider === 'smtp' ? 'text' : null), name: 'smtpHost', message: 'SMTP 服务器地址（如 smtp.qq.com）' },
-  { type: (p) => (p.emailProvider === 'smtp' ? 'text' : null), name: 'smtpPort', message: 'SMTP 端口（465 或 587）', initial: '465' },
-  { type: (p) => (p.emailProvider === 'smtp' ? 'text' : null), name: 'smtpUser', message: 'SMTP 用户名（邮箱地址）' },
+  { type: when(isSmtp, 'text'), name: 'smtpHost', message: 'SMTP 服务器地址（如 smtp.qq.com）' },
+  { type: when(isSmtp, 'text'), name: 'smtpPort', message: 'SMTP 端口（465 或 587）', initial: '465' },
+  { type: when(isSmtp, 'text'), name: 'smtpUser', message: 'SMTP 用户名（邮箱地址）' },
+  { type: when(isSmtp, 'password'), name: 'smtpPassword', message: 'SMTP 密码 / 授权码（只写入 secret）' },
+  { type: when(isResend, 'password'), name: 'resendApiKey', message: 'Resend API Key（只写入 secret）' },
   {
-    type: (p) => (p.emailProvider === 'smtp' ? 'password' : null),
-    name: 'smtpPassword',
-    message: 'SMTP 密码 / 授权码（只写入 secret）',
-  },
-  {
-    type: (p) => (p.emailProvider === 'resend' ? 'password' : null),
-    name: 'resendApiKey',
-    message: 'Resend API Key（只写入 secret）',
-  },
-  {
-    type: (p) => (p.emailProvider === 'cloudflare' ? 'text' : null),
+    type: when(isCloudflareMail, 'text'),
     name: 'cfAccountId',
     message: 'Cloudflare 账户 ID',
     /** whoami 认出来的账户直接当默认值，省得再去控制台抄一遍。
         QUESTIONS 是模块级常量，必须写成函数取用，否则拿到的是 import 时的 null */
     initial: () => loginAccountId ?? '',
   },
-  {
-    type: (p) => (p.emailProvider === 'cloudflare' ? 'password' : null),
-    name: 'cfEmailToken',
-    message: 'Email Sending API Token（只写入 secret）',
-  },
+  { type: when(isCloudflareMail, 'password'), name: 'cfEmailToken', message: 'Email Sending API Token（只写入 secret）' },
   { type: 'confirm', name: 'useGithub', message: '启用「文章提交回 Git」（后台发布文章需要）', initial: false },
-  { type: (p) => (p.useGithub ? 'text' : null), name: 'githubOwner', message: 'GitHub 用户名' },
-  { type: (p) => (p.useGithub ? 'text' : null), name: 'githubRepo', message: '内容仓库名', initial: 'zero-site' },
-  { type: (p) => (p.useGithub ? 'text' : null), name: 'githubBranch', message: '内容仓库分支', initial: 'main' },
-  {
-    type: (p) => (p.useGithub ? 'password' : null),
-    name: 'githubToken',
-    message: 'GitHub Token（contents:write，只写入 secret）',
-  },
+  { type: when(usesGithub, 'text'), name: 'githubOwner', message: 'GitHub 用户名' },
+  { type: when(usesGithub, 'text'), name: 'githubRepo', message: '内容仓库名', initial: 'zero-site' },
+  { type: when(usesGithub, 'text'), name: 'githubBranch', message: '内容仓库分支', initial: 'main' },
+  { type: when(usesGithub, 'password'), name: 'githubToken', message: 'GitHub Token（contents:write，只写入 secret）' },
 ];
 
 function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string): void {

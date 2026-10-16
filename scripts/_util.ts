@@ -196,10 +196,32 @@ export function parseWhoami(raw: string): Whoami | null {
   return { label: label || (accountId as string), accountId };
 }
 
-/** 当前 Cloudflare 登录身份；未登录或输出认不出时返回 null */
+/**
+ * 当前 Cloudflare 登录身份，附带「读不出来」时的原始报错。
+ *
+ * 必须从仓库根目录跑：wrangler 会向上找最近的 wrangler.jsonc 并先解析它，
+ * 一旦 packages/api/wrangler.jsonc 是坏的（比如向导把 undefined 写了进去），
+ * 在 packages/api 里连 whoami 都会以「配置读不懂」失败退出，
+ * 上层只看返回值就会误判成「你没登录」，然后反复弹浏览器授权。
+ */
+export function whoamiDetail(): { me: Whoami | null; error: string | null } {
+  try {
+    const raw = wrangler('whoami --json', { cwd: ROOT, capture: true });
+    const me = parseWhoami(raw);
+    return { me, error: me ? null : `wrangler whoami --json 的输出读不出身份：\n${raw.slice(0, 400)}` };
+  } catch (e) {
+    return { me: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 未登录、或输出/配置认不出时返回 null */
 export function whoami(): Whoami | null {
-  const raw = wranglerTry('whoami --json', { cwd: API_DIR });
-  return raw ? parseWhoami(raw) : null;
+  return whoamiDetail().me;
+}
+
+/** 打开浏览器完成 OAuth 授权；同样从根目录跑，绕开可能损坏的 worker 配置 */
+export function wranglerLogin(): void {
+  wrangler('login', { cwd: ROOT });
 }
 
 export function requireWranglerConfig(): void {
