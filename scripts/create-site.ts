@@ -160,7 +160,7 @@ hasCJKLanguage = true
   # tag = "tags"
 
 # 文章列表页 /posts/ 不生成：导航里已经有「归档」承担列表职责。
-# 想恢复就删掉 content/posts/_index.md 里那三行 _build。
+# 想恢复就删掉 content/posts/_index.md 里那三行 build。
 
 # 时刻与文章的时间由后台自由填写，将来日期也要立刻上线。
 # Hugo 0.146+ 只认 [build].future，写在顶层的 enableFuture 会被静默忽略。
@@ -402,7 +402,7 @@ hugo server -D
       而每篇文章、首页列表、归档页都不受影响。 */
   write(
     rel('content/posts/_index.md'),
-    '---\ntitle: "文章"\ntype: "posts"\nlayout: "list"\n_build: { render: never }\n---\n',
+    '---\ntitle: "文章"\ntype: "posts"\nlayout: "list"\nbuild: { render: never }\n---\n',
   );
 
   /* 站点参数只有一份：把主题那份「全量注释版」params.toml 复制成站点自己的，
