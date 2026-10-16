@@ -427,6 +427,10 @@ pnpm check   # 本地跑同一套校验
 | 发信胶囊红着，但验证码邮件确实发得出去 | 已修：判断凭据时只看了 `wrangler secret`，没算后台「发信方式」里填在 D1 的密码。现在两处任一有值就算绿，胶囊上会写明凭据来源是「后台已填」还是「wrangler secret」 |
 | 后台「用户」页找不到站长自己那一行 | 已修：这一页以前 `where role <> 'admin'` 把管理员过滤掉了，而作者标识（handle）只能在这一页改，「我的信息 → 站长作者资料」又要求先有 handle，成一个死循环。现在默认列出站长那一行（标「站长」、三个权限位常亮置灰、作者标识可改） |
 | 文章页署名还是主题自带的作者 | 署名的真值是**仓库里** `data/site.json` 的 `defaultAuthor`（主题构建期读，data 优先、params 兜底），不是后台设置里那个同名项。在「我的信息 → 站长作者资料」点一次保存即可：它会写 `data/authors.yaml`、把标识同步进 `data/site.json`，并触发一次重建。提示语会分开说明这三件事哪件没成 |
+| 后台编辑器里中文显示成乱码，保存一次就更花 | 已修：读 GitHub 文件时用的是 `atob`，拿回来的是「一字节一字符」的 Latin-1 串 —— 中文读出即乱码，再保存一次就把乱码按 UTF-8 重编一遍写回仓库，每存一层叠一层（顺带让「内容一致就不提交」失效，白烧构建）。已经花掉的文件要修：把那份文件按「UTF-8 → Latin-1 字节 → UTF-8」解一层再存回去 |
+| 友链审核通过显示成功，`/links/` 却没变 | 已修：回写目标是仓库里的 `data/links.yaml`（主题的 `layouts/links/list.html` 读 `hugo.Data.links` 的 `friends:` / `alliance:` 两段），而这份文件不存在时以前只回一句「仓库里没有」。现在第一次通过申请会顺手按骨架建出来。老仓库里只有 `data/friends.yml` 的话主题不会读它 —— 手工补一份 `data/links.yaml` 或让后台再写一次即可。路径与数据目录由同一个函数算，「设置 → 内容仓库 → 友链文件」留空就落在数据目录下 |
+| 前台注册的用户点「个人中心」404；管理员登录后跳 `/admin/` 404 | 两个都是**站点仓库缺东西**：个人中心要 `content/<语言子目录>/account/me/_index.md`（`layout: "me"`），`create:site` 与主题的 exampleSite 现在都带；后台地址要 `params.cmsBaseURL`（改配置文件要重建）或运行期的 `cmsAdminUrl`（管理员第一次从后台登录时后端自动记下自己的域名，随 `/api/config` 公开，可在「设置 → 注册与邀请码 → 后台地址」改）。主题取值顺序：params → 运行期配置 → 构建期常量 → 同域 `/admin/` |
+| 页面里用了 `{{< figure >}}` 就整站构建失败：`wrong number of args for return` | 已修（主题 `partials/shortcodes/safe-url.html`）：`return` 只能出现在模板体顶层，写进 `if` 分支会被 Hugo 当成一个叫 return 的函数去数参数。主题用 `hugo` 本地构建一遍即可复现 |
 
 ---
 
