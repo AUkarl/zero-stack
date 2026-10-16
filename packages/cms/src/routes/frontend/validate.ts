@@ -176,7 +176,7 @@ export function notesOf(key: SectionKey, form: Forms[SectionKey]): string[] {
     if (controls.length) {
       out.push(`右侧图标区有 ${controls.length} 项：主题自带的两个图标开关默认 weight 90 / 100，想插到它们中间就直接改这一项的 weight`);
     }
-    if (f.items.some((x) => x.zeroAccount)) out.push('勾了「账号入口」的项：主题按这个标记把图标换成登录态 / 头像。后端目前会忽略这个字段，等主题与接口字段对齐后才会落盘');
+    if (f.items.some((x) => x.zeroAccount)) out.push('这一项带着「账号入口」标记：主题会把它当登录图标（登录后换成头像）。登录入口本身不用在这里配 —— 主题固定补一项，只看「设置 → 前台账号系统」');
   }
   if (key === 'footer') {
     const f = form as Forms['footer'];

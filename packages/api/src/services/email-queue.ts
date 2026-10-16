@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { emailLogs } from '../db/schema';
 import { createDb } from '../db/client';
-import { sendBySmtp } from './email';
+import { sendEmail } from './email';
 import { newId } from '../lib/crypto';
 
 /**
@@ -22,7 +22,9 @@ export async function handleEmailBatch(batch: MessageBatch<EmailJob>, env: Env):
       createdAt: Math.floor(Date.now() / 1000),
     });
 
-    const result = await sendBySmtp(env, { to: job.to, subject: job.subject, html: job.html, from: job.from, kind: job.kind });
+    // 走 sendEmail 而不是直接 sendBySmtp：它按 emailProvider 分流，
+    // 设置里选了 Resend / Cloudflare Email 时这条队列才不会绕过用户选的通道硬发 SMTP
+    const result = await sendEmail(env, { to: job.to, subject: job.subject, html: job.html, from: job.from, kind: job.kind });
     if (result.success) {
       await db.update(emailLogs).set({ status: 'sent', sentAt: Math.floor(Date.now() / 1000) }).where(eq(emailLogs.id, id));
       continue;

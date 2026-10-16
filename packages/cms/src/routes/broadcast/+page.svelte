@@ -3,6 +3,7 @@
   import { fmtDate, timeAgo } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { renderMarkdown } from '#lib/markdown';
+  import { frontUrl } from '#lib/session.svelte';
 
   interface Log {
     id: string;
@@ -59,7 +60,7 @@
   let jobs = $state<Job[]>([]);
   let jobsBusy = $state('');
 
-  const bodyHtml = $derived(htmlMode ? htmlText : renderMarkdown(md));
+  const bodyHtml = $derived(htmlMode ? htmlText : renderMarkdown(md, { shortBase: frontUrl('/posts/') || '/posts/' }));
   const ready = $derived(subject.trim().length > 0 && bodyHtml.trim().length > 0);
 
   /** 「关联文章」下拉用的已发布文章列表 */

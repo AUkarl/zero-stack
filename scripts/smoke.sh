@@ -214,9 +214,9 @@ SMOKE_UTF8_JSON
   printf '%s' "$BODY_TEXT" | grep -q '"version":2'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
 ' '导出的是 v2 分区结构'; }     || { FAIL=$((FAIL + 1)); FAILED+=('导出不是 v2'); printf '  ✗ %-56s
 ' '导出的是 v2 分区结构'; }
-  printf '%s' "$BODY_TEXT" | grep -qi 'smtpPassword'     && { FAIL=$((FAIL + 1)); FAILED+=('备份文件里出现密钥配置项'); printf '  ✗ %-56s
-' '备份文件不含密钥配置'; }     || { PASS=$((PASS + 1)); printf '  ✓ %-56s
-' '备份文件不含密钥配置'; }
+  printf '%s' "$BODY_TEXT" | grep -qE '"(smtpPassword|resendApiKey|cloudflareEmailToken|cfTurnstileSecret|githubToken)":"[^"]+"'     && { FAIL=$((FAIL + 1)); FAILED+=('备份文件里出现密钥的值'); printf '  ✗ %-56s
+' '备份不含密钥的值（omitted 里的键名与空值不算泄漏）'; }     || { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '备份不含密钥的值（omitted 里的键名与空值不算泄漏）'; }
   req GET '/api/admin/users' 200 '' '用户列表（含站长自己）' "$ADMIN_COOKIE"
   printf '%s' "$BODY_TEXT" | grep -q '"role":"admin"'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
 ' '站长那一行默认就在用户列表里'; }     || { FAIL=$((FAIL + 1)); FAILED+=('用户列表没有管理员'); printf '  ✗ %-56s

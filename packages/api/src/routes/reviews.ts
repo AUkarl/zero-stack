@@ -52,6 +52,51 @@ export function authorKeyFor(
 }
 
 /**
+ * 投稿人的作者条目：文章底部的作者框读 data/authors.yaml，缺这一条就只剩昵称，
+ * 简介、网站、联系方式那一排全是空的。认证申请里填过的 social 一并带过来。
+ * 内容没变时后端不会产生提交（写文件那层有 unchanged 判断），每篇通过都调一次也不吵。
+ */
+async function rememberSubmitterAuthor(env: Env, userId: string, actor: { id?: string | null; name?: string | null }): Promise<void> {
+  const db = createDb(env);
+  const rows = await db
+    .select({
+      role: users.role,
+      name: users.name,
+      handle: users.handle,
+      email: users.email,
+      bio: users.bio,
+      website: users.website,
+      authorVerified: users.authorVerified,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const me = rows[0];
+  if (!me) return;
+  const key = authorKeyFor(me);
+  const reqs = await db
+    .select({ social: authorRequests.social })
+    .from(authorRequests)
+    .where(and(eq(authorRequests.userId, userId), eq(authorRequests.status, 'approved')))
+    .orderBy(desc(authorRequests.id))
+    .limit(1);
+  await upsertAuthor(
+    env,
+    {
+      handle: key,
+      name: me.name || key,
+      avatar: avatarForEmail(me.email || ''),
+      email: me.email || '',
+      bioZh: me.bio,
+      website: me.website,
+      verified: Boolean(withAdminAuthorBits(me).authorVerified),
+      social: parseSocial(reqs[0]?.social ?? '[]') as AuthorSocialRow[],
+    },
+    { actor, ip: undefined },
+  ).catch(() => undefined);
+}
+
+/**
  * 拼 Hugo 文章头，字段顺序与站点现有文章保持一致。
  * authorKey 优先传账号的作者标识（users.handle），没有标识的才退回昵称。
  */
@@ -222,7 +267,10 @@ draftsAdmin.post('/:id/approve', async (c) => {
     })
     .where(eq(postDrafts.id, row.id));
 
-  if (synced) await triggerPagesBuild(c.env);
+  if (synced) {
+    await rememberSubmitterAuthor(c.env, row.userId, admin);
+    await triggerPagesBuild(c.env);
+  }
   await writeAudit(c.env, {
     actor: admin,
     action: 'draft',
@@ -263,6 +311,7 @@ draftsAdmin.post('/:id/publish', async (c) => {
     .update(postDrafts)
     .set({ publishedPath: path, publishedAt: row.publishedAt ?? now, updatedAt: now })
     .where(eq(postDrafts.id, row.id));
+  await rememberSubmitterAuthor(c.env, row.userId, admin);
   await triggerPagesBuild(c.env);
   await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', path, commit: result.sha }, ip: clientIp(c) });
   return ok({ id: row.id, synced: true, path, commit: result.sha ?? null });

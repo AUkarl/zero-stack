@@ -77,7 +77,26 @@
       exists = f.exists !== false;
       bytes = f.bytes ?? content.length;
       loaded = true;
-      if (!exists) error = `仓库里还没有 ${path}，编辑器里是空白；保存会新建这份文件，主题读不到它时才会回落到默认值。`;
+      if (!exists) {
+        // 站点没有这份文件时，把主题自带的全量注释模板读进来当起点：
+        // 直接面对一个空编辑器没人知道从哪下手，而「读取不到」也常被当成坏了
+        const theme = target.replace(/^config\//, 'themes/zero/config/');
+        if (theme !== target) {
+          try {
+            const t = await get<{ data: RepoFile }>(`/api/admin/repo/file?path=${encodeURIComponent(theme)}`);
+            if (t.data?.exists && t.data.content) {
+              content = t.data.content;
+              baseline = content;
+              sha = '';
+              error = `仓库里还没有 ${target}，下面载入的是主题默认清单（${theme}）：改成你要的再保存，就会在你的站点里建出这份文件。`;
+              return;
+            }
+          } catch {
+            // 主题那份也读不到（子模块还没拉下来等）：就按空白处理，走下面的提示
+          }
+        }
+        error = `仓库里还没有 ${path}，编辑器里是空白；保存会新建这份文件，主题读不到它时才会回落到默认值。`;
+      }
     } catch (e) {
       const m = errText(e);
       error = `读取 ${target} 失败：${m}`;

@@ -2,6 +2,7 @@
   import { get, put, del } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { renderMarkdown, splitFrontMatter } from '#lib/markdown';
+  import { frontUrl } from '#lib/session.svelte';
   import MediaPicker from '../content/MediaPicker.svelte';
   import { composeFile, fromDateInput, nowInput, parseFront, toInputDateTime, yq, type FrontDoc } from '../content/_frontmatter';
 
@@ -514,7 +515,8 @@
         <button class="sm danger" onclick={() => void remove(m)}>删除</button>
       </div>
     </div>
-    <div class="text">{@html renderMarkdown(m.body)}</div>
+    <!-- 预览里的 [[文章]] 链接要指向前台：站点地址没配就退回相对路径，配了就用完整地址 -->
+    <div class="text">{@html renderMarkdown(m.body, { shortBase: frontUrl('/posts/') || '/posts/' })}</div>
     {#if m.images.length || m.video || m.music || m.link.url}
       <div class="thumbs">
         {#each m.images as u (u)}<img src={u} alt="" loading="lazy" />{/each}

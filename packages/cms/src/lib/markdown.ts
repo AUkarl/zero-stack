@@ -70,7 +70,7 @@ function inline(s: string, base: string): string {
 
 /** 把 Markdown 渲染成 HTML 字符串（调用方用 {@html} 输出） */
 export function renderMarkdown(src: string, opts: MdOptions = {}): string {
-  const base = opts.shortBase ?? '/post/';
+  const base = opts.shortBase ?? '/posts/';
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
 

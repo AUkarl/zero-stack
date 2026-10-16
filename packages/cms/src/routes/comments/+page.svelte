@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get, post, timeAgo } from '#lib/api';
+  import { frontUrl } from '#lib/session.svelte';
 
   interface Row {
     id: string;
@@ -81,7 +82,12 @@
       </div>
       <p class="content">{r.content}</p>
       <div class="row slug">
-        <a href={r.postSlug} target="_blank" rel="noreferrer">{r.postSlug}</a>
+        {#if frontUrl(r.postSlug)}
+          <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postSlug}</a>
+        {:else}
+          <!-- siteUrl 没配时不做成链接：拼出来的相对路径会在后台自己的域名下 404 -->
+          <span class="muted" title="后台「设置 → 站点信息」里的站点地址为空，暂时给不出前台链接">{r.postSlug}</span>
+        {/if}
       </div>
       <div class="ops">
         {#if r.status !== 'approved'}<button class="sm primary" onclick={() => void act(r.id, 'approve')}>通过</button>{/if}

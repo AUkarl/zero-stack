@@ -1,6 +1,7 @@
 <script lang="ts">
   import { get, patch, post, put } from '#lib/api';
   import { timeAgo } from '#lib/api';
+  import { frontUrl } from '#lib/session.svelte';
 
   /** 后端 RuleHit：来源 + 规则原文 + 说明 + 权重；旧版接口可能仍回字符串，两种都要能渲染 */
   interface RuleHit {
@@ -566,7 +567,13 @@
             <tr>
               <td>{r.authorName}{r.authorEmail ? ` 〈${r.authorEmail}〉` : ''}</td>
               <td class="clip">{r.content}</td>
-              <td><a href={r.postSlug} target="_blank" rel="noreferrer">{r.postSlug}</a></td>
+              <td>
+                {#if frontUrl(r.postSlug)}
+                  <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postSlug}</a>
+                {:else}
+                  <span class="muted">{r.postSlug}</span>
+                {/if}
+              </td>
               <td>{r.spamScore ?? '—'}</td>
               <td class="clip">{r.spamReason || '—'}</td>
               <td>{timeAgo(r.createdAt)}</td>

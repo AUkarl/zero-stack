@@ -247,11 +247,10 @@
         <input type="checkbox" bind:checked={it.external} />
         <span>外部链接（新标签打开）</span>
       </label>
-      <label class="switch">
-        <input type="checkbox" bind:checked={it.zeroAccount} />
-        <span>账号入口</span>
-      </label>
-      <span class="muted small">勾选后主题把它当账号图标：未登录显示登录图标，登录后换成头像 / 昵称提示（主题里对应 zero_account）。</span>
+      <span class="muted small">
+        登录 / 账号入口不在这里配：主题固定补一项，显示与否只看「设置 → 注册与邀请码 → 前台账号系统」
+        （历史数据里勾过账号入口的那一项仍然生效，主题不会重复补第二个）。
+      </span>
     </div>
     {#if badParent}
       <p class="err small">parent 填的「{it.parent}」在本段里没有任何项的标识与它相同，这一项不会出现在子菜单里。改 parent 或给父项补上 identifier。</p>

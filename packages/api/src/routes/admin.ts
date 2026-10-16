@@ -346,6 +346,20 @@ function isDraftFront(front: Record<string, unknown>): boolean {
 }
 
 /**
+ * 文章没写 author 就补上站长的作者标识（config 里的 defaultAuthor）。
+ *
+ * 为什么要由后端补：主题的顶部署名与底部作者框按这个键去 data/authors.yaml 找条目，
+ * 而 `/author/<标识>/` 那一页只有 front matter 里**出现了这个键**才会生成。后台写作页
+ * 存出去的稿子以前没有它，于是署名点不进作者页、作者框也只剩一个空壳（联系方式那排
+ * 直接不渲染）。标识还没设过时不补，免得凭空造出一个不存在的作者页。
+ */
+async function withAuthorFallback(env: Env, path: string, front: Front): Promise<Front> {
+  if (!isPostPath(path) || String(front.author ?? '').trim()) return front;
+  const handle = String((await getConfig(env, 'defaultAuthor')) ?? '').trim();
+  return handle ? { ...front, author: handle } : front;
+}
+
+/**
  * 写一个内容文件：拼 front matter → sha 乐观锁 → 提交 → 按需群发。
  * 不抛 HTTP 异常、不清缓存、不触发构建，这三件都由调用方在整批做完后统一做一次，
  * 免得一次批量推送把 Pages 构建配额和后台缓存刷爆。
@@ -358,7 +372,7 @@ async function writeContentItem(env: Env, admin: { id?: string | null }, item: C
   let content: string;
   try {
     if (item.front && typeof item.front === 'object') {
-      const front = orderFront(item.front as Front);
+      const front = orderFront(await withAuthorFallback(env, path, item.front as Front));
       // 时刻（朋友圈式动态）没有标题，正文/图/音/视频任一非空即可；标题必填只针对文章
       if (isPostPath(path) && !String(front.title ?? '').trim()) throw new Error('标题不能为空');
       content = buildMarkdown(front, (item.body ?? '').trim());
@@ -580,12 +594,24 @@ const EDITABLE_REPO_FILES = new Set([
   'config/_default/menus.zh.toml',
 ]);
 
-async function repoFilePath(env: Env, input: string): Promise<string> {
+/**
+ * 只读也能取的主题那份清单：站点自己的 config/_default/params.toml 往往不存在
+ * （大多数站点只在 hugo.toml 里写几行覆盖），后台就会显示「读取不到」。
+ * 主题那份是逐键带注释的全量模板，正好当起点 —— 读出来，用户点保存就落成站点自己的文件。
+ */
+const THEME_READ_ONLY_FILES = new Set([
+  'themes/zero/config/_default/params.toml',
+  'themes/zero/config/_default/config.toml',
+]);
+
+async function repoFilePath(env: Env, input: string, allowThemeRead = false): Promise<string> {
   const clean = String(input ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
   // 友链数据文件按设置里的位置认：写死 'data/links.yaml' 会把挪过数据目录的站点挡在门外
   const links = await linksFilePath(env);
   const allowed = new Set([...EDITABLE_REPO_FILES, links]);
-  if (!allowed.has(clean)) fail(400, `只能编辑这几份文件：${[...allowed].join('、')}`);
+  if (!allowed.has(clean) && !(allowThemeRead && THEME_READ_ONLY_FILES.has(clean))) {
+    fail(400, `只能编辑这几份文件：${[...allowed].join('、')}`);
+  }
   return clean;
 }
 
@@ -608,7 +634,7 @@ app.get('/repo/files', async (c) => {
 /** GET /api/admin/repo/file?path=config/_default/params.toml */
 app.get('/repo/file', async (c) => {
   requireAdmin(c);
-  const path = await repoFilePath(c.env, c.req.query('path') ?? '');
+  const path = await repoFilePath(c.env, c.req.query('path') ?? '', true);
   const file = await readRepoFile(c.env, path).catch((e: unknown) => fail(502, e instanceof Error ? e.message : String(e)));
   if (!file) return ok({ exists: false, path, content: '', sha: '' });
   return ok({ exists: true, path, content: file.content, sha: file.sha, bytes: file.content.length });

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { del, get, patch, post } from '#lib/api';
   import { fmtDate, timeAgo } from '#lib/api';
+  import { frontUrl } from '#lib/session.svelte';
   import { session } from '#lib/session.svelte';
 
   const PERM_LABEL = {
@@ -614,7 +615,17 @@
           <div class="uwho">
             <div class="uname">
               <span class="nick" title={r.name || ''}>{r.name || '（未命名）'}</span>
-              <span class="tag" title={`账号标识 @${r.accountSlug ?? ''}`}>@{r.accountSlug || '—'}</span>
+              {#if r.accountSlug && frontUrl(`/account/me/?u=@${r.accountSlug}`)}
+                <a
+                  class="tag"
+                  href={frontUrl(`/account/me/?u=@${r.accountSlug}`)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={`在前台打开 @${r.accountSlug} 的个人中心`}
+                >@{r.accountSlug}</a>
+              {:else}
+                <span class="tag" title={`账号标识 @${r.accountSlug ?? ''}`}>@{r.accountSlug || '—'}</span>
+              {/if}
             </div>
             <div class="uemail" title={r.email}>{r.email}</div>
           </div>
@@ -717,7 +728,11 @@
                 {#each detail.items as c (c.id)}
                   <div class="line">
                     <span class="badge {c.status === 'approved' ? 'good' : c.status === 'spam' ? 'bad' : 'pending'}">{c.status}</span>
-                    <a class="cmt-url" href={c.postSlug} target="_blank" rel="noreferrer" title={c.postSlug}>{c.postSlug}</a>
+                    {#if frontUrl(c.postSlug)}
+                      <a class="cmt-url" href={frontUrl(c.postSlug)} target="_blank" rel="noreferrer" title={c.postSlug}>{c.postSlug}</a>
+                    {:else}
+                      <span class="cmt-url muted" title="后台「设置 → 站点信息」里的站点地址为空，暂时给不出前台链接">{c.postSlug}</span>
+                    {/if}
                     <span class="cmt-body">{c.content.slice(0, 120)}</span>
                     <span class="muted small">{timeAgo(c.createdAt)}</span>
                   </div>
@@ -873,7 +888,13 @@
               <td>
                 <div class="acct">
                   <span class="nick" title={r.accountName || ''}>{r.accountName || '（未命名）'}</span>
-                  <span class="tag" title={`账号标识 @${r.accountSlug ?? ''}`}>@{r.accountSlug || '—'}</span>
+                  {#if frontUrl(r.centerUrl)}
+                    <a class="tag" href={frontUrl(r.centerUrl)} target="_blank" rel="noreferrer" title="在前台打开这个账号的个人中心">
+                      @{r.accountSlug || '—'}
+                    </a>
+                  {:else}
+                    <span class="tag" title={`账号标识 @${r.accountSlug ?? ''}`}>@{r.accountSlug || '—'}</span>
+                  {/if}
                 </div>
                 <div class="uemail" title={r.accountEmail ?? ''}>{r.accountEmail || '（账号已不存在）'}</div>
                 {#if r.accountRole === 'admin'}<span class="badge pending">站长账号</span>{/if}

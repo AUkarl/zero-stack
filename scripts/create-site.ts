@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import prompts, { type PromptObject } from 'prompts';
@@ -95,6 +95,14 @@ title = "${a.siteName}"
 theme = "zero"
 defaultContentLanguage = "zh"
 hasCJKLanguage = true
+
+# 分类法：主题的 layouts/taxonomy/author.html 与署名链接都要 author 这一项，
+# 而 Hugo 不会读主题里的 [taxonomies] —— 只能在站点这份配置声明。
+# 少了 author，文章页顶部的作者昵称就点不进 /author/<标识>/。
+[taxonomies]
+  category = "categories"
+  tag = "tags"
+  author = "author"
 
 # 时刻与文章的时间由后台自由填写，将来日期也要立刻上线。
 # Hugo 0.146+ 只认 [build].future，写在顶层的 enableFuture 会被静默忽略。
@@ -326,6 +334,19 @@ hugo server -D
     info(`请稍后手动执行：${submodule}`);
     mkdirSync(resolve(siteDir, 'themes/zero'), { recursive: true });
     write(resolve(siteDir, 'themes/zero/.gitkeep'), '');
+  }
+
+  /* 把主题那份「全量注释版」params.toml 复制成站点自己的：
+     后台「前端管理 → 主题配置文件」读写的就是站点这份文件，缺了它就只会显示「读取不到」，
+     而它恰恰最适合当模板 —— 每个键都带注释，想改哪项直接搜键名。
+     取值优先级 data/*.json > 站点 params.toml > 主题 params.toml，所以这份复制件与主题默认一致，
+     什么都不填也是一个完整站点。 */
+  const themeParams = resolve(siteDir, 'themes/zero/config/_default/params.toml');
+  if (existsSync(themeParams)) {
+    write(rel('config/_default/params.toml'), readFileSync(themeParams, 'utf8'));
+    good('站点自己的 config/_default/params.toml 已按主题默认模板生成（后台「主题配置文件」可直接编辑）');
+  } else {
+    warn('没读到 themes/zero/config/_default/params.toml：等子模块拉下来后，把主题那份 params.toml 复制一份到 config/_default/ 才能在后台「主题配置文件」里改');
   }
 
   if (a.initGit) {

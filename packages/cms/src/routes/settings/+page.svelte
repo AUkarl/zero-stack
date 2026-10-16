@@ -366,23 +366,36 @@
   const LINES_KEYS = new Set(GROUPS.flatMap((g) => g.fields).filter((f) => f.kind === 'lines').map((f) => f.key));
 
   /**
+   * 所有面板字段的值都归一成字符串再进 cfg。
+   *
+   * 为什么必须归一：`<input type="number" bind:value>` 给 Svelte 的是**数字**（465 而不是 "465"），
+   * 于是 ① 「哪一项被改过」的比较 465 !== "465" 永远算改过，② `coerce()` 里那句 `raw.trim()`
+   * 直接抛 TypeError —— 而它跑在 `saving = true` 之前、`try` 之外，结果就是点「保存」
+   * 既不报错也不发请求，SMTP 授权码之类的内容根本没写进库（后台健康检查就一直说没配）。
+   */
+  function setVal(key: string, raw: unknown): void {
+    cfg[key] =
+      typeof raw === 'number' ? String(raw) : typeof raw === 'boolean' ? String(raw) : String(raw ?? '');
+  }
+
+  /**
    * 保存时决定一个键写回什么类型。不能从面板字段反查：评论审核规则这类键在别的页面维护，
    * 反查不到就会把 true 存成 "true" 字符串，前台开关直接失效。
    */
-  function coerce(key: string, raw: string): string | number | boolean {
+  function coerce(key: string, raw: unknown): string | number | boolean {
+    const value = typeof raw === 'number' ? String(raw) : typeof raw === 'boolean' ? String(raw) : String(raw ?? '');
     if (LINES_KEYS.has(key)) {
       return JSON.stringify(
-        raw
+        value
           .split(/\r?\n/)
           .map((s) => s.trim())
           .filter(Boolean),
       );
     }
-    if (TEXT_KEYS.has(key)) return raw;
-    if (raw === 'true' || raw === 'false') return raw === 'true';
-    if (raw !== '' && /^-?\d+(\.\d+)?$/.test(raw.trim())) return Number(raw);
-    if (/^\[.*\]$/.test(raw.trim())) return raw;
-    return raw;
+    if (TEXT_KEYS.has(key)) return value;
+    if (value === 'true' || value === 'false') return value === 'true';
+    if (value !== '' && /^-?\d+(\.\d+)?$/.test(value.trim())) return Number(value);
+    return value;
   }
 
   let cfg = $state<Record<string, string>>({});
@@ -401,7 +414,10 @@
     error = '';
     try {
       const d = await get<{ data: Record<string, string>; hasSecret?: Record<string, boolean> }>('/api/admin/config');
-      const next: Record<string, string> = { ...d.data };
+      // 配置键的值一律按字符串进面板：数字绑定会让「改过没有」的比较和 coerce 一起出错
+      const next: Record<string, string> = Object.fromEntries(
+        Object.entries(d.data ?? {}).map(([k, v]) => [k, String(v ?? '')]),
+      );
       for (const key of LINES_KEYS) {
         try {
           const arr = JSON.parse(next[key] || '[]');
@@ -428,13 +444,11 @@
   async function save() {
     if (!changed.length) return;
     const count = changed.length;
-    const payload: Record<string, string | number | boolean> = {};
-    for (const key of changed) {
-      payload[key] = coerce(key, cfg[key] ?? '');
-    }
     saving = true;
     error = '';
     try {
+      const payload: Record<string, string | number | boolean> = {};
+      for (const key of changed) payload[key] = coerce(key, cfg[key]);
       await patch('/api/admin/config', payload);
       await load();
       notice = `已保存 ${count} 项`;
@@ -477,27 +491,32 @@
       <div class="field {f.kind === 'textarea' || f.kind === 'lines' ? 'wide' : ''}">
         {#if f.kind === 'bool'}
           <label class="switch">
-            <input type="checkbox" checked={boolValue(f.key)} onchange={(e) => (cfg[f.key] = e.currentTarget.checked ? 'true' : 'false')} />
+            <input type="checkbox" checked={boolValue(f.key)} onchange={(e) => setVal(f.key, e.currentTarget.checked)} />
             <span>{f.label}</span>
           </label>
         {:else if f.kind === 'select'}
           <label>
             {f.label}
-            <select bind:value={cfg[f.key]}>
+            <select value={cfg[f.key] ?? ''} onchange={(e) => setVal(f.key, e.currentTarget.value)}>
               {#each f.options ?? [] as o}<option value={o.value}>{o.label}</option>{/each}
             </select>
           </label>
         {:else if f.kind === 'textarea' || f.kind === 'lines'}
           <label>
             {f.label}
-            <textarea rows={f.kind === 'lines' ? 4 : 3} bind:value={cfg[f.key]}></textarea>
+            <textarea
+              rows={f.kind === 'lines' ? 4 : 3}
+              value={cfg[f.key] ?? ''}
+              oninput={(e) => setVal(f.key, e.currentTarget.value)}
+            ></textarea>
           </label>
         {:else}
           <label>
             {f.label}
             <input
               type={f.kind === 'secret' ? 'password' : f.kind === 'number' ? 'number' : 'text'}
-              bind:value={cfg[f.key]}
+              value={cfg[f.key] ?? ''}
+              oninput={(e) => setVal(f.key, e.currentTarget.value)}
               placeholder={f.kind === 'secret' && secretSet.includes(f.key) ? '已设置（留空不修改）' : ''}
               autocomplete={f.kind === 'secret' ? 'new-password' : 'on'}
             />
