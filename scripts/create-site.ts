@@ -148,13 +148,19 @@ theme = "zero"
 defaultContentLanguage = "zh"
 hasCJKLanguage = true
 
-# 分类法：主题的 layouts/taxonomy/author.html 与署名链接都要 author 这一项，
+# 分类法：主题的 layouts/taxonomy/author.html 与文章页署名都要 author 这一项，
 # 而 Hugo 不会读主题里的 [taxonomies] —— 只能在站点这份配置声明。
 # 少了 author，文章页顶部的作者昵称就点不进 /author/<标识>/。
+# 这里刻意不声明 category / tag：Hugo 只为声明过的分类法生成聚合页，
+# 所以站不会长出 /categories/ 与 /tags/；文章里的分类、标签照常显示为文字。
+# 想要那两个页面时把下面两行注释去掉即可（主题有现成模板）。
 [taxonomies]
-  category = "categories"
-  tag = "tags"
   author = "author"
+  # category = "categories"
+  # tag = "tags"
+
+# 文章列表页 /posts/ 不生成：导航里已经有「归档」承担列表职责。
+# 想恢复就删掉 content/posts/_index.md 里那三行 _build。
 
 # 时刻与文章的时间由后台自由填写，将来日期也要立刻上线。
 # Hugo 0.146+ 只认 [build].future，写在顶层的 enableFuture 会被静默忽略。
@@ -236,7 +242,7 @@ type: moment
 draft: false
 ---
 
-时刻内容也可以直接在 zero-cms 后台发布并存入 D1，这里的 Markdown 只是静态兜底。
+这是第一条示例时刻，删掉它就能开始记录。
 `;
 
 const LINKS_DATA = `# 友链页的数据文件：主题的 layouts/links/list.html 读 hugo.Data.links
@@ -378,6 +384,14 @@ hugo server -D
   } else {
     warn('没读到 themes/zero/exampleSite（子模块还没拉下来？）：这座站只有最小骨架，初始化子模块后重跑一次 create:site 才有完整示例');
   }
+
+  /** 分区页是 Hugo 由目录自动造的，没有「只禁一个分区」的开关，
+      所以给 posts 自己写一份 _index.md 并让它不渲染：/posts/ 变 404，
+      而每篇文章、首页列表、归档页都不受影响。 */
+  write(
+    rel('content/posts/_index.md'),
+    '---\ntitle: "文章"\ntype: "posts"\nlayout: "list"\n_build: { render: never }\n---\n',
+  );
 
   /* 站点参数只有一份：把主题那份「全量注释版」params.toml 复制成站点自己的，
      再把后端地址与默认署名写进去。取值优先级 data/*.json > 站点 params.toml > 主题 params.toml，
