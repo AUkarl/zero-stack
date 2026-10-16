@@ -291,9 +291,21 @@ async function main(): Promise<void> {
   console.log('\n🏗️  生成 zero-site（私密内容仓库）\n');
   const a = { ...PRESET, ...(await ask(QUESTIONS)) } as Answers;
   if (!a.githubUser || !a.repoName || !a.siteUrl || !a.apiBaseURL) die('所有必填项都需要填写');
+  /** 末尾斜杠必须去掉：主题拼的是 `${apiBaseURL}/api/...`，带斜杠就成了 //api，
+      而 params 那行注释也写着「末尾不要带斜杠」—— 让人填错再靠注释提醒没意义。 */
+  a.apiBaseURL = a.apiBaseURL.trim().replace(/\/+$/, '');
+  a.siteUrl = a.siteUrl.trim().replace(/\/+$/, '');
+  for (const [label, v] of [['API 地址', a.apiBaseURL], ['站点域名', a.siteUrl]] as const) {
+    if (!/^https?:\/\/[^\s/]+\.[^\s/]+$/i.test(v)) die(`${label}不像完整 URL：${v}\n要形如 https://zero-api.xxx.workers.dev（协议 + 域名写全，末尾不要带斜杠）`);
+  }
 
   const siteDir = resolve(ROOT, '..', a.repoName);
-  if (existsSync(siteDir) && readdirSync(siteDir).length > 0) die(`${siteDir} 已存在且非空，请换一个仓库名或先手动清理`);
+  if (existsSync(siteDir) && readdirSync(siteDir).length > 0) {
+    die(
+      `${siteDir} 已存在且非空，请换一个仓库名或先手动清理。\n` +
+        '  清理前先停掉跑在这个目录里的 hugo server —— Windows 下它占着目录，rm 会失败。',
+    );
+  }
 
   step('创建目录与示例内容');
   const dirs = ['content/posts', 'content/moments', 'content/links', 'static/images', 'data', '.github/workflows'];
