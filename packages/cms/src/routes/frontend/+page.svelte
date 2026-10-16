@@ -27,6 +27,7 @@
     type Issue,
     type SaveResult,
     type SectionKey,
+    buildNote,
   } from './types';
 
   /**
@@ -297,7 +298,8 @@
     return parts.join('、') || '没有要写的文件';
   });
 
-  async function save() {
+  
+async function save() {
     saveError = '';
     saveMessage = '';
     saveNote = [];
@@ -331,7 +333,7 @@
       saveWritten = d.written ?? [];
       const notes: string[] = [];
       if (d.build?.triggered) notes.push('已请求 Cloudflare Pages 重新构建，前台几分钟内更新。');
-      else if (d.build && d.build.triggered === false) notes.push(`站点构建没有自动触发：${d.build.error ?? '未配置 Pages 重建 Hook'}，等下一次自动构建或手动点一次。`);
+      else if (d.build && d.build.triggered === false) notes.push(buildNote(d.build.error));
       else if (triggerBuild) notes.push('后端没有返回构建结果，按未触发处理；前台没更新就手动重建一次。');
       saveNote = notes;
       if (d.notice) saveError = d.notice;

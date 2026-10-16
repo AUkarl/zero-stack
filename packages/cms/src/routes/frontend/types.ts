@@ -624,3 +624,9 @@ export function renumberWeights(items: NavItem[], group: '' | 'controls'): NavIt
   let i = 0;
   return items.map((it) => (it.position === group ? { ...it, weight: ++i } : it));
 }
+
+/** 构建 Hook 没配不等于「前端不会更新」：Pages 连着 Git 集成时，这次提交本身就是触发器。
+    旧文案把后端的短原因和页面自己那句建议拼在一起，读起来是「等下一次自动构建，等下一次自动构建」。 */
+export function buildNote(reason?: string | null): string {
+  return `没有走构建 Hook（${reason || '未配置'}）：内容仓库若连着 Cloudflare Pages 的 Git 集成，这次提交本身就会触发构建；没连的话去 Pages 项目里手动 Trigger 一次。`;
+}

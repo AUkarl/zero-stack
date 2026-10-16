@@ -56,7 +56,7 @@ export async function listDir(input: GitFileInput): Promise<RepoEntry[]> {
 /** Pages 构建 Hook 是可选加速路径：没配或失败都不影响提交已成功的事实 */
 export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean; error?: string }> {
   const hook = await getConfig(env, 'cloudflarePagesBuildHook');
-  if (!hook) return { triggered: false, error: '未配置 Pages 构建 Hook，等下一次自动构建' };
+  if (!hook) return { triggered: false, error: '未配置 Pages 构建 Hook' };
   try {
     const res = await fetch(hook, {
       method: 'POST',

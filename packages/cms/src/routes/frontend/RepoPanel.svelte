@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get, put } from '#lib/api';
+  import { buildNote } from './types';
 
   /**
    * 主题配置文件：直接读写仓库里的 params.toml / config.toml / menus.zh.toml 与友链数据文件。
@@ -160,7 +161,7 @@
       const msg = r.message || '已写入仓库';
       let build: string | null = null;
       if (r.build?.triggered) build = '已请求 Cloudflare Pages 重新构建，前台几分钟内更新。';
-      else if (r.build && r.build.triggered === false) build = `站点构建没有自动触发：${r.build.error ?? '未配置 Pages 重建 Hook'}，等下一次自动构建或手动点一次。`;
+      else if (r.build && r.build.triggered === false) build = buildNote(r.build.error);
       else if (triggerBuild) build = '后端没有返回构建结果，按未触发处理；前台没更新就手动重建一次。';
       // 回读而不是直接用 PUT 返回的 sha：本地仓库后端提交后回的是 local:<时间戳> 这类临时值，
       // 只有再读一次拿到的才是下次乐观锁能比对上的 sha
