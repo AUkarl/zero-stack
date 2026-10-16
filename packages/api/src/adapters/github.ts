@@ -1,5 +1,5 @@
 /**
- * GitHub Contents API 适配：zero-cms 发布的文章最终落到私密站点仓库，
+ * GitHub Contents API 适配：zero-cms 发布的文章最终落进站点仓库，
  * Hugo 仍由 GitHub 触发构建，保持"内容进 Git"这条主线。
  */
 
@@ -24,6 +24,18 @@ export interface CommitResult {
 }
 
 const API = 'https://api.github.com';
+
+/**
+ * GitHub 的 contents 接口回的是 base64 **字节**串，而 `atob` 给回来的是「一个字节一个字符」的
+ * Latin-1 文本：中文文件这样读出来就是乱码，编辑器里再保存一次等于把乱码按 UTF-8 又编一遍写回仓库，
+ * 每存一次多叠一层。所以读侧统一过 TextDecoder，与写侧（TextEncoder → btoa）配成一对。
+ */
+function fromBase64Utf8(b64: string): string {
+  const bin = atob(b64.replace(/\n/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
 
 function headers(token: string, accept: string): Record<string, string> {
   return {
@@ -73,7 +85,7 @@ export async function readFile(input: Omit<CommitInput, 'content' | 'message'>):
   if (!res.ok) throw new Error(await readError(res, input));
 
   const body = (await res.json()) as { content?: string; encoding?: string; sha: string };
-  const text = body.content ? atob(body.content.replace(/\n/g, '')) : '';
+  const text = body.content ? fromBase64Utf8(body.content) : '';
   return { content: text, sha: body.sha };
 }
 
@@ -92,7 +104,7 @@ export async function writeFile(input: CommitInput): Promise<CommitResult> {
     sha = body.sha;
     // 这次反正已经把文件读出来了，顺手比一下内容：一样的话就不提交。
     // 定时任务天天导出同一份统计，省掉空提交也就省掉一次 Pages 构建。
-    if (body.content) current = atob(body.content.replace(/\n/g, ''));
+    if (body.content) current = fromBase64Utf8(body.content);
   } else if (probe.status !== 404) return { success: false, error: await readError(probe, input) };
 
   if (current !== undefined && current === input.content) {

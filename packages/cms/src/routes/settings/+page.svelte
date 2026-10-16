@@ -232,7 +232,7 @@
         { key: 'githubPostsDir', label: '文章目录', hint: '如 content/zh/posts（多语言）或 content/posts（单语言扁平），「文章」页写这里' },
         { key: 'githubMomentsDir', label: '时刻目录', hint: '如 content/zh/moments，「时刻」页读写这里' },
         { key: 'gitWritebackEnabled', label: '投稿通过后自动写入仓库', kind: 'bool', hint: '只管「投稿」页审核通过那一步；关掉就只标记通过、不提交文章。「前端管理」页与友链各有自己的口径，不受这里影响' },
-        { key: 'githubLinksFile', label: '友链文件', hint: '如 data/links.yaml' },
+        { key: 'githubLinksFile', label: '友链文件', hint: '留空 = 「数据目录」（默认 data）下的 links.yaml；只有主题装在别处、或数据目录挪走了才需要填，填了以后后台列出的、审核通过写入的、定时任务读的都是这一份' },
         { key: 'githubAuthorsFile', label: '作者数据文件', hint: '如 data/authors.yaml' },
         { key: 'cloudflarePagesBuildHook', label: 'Pages 重建 Hook', hint: '选填，填了改完友链会自动重建站点' },
       ],

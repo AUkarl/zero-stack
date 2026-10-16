@@ -170,20 +170,28 @@
     };
     xhr.onload = () => {
       uploading = false;
-      let data: { url?: string; key?: string; message?: string } | null = null;
+      /* 后端固定回 { data: { key, url, bucket, size } }。这里以前直接摸 data.url / data.key，
+         那两层字段根本不存在，于是上传明明成功（HTTP 200）也报「上传失败」，
+         而且不刷新列表 —— 关掉重开才看得见，正是用户描述的现象。 */
+      let stored: { key?: string; url?: string } | null = null;
+      let message = '';
       try {
-        data = JSON.parse(xhr.responseText);
+        const body = JSON.parse(xhr.responseText) as { data?: { key?: string; url?: string }; message?: string };
+        stored = body?.data ?? null;
+        message = typeof body?.message === 'string' ? body.message : '';
       } catch {
-        data = null;
+        stored = null;
       }
-      if (xhr.status >= 200 && xhr.status < 300 && data && (data.url || data.key)) {
-        const url = data.url ? absUrl(data.url) : urlOf({ key: data.key ?? '', url: data.url });
+      if (xhr.status >= 200 && xhr.status < 300 && stored && (stored.key || stored.url)) {
+        // 按当前桶拼地址：能拼公开域名就拼公开域名，拼不出才退回 Worker 代理。
+        // 直接写代理地址等于把图锁在登录后，访客拿到的是 401。
+        const url = urlOf({ key: stored.key ?? '', url: stored.url });
         uploadMsg = `上传成功（${file.name}）`;
         choose(url);
         void loadObjects(true);
       } else {
         uploadMsg = '';
-        error = `上传失败：${data?.message ?? `后端返回 HTTP ${xhr.status}`}`;
+        error = `上传失败：${message || `后端返回 HTTP ${xhr.status}`}`;
       }
       if (fileEl) fileEl.value = '';
     };

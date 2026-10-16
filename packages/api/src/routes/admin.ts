@@ -21,6 +21,7 @@ import {
   validateAuthorsYaml,
 } from '../services/authors';
 import { deleteCommentSubtree } from '../services/comment-tree';
+import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor } from './frontend';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
 import { clientIp } from '../lib/http';
@@ -577,19 +578,37 @@ const EDITABLE_REPO_FILES = new Set([
   'config/_default/params.toml',
   'config/_default/config.toml',
   'config/_default/menus.zh.toml',
-  'data/links.yaml',
 ]);
 
-function repoFilePath(input: string): string {
+async function repoFilePath(env: Env, input: string): Promise<string> {
   const clean = String(input ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
-  if (!EDITABLE_REPO_FILES.has(clean)) fail(400, `只能编辑这几份文件：${[...EDITABLE_REPO_FILES].join('、')}`);
+  // 友链数据文件按设置里的位置认：写死 'data/links.yaml' 会把挪过数据目录的站点挡在门外
+  const links = await linksFilePath(env);
+  const allowed = new Set([...EDITABLE_REPO_FILES, links]);
+  if (!allowed.has(clean)) fail(400, `只能编辑这几份文件：${[...allowed].join('、')}`);
   return clean;
 }
+
+/**
+ * GET /api/admin/repo/files —— 「主题配置文件」下拉该列哪几份。
+ * 路径规则只在这里算一次：后台列的和后端放开的必须是同一份，否则挪了数据目录就会出现
+ * 「下拉里点得动、保存被拒」或者反过来。
+ */
+app.get('/repo/files', async (c) => {
+  requireAdmin(c);
+  const labels: Record<string, string> = {
+    'config/_default/params.toml': '（站点覆盖项）',
+    'config/_default/config.toml': '（Hugo 基础配置）',
+    'config/_default/menus.zh.toml': '（导航菜单）',
+  };
+  const links = await linksFilePath(c.env);
+  return ok([...EDITABLE_REPO_FILES, links].map((path) => ({ path, label: `${path}${labels[path] ?? '（友链数据）'}` })));
+});
 
 /** GET /api/admin/repo/file?path=config/_default/params.toml */
 app.get('/repo/file', async (c) => {
   requireAdmin(c);
-  const path = repoFilePath(c.req.query('path') ?? '');
+  const path = await repoFilePath(c.env, c.req.query('path') ?? '');
   const file = await readRepoFile(c.env, path).catch((e: unknown) => fail(502, e instanceof Error ? e.message : String(e)));
   if (!file) return ok({ exists: false, path, content: '', sha: '' });
   return ok({ exists: true, path, content: file.content, sha: file.sha, bytes: file.content.length });
@@ -609,7 +628,7 @@ app.put('/repo/file', async (c) => {
   const parsed = repoFileSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) fail(400, '需要 path 与 content');
   const { path: raw, content, sha, message, triggerBuild } = parsed.data;
-  const path = repoFilePath(raw);
+  const path = await repoFilePath(c.env, raw);
 
   const current = await readRepoFile(c.env, path).catch(() => null);
   if (sha && current && current.sha !== sha) {

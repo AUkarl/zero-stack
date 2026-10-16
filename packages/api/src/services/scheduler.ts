@@ -6,6 +6,7 @@ import { runDueBroadcastJobs } from './broadcast';
 import { pushNewPostsToSubscribers } from './feed-push';
 import { readRepoFile, repoBackend, writeRepoFile } from './repo';
 import { normalizeFriendUrl, parseLinksYaml, type LinkSite } from './links-yaml';
+import { linksFilePath } from './friends-file';
 import { triggerPagesBuild } from './git';
 import { flushStatCounters, lifetimeStats } from './stats';
 import { newId } from '../lib/crypto';
@@ -125,11 +126,6 @@ async function importFriendsFromLinks(env: Env, sites: LinkSite[]): Promise<stri
     added++;
   }
   return `登记 ${sites.length} 个站点，新增入库 ${added} 个`;
-}
-
-async function linksFilePath(env: Env): Promise<string> {
-  const dir = ((await getConfig(env, 'githubDataDir')) || 'data').replace(/^\/+|\/+$/g, '');
-  return `${dir}/links.yaml`;
 }
 
 /** 正常站，或冷却期已过的站，都重新纳入检测与抓取 */function eligible(now: number) {

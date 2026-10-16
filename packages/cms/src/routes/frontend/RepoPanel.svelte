@@ -2,17 +2,18 @@
   import { get, put } from '#lib/api';
 
   /**
-   * 主题配置文件：直接读写仓库里的 params.toml / config.toml / menus.zh.toml / links.yaml。
+   * 主题配置文件：直接读写仓库里的 params.toml / config.toml / menus.zh.toml 与友链数据文件。
    *
-   * 后端只放开这四份路径，所以下拉就只列这四项；这里不解析也不重排文本，
-   * 编辑器里是什么就提交什么（注释与空行因此能原样保留）。
+   * 这里不解析也不重排文本，编辑器里是什么就提交什么（注释与空行因此能原样保留）。
+   * 下拉的初值只是「后端一定认」的三份配置文件；友链那份的真实位置来自
+   * GET /api/admin/repo/files —— 数据目录挪过、或设置里改了友链文件时，列出的路径
+   * 必须和后端放开的完全一致，否则就是「下拉里点得动、一保存被拒」。
    */
-  const FILES = [
+  let files = $state<{ path: string; label: string }[]>([
     { path: 'config/_default/params.toml', label: 'config/_default/params.toml（站点覆盖项）' },
     { path: 'config/_default/config.toml', label: 'config/_default/config.toml（Hugo 基础配置）' },
     { path: 'config/_default/menus.zh.toml', label: 'config/_default/menus.zh.toml（导航菜单）' },
-    { path: 'data/links.yaml', label: 'data/links.yaml（友链数据）' },
-  ] as const;
+  ]);
 
   interface RepoFile {
     exists: boolean;
@@ -29,7 +30,7 @@
     build?: { triggered?: boolean; error?: string } | null;
   }
 
-  let path = $state<string>(FILES[0].path);
+  let path = $state<string>('config/_default/params.toml');
   let content = $state('');
   let baseline = $state('');
   let sha = $state('');
@@ -160,8 +161,16 @@
   }
 
   $effect(() => {
-    // 只自动读默认那一份，其余文件由下拉或「读取」按钮触发
-    void readFile(FILES[0].path);
+    // 先问后端「到底哪几份能改」，再读默认那一份；这个面板只用一次，顺序无所谓
+    void (async () => {
+      try {
+        const d = await get<{ data: { path: string; label: string }[] }>('/api/admin/repo/files');
+        if (d.data?.length) files = d.data;
+      } catch {
+        // 拿不到就用上面那三项兜底，友链那份不列出来就是了
+      }
+      await readFile(files[0].path);
+    })();
   });
 </script>
 
@@ -183,7 +192,7 @@
           disabled={loading || saving}
           onchange={(e) => void switchFile(e.currentTarget.value, e.currentTarget)}
         >
-          {#each FILES as f (f.path)}<option value={f.path}>{f.label}</option>{/each}
+          {#each files as f (f.path)}<option value={f.path}>{f.label}</option>{/each}
         </select>
       </label>
       <button class="sm" onclick={() => void readFile(path)} disabled={loading || saving}>

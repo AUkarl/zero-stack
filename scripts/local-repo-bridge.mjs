@@ -49,8 +49,13 @@ async function json(res, code, obj) {
 const server = createServer(async (req, res) => {
   if (TOKEN && req.headers['x-repo-bridge'] !== TOKEN) return json(res, 403, { error: '桥接令牌不对' });
 
-  let body = '';
-  for await (const chunk of req) body += chunk;
+  /*
+   * 攒 Buffer 再一次性 toString：`for await (const chunk of req) body += chunk` 会把每个 TCP 分片
+   * 各自按 UTF-8 解码，一个汉字（3 字节）正好被切开时那半截就成了 U+FFFD —— 中文正文一长就中招。
+   */
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const body = Buffer.concat(chunks.map((c) => (Buffer.isBuffer(c) ? c : Buffer.from(String(c))))).toString('utf8');
   let input = {};
   try {
     input = body ? JSON.parse(body) : {};

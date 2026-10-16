@@ -14,10 +14,10 @@ import { z } from 'zod';
 import { createDb } from '../db/client';
 import { friendApplications, friends } from '../db/schema';
 import { getConfig, getConfigBool, getConfigJson } from '../services/config';
-import { appendFriends, normalizeFriendUrl, type NewFriend } from '../services/links-yaml';
+import { normalizeFriendUrl, type NewFriend } from '../services/links-yaml';
 import { FRIEND_KINDS, normalizeFriendKind, type FriendKind } from '../services/friends-groups';
-import { readFile, writeFile } from '../services/git';
-import { repoTarget, triggerPagesBuild } from '../services/git';
+import { addFriendToLinksFile } from '../services/friends-file';
+import { triggerPagesBuild } from '../services/git';
 import { writeAudit } from '../services/audit';
 import { sendFriendReviewResult } from '../services/review-mail';
 import { newId } from '../lib/crypto';
@@ -401,30 +401,13 @@ async function approve(
   return { friendId, kind, synced, syncError, commit };
 }
 
-/** 把新站点追加进仓库里的 data/links.yaml；仓库没配或文件缺失都不算失败 */
+/** 新站点写进仓库里的 data/links.yaml（文件还不存在时由 friends-file 顺手按骨架建出来） */
 async function syncLinksYaml(
   env: Env,
   entry: NewFriend & { email?: string | null },
 ): Promise<{ synced: boolean; error: string | null; commit: string | null }> {
-  const path = (await getConfig(env, 'githubLinksFile')) ?? 'data/links.yaml';
-  let settings;
-  try {
-    settings = await repoTarget(env);
-  } catch {
-    return { synced: false, error: '未配置站点仓库，仅写入数据库', commit: null };
-  }
-
-  try {
-    const file = await readFile({ ...settings, path });
-    if (!file) return { synced: false, error: `仓库里没有 ${path}`, commit: null };
-    const patched = appendFriends(file.content, [entry]);
-    if (!patched.added.length) return { synced: false, error: patched.message ?? '该站点已在数据文件里', commit: null };
-    const res = await writeFile({ ...settings, path, content: patched.text, message: `zero-cms: 友链新增 ${entry.name}` });
-    if (!res.success) return { synced: false, error: res.error ?? '提交失败', commit: null };
-    return { synced: true, error: null, commit: res.sha ?? null };
-  } catch (e) {
-    return { synced: false, error: e instanceof Error ? e.message : String(e), commit: null };
-  }
+  const res = await addFriendToLinksFile(env, entry);
+  return { synced: res.synced, error: res.error, commit: res.sha ?? null };
 }
 
 export default adminApp;

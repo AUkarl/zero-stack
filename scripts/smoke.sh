@@ -130,6 +130,27 @@ if [ -n "$ADMIN_COOKIE" ]; then
     && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s\n' '刚发布的文章能读回并带 front'; } \
     || { FAIL=$((FAIL + 1)); FAILED+=('刚发布的文章读不回'); printf '  [31m✗[0m %-56s\n' '刚发布的文章能读回并带 front'; }
   req DELETE '/api/admin/content/file?path=content/zh/posts/zz-smoke-tmp.md' 200 '' '删除冒烟临时文章' "$ADMIN_COOKIE"
+  # 中文（还有 emoji）走一遍「写进仓库 → 再读回来」：base64 解码口径错了就是乱码，
+  # 而乱码存回去会一层层叠加，比构建失败更难查
+  SMOKE_UTF8_BODY="$(pwd)/.smoke-utf8-body.json"
+  # 请求体走文件而不是命令行参数：和上面批量推送那项同一套写法，Windows 下少一层命令行编码转换
+  cat > "$SMOKE_UTF8_BODY" <<'SMOKE_UTF8_JSON'
+{"path":"content/zh/posts/zz-smoke-utf8.md","front":{"title":"中文标题自测","date":"2026-01-03T00:00:00+08:00","draft":true},"body":"但行好事，莫问前程 🎂","message":"smoke"}
+SMOKE_UTF8_JSON
+  req PUT /api/admin/content/file 200 "@$SMOKE_UTF8_BODY" '发布一篇中文文章' "$ADMIN_COOKIE"
+  rm -f "$SMOKE_UTF8_BODY"
+  req GET '/api/admin/content/file?path=content/zh/posts/zz-smoke-utf8.md' 200 '' '读回那篇中文文章' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -qF '中文标题自测' \
+    && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '中文标题原样读回（没有二次编码）'; } \
+    || { FAIL=$((FAIL + 1)); FAILED+=('中文标题读回变成乱码'); printf '  \033[31m✗\033[0m %-56s\n' '中文标题原样读回（没有二次编码）'; }
+  printf '%s' "$BODY_TEXT" | grep -qF '莫问前程' \
+    && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '正文原样读回（标题与正文一起走一遍）'; } \
+    || { FAIL=$((FAIL + 1)); FAILED+=('正文读回不一致'); printf '  \033[31m✗\033[0m %-56s\n' '正文原样读回（标题与正文一起走一遍）'; }
+  req DELETE '/api/admin/content/file?path=content/zh/posts/zz-smoke-utf8.md' 200 '' '删除中文自测文章' "$ADMIN_COOKIE"
+  req GET '/api/admin/repo/files' 200 '' '可编辑的仓库文件清单' "$ADMIN_COOKIE"
+  printf '%s' "$BODY_TEXT" | grep -qF 'links.yaml' \
+    && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '清单里的友链文件与写入用的是同一个路径'; } \
+    || { FAIL=$((FAIL + 1)); FAILED+=('repo/files 缺友链文件'); printf '  \033[31m✗\033[0m %-56s\n' '清单里的友链文件与写入用的是同一个路径'; }
   # 时刻是朋友圈式动态：没有标题也能发布，靠 content/file 的结构化通道
   req PUT /api/admin/content/file 200 '{"path":"content/zh/moments/zz-smoke-moment.md","front":{"date":"2026-01-01T00:00:00Z","draft":true,"link":{"url":"https://example.com/x","title":"smoke link"}},"body":"smoke moment body","message":"smoke"}' '发布无标题时刻（写本地仓库）' "$ADMIN_COOKIE"
   req GET '/api/admin/content/file?path=content/zh/moments/zz-smoke-moment.md' 200 '' '读回刚发布的时刻' "$ADMIN_COOKIE"
