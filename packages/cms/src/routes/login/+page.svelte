@@ -16,17 +16,27 @@
   let codeSent = $state(false);
   /** 空库时这一页变成「初始化为站长」，建完自动回到普通登录 */
   let pending = $state(false);
+  /** 探测失败的原因。以前失败就安静地按普通登录页渲染，于是「为什么没有注册入口」
+      根本无从下手 —— 地址填错、CORS 被拒、worker 没起来，看到的都是同一个登录框。 */
+  let probeError = $state('');
   let confirm = $state('');
   let nickname = $state('');
 
   async function checkPending() {
     error = '';
+    probeError = '';
     try {
       const d = await get<{ data: { pending: boolean } }>('/api/auth/init-status');
       pending = !!d.data.pending;
-    } catch {
-      // 地址没填、接口不可达时不猜：按普通登录页处理
+    } catch (e) {
+      // 探测不通时不猜「库里有人」，但要把连的是哪个地址、为什么连不上说出来
       pending = false;
+      const base = getApiBase();
+      const why = e instanceof Error ? e.message : String(e);
+      probeError =
+        `没能问到「站点是否还没有账号」（连的是 ${base || '空地址'}）：${why}。` +
+        '改上面「API 地址」会自动重新探测；Failed to fetch 通常是 CORS 没放行这个来源，' +
+        '或你正用 Pages 的 *.pages.dev 预览地址而不是已写进白名单的生产域名。';
     }
   }
 
@@ -119,6 +129,10 @@
       部署版必填 worker 域名（保存在浏览器本地，只需填一次）。
       <code>*.workers.dev</code> 在部分网络不可达时，给 worker 绑一个自定义域名再填那个地址。
     </p>
+    {#if probeError}
+      <p class="warn">{probeError}</p>
+      <button class="ghost retry" type="button" onclick={() => void checkPending()}>重新探测</button>
+    {/if}
     <label>
       <span>{pending ? '站长邮箱' : '管理员邮箱'}</span>
       <input type="email" bind:value={email} required autocomplete="username" />
@@ -204,5 +218,10 @@
   .tip {
     font-size: 0.78rem;
     margin: 0;
+  }
+  .retry {
+    align-self: flex-start;
+    font-size: 0.78rem;
+    margin-top: -0.4rem;
   }
 </style>
