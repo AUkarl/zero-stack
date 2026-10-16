@@ -207,8 +207,10 @@ pnpm create:site
 向导会问站点名称、GitHub 用户名、仓库名、API 地址、站点域名、主题仓库地址，然后在 **zero-stack 的同级目录**
 生成一个可直接推送的 Hugo 仓库：`hugo.toml`（站点参数不放这里，见下）、落地页 `content/_index.md`、
 主题需要的**全部页面分区**（`home / about / archive / tools / work / subscribe / account / links / moments / posts`，
-少一个分区导航里就是一条 404）、示例文章与时刻、`data/links.yaml`（友链页读的就是这个名字）、`config/_default/params.toml`（从主题那份全量注释版复制，并写入 `apiBaseURL` 与默认署名）、`.gitignore`、`.github/workflows/deploy.yml`、
+少一个分区导航里就是一条 404）、`config/_default/params.toml`（从主题那份全量注释版复制，并写入 `apiBaseURL` 与默认署名）、`.gitignore`、`.github/workflows/deploy.yml`、
 `README.md`，并在本地 `git init` + 提交。
+
+子模块拉下来之后，生成器会把**主题自带的演示站 `exampleSite` 整份灌进新仓库**（`content/zh/**` 抹平成 `content/**`）：四篇示例文章、`data/` 里的页脚（含 ICP 占位）、关于、工坊、友链、作者示例，以及示例正文引用的那几张图 —— 新站开箱就是一座完整的站，不想要直接删文件。子模块没拉下来时只留最小骨架并给出提示。
 
 - 脚本只在本地生成与提交，**不会替你推送远端**，推送指令会打印出来由你自己执行；
 - 内容仓库必须保持 **Private**：里面有未发布的草稿与个人信息；

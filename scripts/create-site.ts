@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import prompts, { type PromptObject } from 'prompts';
@@ -51,6 +51,54 @@ function write(relative: string, content: string): void {
 function flag(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : undefined;
+}
+
+/** 递归复制目录。跳过软链：exampleSite/themes 是指回主题根的软链，跟着走会无限递归。 */
+function copyTree(from: string, to: string): number {
+  let n = 0;
+  for (const ent of readdirSync(from, { withFileTypes: true })) {
+    if (ent.isSymbolicLink()) continue;
+    const src = resolve(from, ent.name);
+    const dst = resolve(to, ent.name);
+    if (ent.isDirectory()) {
+      mkdirSync(dst, { recursive: true });
+      n += copyTree(src, dst);
+    } else {
+      writeFileSync(dst, readFileSync(src));
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * 主题的演示站 exampleSite 就是「开箱该长什么样」的那一份：四篇示例文章、
+ * 页脚（ICP 占位与社交图标）/ 关于 / 工坊 / 友链 / 作者的示例数据，
+ * 以及示例正文引用的那几张图。新站直接拿它当内容，用户不想要再自己删。
+ *
+ * 它按 content/zh/** 组织（单语言站点），生成的仓库是扁平的 content/**，
+ * 所以复制时要把 zh 这一层抹平 —— 留着 Hugo 会把 zh 当成一个叫 zh 的分区，
+ * 站里同时出现 /posts/ 和 /zh/posts/ 两套页面。
+ */
+function importExampleSite(siteDir: string): number {
+  const es = resolve(siteDir, 'themes/zero/exampleSite');
+  const content = resolve(es, 'content');
+  if (!existsSync(content)) return 0;
+  let n = 0;
+  const zh = resolve(content, 'zh');
+  if (existsSync(zh)) n += copyTree(zh, resolve(siteDir, 'content'));
+  for (const ent of readdirSync(content, { withFileTypes: true })) {
+    if (!ent.isFile()) continue;
+    writeFileSync(resolve(siteDir, 'content', ent.name), readFileSync(resolve(content, ent.name)));
+    n++;
+  }
+  for (const sub of ['data', 'static'] as const) {
+    const from = resolve(es, sub);
+    if (!existsSync(from)) continue;
+    mkdirSync(resolve(siteDir, sub), { recursive: true });
+    n += copyTree(from, resolve(siteDir, sub));
+  }
+  return n;
 }
 
 /** 命令行给的值优先，且不再追问 —— 便于在 CI 或无 TTY 环境下使用 */
@@ -317,6 +365,18 @@ hugo server -D
     info(`请稍后手动执行：${submodule}`);
     mkdirSync(resolve(siteDir, 'themes/zero'), { recursive: true });
     write(resolve(siteDir, 'themes/zero/.gitkeep'), '');
+  }
+
+  const imported = importExampleSite(siteDir);
+  if (imported > 0) {
+    /** 演示站自带 posts / moments 的样例，生成器那两份占位就撤掉，免得混成五篇 */
+    for (const leftover of ['content/posts/hello-world.md', 'content/moments/first-moment.md']) {
+      const p = resolve(siteDir, leftover);
+      if (existsSync(p)) rmSync(p);
+    }
+    good(`已按主题演示站填入示例内容与示例数据（${imported} 个文件）`);
+  } else {
+    warn('没读到 themes/zero/exampleSite（子模块还没拉下来？）：这座站只有最小骨架，初始化子模块后重跑一次 create:site 才有完整示例');
   }
 
   /* 站点参数只有一份：把主题那份「全量注释版」params.toml 复制成站点自己的，
