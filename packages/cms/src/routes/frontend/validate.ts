@@ -65,6 +65,19 @@ export function validateSection(key: SectionKey, form: Forms[SectionKey]): Issue
       if (x.text.length > LIMIT.short) push(`备案第 ${i + 1} 条文字超过 ${LIMIT.short} 字`);
       if (x.link.length > LIMIT.href) push(`备案第 ${i + 1} 条链接超过 ${LIMIT.href} 字`);
     });
+    /** 三组图标行共用同一套上限与长度规则 */
+    for (const [label, list] of [
+      ['支持服务', f.services],
+      ['社交第一排', f.socialRow1],
+      ['社交第二排', f.socialRow2],
+    ] as const) {
+      if (list.length > CAP.icons) push(`${label}最多 ${CAP.icons} 条，当前 ${list.length} 条`);
+      list.forEach((x, i) => {
+        if (x.name.length > LIMIT.short) push(`${label}第 ${i + 1} 条名称超过 ${LIMIT.short} 字`);
+        if (x.link.length > LIMIT.href) push(`${label}第 ${i + 1} 条地址超过 ${LIMIT.href} 字`);
+        if (x.img.length > LIMIT.href) push(`${label}第 ${i + 1} 条图片路径超过 ${LIMIT.href} 字`);
+      });
+    }
     return out;
   }
 
@@ -181,6 +194,10 @@ export function notesOf(key: SectionKey, form: Forms[SectionKey]): string[] {
   if (key === 'footer') {
     const f = form as Forms['footer'];
     if (f.showPoweredBy && !f.poweredByText.trim()) out.push('打开了 powered by 开关但文字为空：前台这一行不会出现');
+    const noLink = [...f.services, ...f.socialRow1, ...f.socialRow2].filter((x) => !x.link.trim());
+    if (noLink.length) out.push(`有 ${noLink.length} 条图标没填地址：主题会跳过整条，前台看不到它们（保存时也会被丢掉）`);
+    const noIcon = [...f.services, ...f.socialRow1, ...f.socialRow2].filter((x) => x.link.trim() && !x.icon.trim() && !x.img.trim());
+    if (noIcon.length) out.push(`有 ${noIcon.length} 条图标既没填类名也没填图片：前台会是一个空白点击区`);
   }
   if (key === 'home') {
     const f = form as Forms['home'];

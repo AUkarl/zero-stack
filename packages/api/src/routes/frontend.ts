@@ -48,6 +48,17 @@ const homeSchema = z.object({
   showDesc: z.boolean(),
 });
 
+/** 页脚图标条目：键名与主题 params.toml 的 [[footer.services]] / social_row1/2 一致，
+    模板 data 优先、params 兜底，所以后台填了就不必再动 params.toml。 */
+const footerIconItem = z.object({
+  name: short,
+  icon: short.optional().default(''),
+  img: href.optional().default(''),
+  link: href,
+  /** 深色模式下要不要反色（图片 logo 常见需求） */
+  invert: z.boolean().optional().default(false),
+});
+
 const footerSchema = z.object({
   copyrightText: short,
   showPoweredBy: z.boolean(),
@@ -57,6 +68,11 @@ const footerSchema = z.object({
     .array(z.object({ text: short, link: href }))
     .max(20)
     .default([]),
+  /** 中栏的服务图标行 */
+  services: z.array(footerIconItem).max(20).optional(),
+  /** 右栏两排社交图标 */
+  socialRow1: z.array(footerIconItem).max(20).optional(),
+  socialRow2: z.array(footerIconItem).max(20).optional(),
 });
 
 const aboutSchema = z.object({
@@ -302,6 +318,14 @@ app.post('/', async (c) => {
       const prev = await readSection(c.env, await dataDir(c.env), 'site');
       const old = (prev?.value as { defaultAuthor?: string } | undefined)?.defaultAuthor ?? '';
       if (old) value = { ...value, defaultAuthor: old };
+    }
+    if (key === 'footer') {
+      /** 这三组键是可选的：面板没送（旧版面板、或别的页面整段保存）时
+          必须把仓库里的现值带回去，否则一次保存就把服务图标与社交链接整段抹掉。 */
+      const prev = (await readSection(c.env, await dataDir(c.env), 'footer'))?.value as Record<string, unknown> | undefined;
+      for (const k of ['services', 'socialRow1', 'socialRow2'] as const) {
+        if (value[k] === undefined && Array.isArray(prev?.[k])) value = { ...value, [k]: prev[k] };
+      }
     }
     pending.push({ key, content: JSON.stringify(value, null, 2) + '\n' });
   }

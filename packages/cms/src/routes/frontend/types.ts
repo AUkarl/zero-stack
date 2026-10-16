@@ -53,12 +53,27 @@ export interface IcpItem {
   text: string;
   link: string;
 }
+export interface FooterIconItem {
+  name: string;
+  /** Font Awesome 类名，如 fa-brands fa-github */
+  icon: string;
+  /** 填了图片路径就用图片，否则用 icon */
+  img: string;
+  link: string;
+  /** 深色模式下反色（图片 logo 常见需求） */
+  invert: boolean;
+}
 export interface FooterSection {
   copyrightText: string;
   showPoweredBy: boolean;
   poweredByText: string;
   poweredByLink: string;
   icpItems: IcpItem[];
+  /** 中栏「支持服务」图标行 */
+  services: FooterIconItem[];
+  /** 右栏两排社交图标 */
+  socialRow1: FooterIconItem[];
+  socialRow2: FooterIconItem[];
 }
 
 export interface ContactItem {
@@ -189,9 +204,11 @@ export const SECTION_META: Record<SectionKey, { label: string; file: string; tab
 
 export const LIMIT = { short: 200, href: 600, long: 4000, weightMin: -9999, weightMax: 9999 };
 
-export const CAP: Record<'nav' | 'icp' | 'paragraph' | 'contacts' | 'works', number> = {
+export const CAP: Record<'nav' | 'icp' | 'icons' | 'paragraph' | 'contacts' | 'works', number> = {
   nav: 60,
   icp: 20,
+  /** 页脚三组图标行各自的上限，与后端 footerSchema 的 max(20) 一致 */
+  icons: 20,
   paragraph: 60,
   contacts: 60,
   works: 80,
@@ -250,7 +267,7 @@ export const blankForms = (): Forms => ({
   },
   nav: { items: [blankNavItem()] },
   home: { layout: 'bento', desc: '', showDesc: true },
-  footer: { copyrightText: '', showPoweredBy: true, poweredByText: '', poweredByLink: '', icpItems: [] },
+  footer: { copyrightText: '', showPoweredBy: true, poweredByText: '', poweredByLink: '', icpItems: [], services: [], socialRow1: [], socialRow2: [] },
   about: { desc: '', tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
   works: { desc: '', items: [{ title: '', desc: '', status: '', url: '' }] },
   moments: {
@@ -323,6 +340,11 @@ export function normHome(raw: unknown): HomeSection {
   return { layout: o.layout === 'grid' ? 'grid' : 'bento', desc: str(o.desc), showDesc: bool(o.showDesc) };
 }
 
+const normFooterIcon = (x: unknown): FooterIconItem => {
+  const o = rec(x);
+  return { name: str(o.name), icon: str(o.icon), img: str(o.img), link: str(o.link), invert: o.invert === true };
+};
+
 export function normFooter(raw: unknown): FooterSection {
   const o = rec(raw);
   return {
@@ -331,6 +353,9 @@ export function normFooter(raw: unknown): FooterSection {
     poweredByText: str(o.poweredByText),
     poweredByLink: str(o.poweredByLink),
     icpItems: arr(o.icpItems).map((x) => ({ text: str(rec(x).text), link: str(rec(x).link) })),
+    services: arr(o.services).map(normFooterIcon),
+    socialRow1: arr(o.socialRow1).map(normFooterIcon),
+    socialRow2: arr(o.socialRow2).map(normFooterIcon),
   };
 }
 
@@ -459,6 +484,16 @@ export function readFrontendData(payload: unknown): FrontendData {
 
 /* ------------------------------------------------------------ 规整（写入） */
 
+/** 图标条目写出去之前统一去空格；空行由调用方滤掉（主题本来也不渲染没地址的条目） */
+const cleanFooterIcon = (x: FooterIconItem) => ({
+  name: x.name.trim(),
+  icon: x.icon.trim(),
+  img: x.img.trim(),
+  link: x.link.trim(),
+  invert: x.invert === true,
+});
+
+
 /**
  * 提交前清洗：去首尾空格；丢掉「整行都是空」的条目（主题本来也不显示空条目）。
  * 返回值的字段名严格按接口契约，多余的键不写出去。
@@ -557,6 +592,9 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
       icpItems: f.icpItems
         .map((x) => ({ text: x.text.trim(), link: x.link.trim() }))
         .filter((x) => x.text || x.link),
+      services: f.services.map(cleanFooterIcon).filter((x) => x.name || x.link),
+      socialRow1: f.socialRow1.map(cleanFooterIcon).filter((x) => x.name || x.link),
+      socialRow2: f.socialRow2.map(cleanFooterIcon).filter((x) => x.name || x.link),
     };
   }
   if (key === 'about') {

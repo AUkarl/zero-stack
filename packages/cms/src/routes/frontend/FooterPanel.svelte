@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CAP, LIMIT, type FooterSection } from './types';
+  import FooterIconList from './FooterIconList.svelte';
 
   let { footer }: { footer: FooterSection } = $props();
 
@@ -123,10 +124,31 @@
   {/each}
 </section>
 
-<p class="muted small note">
-  页脚中间的服务图标行（<code>[[footer.services]]</code>）和两行社交链接（<code>social_row1 / social_row2</code>）
-  不在本页范围，仍然由 params.toml 决定。
-</p>
+{#if footer.services.length || footer.socialRow1.length || footer.socialRow2.length}
+    <p class="muted small note">
+      下面三组图标写进 <code>data/footer.json</code>，优先级高于 params.toml 的
+      <code>[[footer.services]]</code> / <code>social_row1</code> / <code>social_row2</code>；
+      三组都清空时主题仍会回落到 params.toml 里的那套。地址留空的条目主题不会渲染（免得出现点了没反应的图标）。
+    </p>
+  {/if}
+
+<FooterIconList
+  title="支持服务图标（services）"
+  hint="页脚中栏的一排图标，站点联盟、打赏之类的入口。名称与地址至少填一个，否则保存时丢掉这条。"
+  items={footer.services}
+/>
+
+<FooterIconList
+  title="社交链接 第一排（socialRow1）"
+  hint="页脚右栏上面那排。站内地址（如 /index.xml）也可以填，会自动当普通链接打开。"
+  items={footer.socialRow1}
+/>
+
+<FooterIconList
+  title="社交链接 第二排（socialRow2）"
+  hint="页脚右栏下面那排。两排都为空时右栏只剩回到顶部按钮。"
+  items={footer.socialRow2}
+/>
 
 <style>
   .blk {
