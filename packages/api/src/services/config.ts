@@ -18,6 +18,12 @@ export type ConfigKey =
   /** 站长本人在 data/authors.yaml 里的作者标识；邮件落款与 SEO 的作者兜底读它 */
   | 'defaultAuthor'
   | 'siteUrl'
+  /**
+   * 后台（zero-cms）自己的地址。前台「登录 → 管理员跳后台」读它：
+   * 后台是独立的 Pages 项目，不同域，主题按同域 /admin/ 兜底必然是 404。
+   * 管理员第一次登录时由后端记下请求来源，也可以在这里手工改。
+   */
+  | 'cmsAdminUrl'
   // 注册与邀请码
   | 'accountSystemEnabled'
   | 'allowRegister'
@@ -152,6 +158,7 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'author',
   'defaultAuthor',
   'siteUrl',
+  'cmsAdminUrl',
   'accountSystemEnabled',
   'allowRegister',
   'requireInviteCode',
@@ -522,6 +529,7 @@ const PUBLIC_KEYS: ConfigKey[] = [
   'draftsEnabled',
   'authorVerifyEnabled',
   'analyticsEnabled',
+  'cmsAdminUrl',
 ];
 
 /**
@@ -565,4 +573,19 @@ export async function getAllowedOrigins(env: Env): Promise<string[]> {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/**
+ * 记下后台自己的地址：管理员从哪个来源登录，cmsAdminUrl 就填那个来源。
+ *
+ * 后台是独立的 Pages 项目，前台「登录后跳后台」必须知道它的域名 —— 主题只能按同域
+ * /admin/ 兜底，而那个路径上必然是 404。这里只在还没填过的时候写一次，
+ * 之后以「设置 → 站点信息」里人工填的为准（换域名、加了自定义域都能自己改）。
+ */
+export async function rememberCmsOrigin(env: Env, origin: string | null | undefined): Promise<void> {
+  const clean = String(origin ?? '').trim().replace(/\/+$/, '');
+  // 只收纯来源；带路径的说明请求是从别的页面发过来的，不是后台本身
+  if (!/^https?:\/\/[^/?#]+$/.test(clean)) return;
+  if ((await getConfig(env, 'cmsAdminUrl')) !== undefined) return;
+  await setConfig(env, 'cmsAdminUrl', `${clean}/`);
 }

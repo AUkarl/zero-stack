@@ -104,6 +104,10 @@ hasCJKLanguage = true
 [params]
   # 后端地址：zero-api 部署后填入
   apiBaseURL = "${a.apiBaseURL}"
+  # 站点后台（zero-cms）的地址：前台登录成功后，管理员跳这里。
+  # 后台是另一个 Pages 项目，与站点不同域；不填时前端按同域 /admin/ 兜底，那是 404。
+  # 也可以留空 —— 管理员第一次从后台登录时，后端会把自己的域名记成 cmsAdminUrl，前端读运行期配置。
+  # cmsBaseURL = "https://cms.你的域名/"
   author = "${a.githubUser}"
   description = ""
 
@@ -196,9 +200,11 @@ draft: false
 时刻内容也可以直接在 zero-cms 后台发布并存入 D1，这里的 Markdown 只是静态兜底。
 `;
 
-const FRIENDS_DATA = `# 友链名单。后台启用友链管理后以后台（D1）为准，这里留空即可；
-# 写在这里的条目会被当作备份/兜底展示，所以不要放示例地址。
-[]
+const LINKS_DATA = `# 友链页的数据文件：主题的 layouts/links/list.html 读 hugo.Data.links
+# 的 friends:（左邻右舍）与 alliance:（站点联盟）两段，缺段不会报错，页面就是空的。
+# 后台「友链」每次改动都会同步这份文件；条目也可以直接在这里手写。
+friends:
+alliance:
 `;
 
 /** 主题的模板是 layouts/links/list.html，内容分区必须叫 links，叫 friends 的话 /links/ 直接 404 */
@@ -254,11 +260,14 @@ async function main(): Promise<void> {
   write(rel('hugo.toml'), hugoToml(a));
   write(rel('content/posts/hello-world.md'), SAMPLE_POST);
   write(rel('content/moments/first-moment.md'), SAMPLE_MOMENT);
-  write(rel('data/friends.yml'), FRIENDS_DATA);
+  write(rel('data/links.yaml'), LINKS_DATA);
   write(rel('content/links/_index.md'), LINKS_INDEX);
   // 落地页（主题的 layouts/index.html）：空 front matter 即可，进去按回车到 /home/
   write(rel('content/_index.md'), '---\n---\n');
   for (const [dir, title] of SECTIONS) write(rel(`content/${dir}/_index.md`), sectionIndex(dir, title));
+  // 个人中心：主题在 layouts/account/me/list.html 渲染它，少了这份内容页 /account/me/ 就是 404，
+  // 而前端登录成功后普通用户正是跳这里
+  write(rel('content/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
   write(rel('static/images/.gitkeep'), '');
   write(rel('.gitignore'), `.hugo_build.lock
 public/

@@ -159,8 +159,9 @@ SMOKE_UTF8_JSON
 ' '无标题时刻确实落进仓库'; }
   req DELETE '/api/admin/content/file?path=content/zh/moments/zz-smoke-moment.md' 200 '' '删除冒烟临时时刻' "$ADMIN_COOKIE"
   req GET '/api/admin/frontend' 200 '' '前端管理八段读取' "$ADMIN_COOKIE"
-  # 前台署名的真值是仓库里的 data/site.json.defaultAuthor，schema 少这个键就会被基本信息保存抹成空
-  printf '%s' "$BODY_TEXT" | grep -q '"defaultAuthor"' \
+  # 前台署名的真值是仓库里的 data/site.json.defaultAuthor，schema 少这个键就会被基本信息保存抹成空。
+  # site 为 null 也算过：那表示这份文件还不存在（新站点没存过基本信息），键没地方露。
+  printf '%s' "$BODY_TEXT" | grep -qE '"defaultAuthor"|"site":null' \
     && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '基本信息段带 defaultAuthor（前台署名的真值）'; } \
     || { FAIL=$((FAIL + 1)); FAILED+=('前端管理缺 defaultAuthor'); printf '  \033[31m✗\033[0m %-56s\n' '基本信息段带 defaultAuthor'; }
   printf '%s' "$BODY_TEXT" | grep -q '"nav"'     && { PASS=$((PASS + 1)); printf '  [32m✓[0m %-56s

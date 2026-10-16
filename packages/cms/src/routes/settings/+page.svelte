@@ -47,6 +47,7 @@
         { key: 'allowRegister', label: '允许注册', kind: 'bool' },
         { key: 'requireInviteCode', label: '注册需邀请码', kind: 'bool', hint: '邀请码在「用户」页的「邀请码」tab 生成' },
         { key: 'requireEmailVerified', label: '登录前必须验证邮箱', kind: 'bool' },
+        { key: 'cmsAdminUrl', label: '后台地址', hint: '管理员在前台登录成功后跳这里。后台是独立的 Pages 项目，与站点不同域：留空时前端只能按同域 /admin/ 兜底，那个路径必然是 404。管理员第一次从后台登录时会自动记下后台自己的域名，换域名后在这里改' },
         { key: 'inviteCodeLength', label: '随机码长度', kind: 'number', hint: '4 ~ 16' },
         { key: 'inviteCodeUses', label: '随机码默认可用次数', kind: 'number', hint: '0 表示不限' },
       ],

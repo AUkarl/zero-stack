@@ -16,7 +16,7 @@ import {
 } from '../services/auth';
 import { writeAudit } from '../services/audit';
 import { ensureAdminAuthorIdentity, withAdminAuthorBits } from '../services/admin-author';
-import { getConfigBool, getAdminContactEmail } from '../services/config';
+import { getConfigBool, getAdminContactEmail, rememberCmsOrigin } from '../services/config';
 import { consumeInvite, normalizeCode, registerPolicy } from '../services/invites';
 import {
   assignAccountSlug,
@@ -167,6 +167,7 @@ app.post('/register', async (c) => {
     // 三个权限位与用户组全亮。以前这里硬编码 author_verified:false、handle 也不写，
     // 结果站长既不是认证作者也没有作者标识，前台署名一直落在主题的占位作者上。
     const identity = await ensureAdminAuthorIdentity(env, id);
+    await rememberCmsOrigin(env, c.req.header('origin'));
     const { token, expiresAt } = await issueSession(env, id, { ip: clientIp(c), userAgent: userAgent(c) });
     sessionHeaders(c, token, expiresAt);
     return ok({
@@ -348,6 +349,7 @@ app.post('/login', async (c) => {
 
   const { token, expiresAt } = await issueSession(env, row.id, { ip: clientIp(c), userAgent: userAgent(c) });
   sessionHeaders(c, token, expiresAt);
+  if (row.role === 'admin') await rememberCmsOrigin(env, c.req.header('origin'));
   if (plan.notice) {
     await writeAudit(env, { actor: { id: row.id, name: row.name }, action: 'user', target: row.id, detail: { event: 'login.policy-notice', policy }, ip: clientIp(c) });
   }
