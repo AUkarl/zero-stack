@@ -100,6 +100,33 @@ export function die(message: string): never {
   process.exit(1);
 }
 
+/** 中日韩与全角标点占两列，其余按一列 */
+const WIDE = /[ᄀ-⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓿가-힣豈-﫿︰-＀-｠￠-￦]/;
+export function columns(s: string): number {
+  let n = 0;
+  for (const ch of s) n += WIDE.test(ch) ? 2 : 1;
+  return n;
+}
+
+/**
+ * 提问文案的宽度兜底。
+ *
+ * prompts 每敲一个字符就把当前这一问整行重画一次，而 PowerShell 的 conhost
+ * 擦不掉换行后的残留：文案 + 输入值一旦超过终端宽度，屏幕上就会留下一串重复行。
+ * 所以 message 只留短标签，解释文字在提问前单独 console.log 一行。
+ * 这里在模块加载时就把超长的问出来，免得等到部署到一半才发现。
+ */
+export function assertShortMessages(questions: { name?: unknown; message?: unknown }[], maxColumns = 24): void {
+  for (const q of questions) {
+    const width = columns(typeof q.message === 'string' ? q.message : '');
+    if (width > maxColumns) {
+      throw new Error(
+        `脚本自身的提问过长：${String(q.name)} 的 message 占 ${width} 列（上限 ${maxColumns}），会让终端刷屏。把说明挪到提问前的一行 console.log 里`,
+      );
+    }
+  }
+}
+
 /** Cloudflare 各资源的 id 形状不同：D1 是带连字符的 UUID，KV 是 32 位十六进制 */
 const ID_PATTERNS = [
   /"database_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i,

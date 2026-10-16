@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import prompts, { type PromptObject } from 'prompts';
-import { ROOT, die, good, info, step, warn } from './_util.js';
+import { ROOT, assertShortMessages, die, good, info, step, warn } from './_util.js';
 
 /**
  * 生成私密内容仓库 zero-site：pnpm create:site
@@ -71,22 +71,26 @@ function skipped(name: keyof Answers): 'text' | 'confirm' | null {
 const QUESTIONS: PromptObject[] = [
   { type: skipped('siteName'), name: 'siteName', message: '站点名称', initial: 'My Zero Site' },
   { type: skipped('githubUser'), name: 'githubUser', message: 'GitHub 用户名' },
-  { type: skipped('repoName'), name: 'repoName', message: '内容仓库名（务必私密）', initial: 'zero-site' },
+  { type: skipped('repoName'), name: 'repoName', message: '内容仓库名', initial: 'zero-site' },
   {
     type: skipped('apiBaseURL'),
     name: 'apiBaseURL',
     message: 'API 地址',
     initial: 'https://zero-api.<your-subdomain>.workers.dev',
   },
-  { type: skipped('siteUrl'), name: 'siteUrl', message: '站点域名（Pages 部署后回填也可）', initial: 'https://example.com' },
+  { type: skipped('siteUrl'), name: 'siteUrl', message: '站点域名', initial: 'https://example.com' },
   {
     type: skipped('themeRepo'),
     name: 'themeRepo',
     message: 'zero-theme 仓库地址',
-    initial: (p) => `https://github.com/${p.githubUser || 'username'}/zero-theme.git`,
+    /** prompts 给回调的第一个参数是上一题的答案值，已答集合在第二个：
+        写成 p.githubUser 时 p 是上一题（站点域名）的字符串，取不到用户名 */
+    initial: (_p: unknown, all: Partial<Answers>) => `https://github.com/${all.githubUser || 'username'}/zero-theme.git`,
   },
-  { type: skipped('initGit'), name: 'initGit', message: '本地 git init 并提交（不会推送远端）', initial: true },
+  { type: skipped('initGit'), name: 'initGit', message: '本地 git init 并提交？', initial: true },
 ];
+
+assertShortMessages(QUESTIONS);
 
 function hugoToml(a: Answers): string {
   return `baseURL = "${a.siteUrl.replace(/\/$/, '')}/"

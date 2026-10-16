@@ -23,6 +23,7 @@ import {
   readSavedApiBase,
   saveApiBase,
   step,
+  assertShortMessages,
   warn,
   whoamiDetail,
   wrangler,
@@ -211,15 +212,24 @@ function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
     vars.push(`"GITHUB_BRANCH": ${jstr(a.githubBranch ?? 'main')}`);
   }
 
-  const cfg = example
-    .replace('<从 wrangler d1 create 获取>', ids.dbId)
-    .replace('<CACHE KV ID>', ids.cacheId)
-    .replace('<SESSION KV ID>', ids.sessionId)
-    .replace('"SITE_NAME": "Zero Site"', vars.join(',\n    '))
-    .replace(
-      '"ALLOWED_ORIGINS": "https://zero-cms.pages.dev,https://zero-site.pages.dev"',
-      `"ALLOWED_ORIGINS": ${JSON.stringify([a.cmsUrl, a.siteUrl].join(','))}`,
-    );
+  /** String.replace 不匹配时原样返回，等于什么都没写却不报错：
+      占位符或示例默认值一旦被改动，这里会静默产出一份缺 ID / 缺白名单的配置，
+      部署照样"成功"，跑起来才表现为 worker 起不来或后台 Failed to fetch。 */
+  const sub = (text: string, from: string, to: string): string => {
+    if (!text.includes(from)) die(`wrangler.jsonc.example 里找不到「${from}」，示例文件与向导对不上了，请把这两处一起改`);
+    return text.replace(from, to);
+  };
+
+  let cfg = example;
+  cfg = sub(cfg, '<从 wrangler d1 create 获取>', ids.dbId);
+  cfg = sub(cfg, '<CACHE KV ID>', ids.cacheId);
+  cfg = sub(cfg, '<SESSION KV ID>', ids.sessionId);
+  cfg = sub(cfg, '"SITE_NAME": "Zero Site"', vars.join(',\n    '));
+  cfg = sub(
+    cfg,
+    '"ALLOWED_ORIGINS": "https://zero-cms.pages.dev,https://zero-site.pages.dev"',
+    `"ALLOWED_ORIGINS": ${JSON.stringify([a.cmsUrl, a.siteUrl].join(','))}`,
+  );
 
   if (/"<[^>]+>"/.test(cfg)) die('wrangler.jsonc.example 中仍有未替换的占位符，请核对占位符文本');
   const badKey = cfg.match(/"([A-Z_]+)"\s*:\s*(undefined|NaN|null)\s*,?/);
@@ -229,15 +239,24 @@ function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
 }
 
 /** 密钥只通过 stdin 送入，不拼进命令行，避免留在 shell 历史或进程列表 */
-function putSecret(name: string, value: string): void {
+function putSecret(name: string, value: string): boolean {
   try {
     wrangler(`secret put ${name}`, { cwd: API_DIR, input: value, capture: true });
     good(`密钥 ${name} 已写入`);
-  } catch {
-    warn(`${name} 自动写入失败，请手动执行：cd packages/api && npx wrangler secret put ${name}`);
+    return true;
+  } catch (e) {
+    /** 吞掉报错只会让人以为配好了：worker 不存在、token 权限不够都是这一步的常见死法 */
+    const detail = e instanceof Error ? e.message.split('\n').slice(0, 4).join('\n') : String(e);
+    warn(`${name} 自动写入失败：\n${detail}\n  手动补一次：cd packages/api && npx wrangler secret put ${name}`);
+    return false;
   }
 }
 
+/**
+ * 写密钥。必须在 wrangler deploy 之后：secret put 的对象是「已存在的 worker」，
+ * 首次部署时它还不存在，每一条都会以 Worker not found 失败 —— 表现就是
+ * 向导跑完说「密钥已写入」，而后台注册/登录全都 500。
+ */
 function configureSecrets(a: Answers): void {
   step('配置密钥');
   putSecret('AUTH_SECRET', randomBytes(32).toString('hex'));
@@ -248,7 +267,10 @@ function configureSecrets(a: Answers): void {
     if (a.cfAccountId) putSecret('CF_ACCOUNT_ID', a.cfAccountId);
     if (a.cfEmailToken) putSecret('CF_EMAIL_API_TOKEN', a.cfEmailToken);
   }
-  if (a.useGithub && a.githubToken) putSecret('GITHUB_TOKEN', a.githubToken);
+  if (a.useGithub) {
+    if (a.githubToken) putSecret('GITHUB_TOKEN', a.githubToken);
+    else warn('没填 GitHub Token：配置里有了仓库坐标，但后台写回仓库会一直报缺凭据。补一次：cd packages/api && npx wrangler secret put GITHUB_TOKEN');
+  }
   info('AUTH_SECRET / SESSION_SECRET 为本次随机生成；重复运行 setup 会重置它们并使已登录会话失效。');
 }
 
@@ -292,67 +314,104 @@ const prev = readExistingUrls();
  */
 type Condition = (all: Partial<Answers>) => boolean;
 type PromptKind = Extract<PromptObject['type'], string>;
+
+/**
+ * 提问文案只留短标签，解释文字单独打一行。
+ *
+ * prompts 每敲一个字符就把当前这一问整行重画一次，而 PowerShell 的 conhost
+ * 擦不掉换行后的残留：文案和输入值加起来一旦超过终端宽度，屏幕上就会出现一串
+ * 重复行（长提示语 + 40 位 GitHub Token 就是这么刷屏的）。
+ * type 回调在每一问渲染前恰好执行一次（返回值会被缓存回 question.type），
+ * 借它把说明先打出来最合适。
+ */
+function hint(text: string): void {
+  console.log(`  \x1b[2m${text}\x1b[0m`);
+}
+
 const when =
-  (cond: Condition, kind: PromptKind) =>
-  (_prev: unknown, all: Partial<Answers>): PromptKind | null =>
-    cond(all) ? kind : null;
+  (cond: Condition, kind: PromptKind, note?: string) =>
+  (_prev: unknown, all: Partial<Answers>): PromptKind | null => {
+    if (!cond(all)) return null;
+    if (note) hint(note);
+    return kind;
+  };
+const always =
+  (kind: PromptKind, note?: string) =>
+  (): PromptKind => {
+    if (note) hint(note);
+    return kind;
+  };
+
 const isSmtp = (a: Partial<Answers>): boolean => a.emailProvider === 'smtp';
 const isResend = (a: Partial<Answers>): boolean => a.emailProvider === 'resend';
 const isCloudflareMail = (a: Partial<Answers>): boolean => a.emailProvider === 'cloudflare';
 const usesGithub = (a: Partial<Answers>): boolean => a.useGithub === true;
 
 const QUESTIONS: PromptObject[] = [
-  { type: 'text', name: 'siteName', message: '站点名称', initial: 'My Zero Site' },
+  { type: always('text'), name: 'siteName', message: '站点名称', initial: 'My Zero Site' },
   {
-    type: 'text',
+    type: always('text', 'Hugo 站点地址，带 https://。它与后台地址一起构成 CORS 白名单，白名单是精确匹配'),
     name: 'siteUrl',
-    message: '站点前台地址（Hugo 站点，与后台地址一起构成 CORS 白名单）',
+    message: '前台地址',
     initial: () => prev.siteUrl || 'https://example.com',
   },
   {
-    type: 'text',
+    type: always('text', 'zero-cms 后台地址：绑了自定义域名就填它，否则填 Pages 给的 *.pages.dev'),
     name: 'cmsUrl',
-    message: '后台地址（绑了自定义域名就填它，否则是 Pages 给的 *.pages.dev）',
+    message: '后台地址',
     initial: () => prev.cmsUrl || `https://${PAGES_PROJECT}.pages.dev`,
   },
   {
-    type: 'text',
+    type: always('text', '给 Worker 绑的自定义域名；留空就用刚部署出的 *.workers.dev（该域名在你所在网络可能不通）'),
     name: 'apiUrl',
-    message: 'API 地址（Worker 绑的自定义域名，如 https://api.example.com；留空用 *.workers.dev）',
+    message: 'API 地址',
     initial: () => prev.apiUrl,
   },
   {
-    type: 'select',
+    type: always('select', '这一步只把凭据写进 wrangler secret，之后随时能在后台「设置 → 发信方式」改'),
     name: 'emailProvider',
-    message: '邮件发送通道（之后可在后台改）',
+    message: '邮件通道',
     choices: [
-      { title: 'SMTP（通用，支持所有邮箱服务商）', value: 'smtp' },
+      { title: 'SMTP（通用，所有邮箱服务商）', value: 'smtp' },
       { title: 'Resend', value: 'resend' },
       { title: 'Cloudflare Email Sending API', value: 'cloudflare' },
       { title: '暂不配置，之后在后台填写', value: 'none' },
     ],
     initial: 0,
   },
-  { type: when(isSmtp, 'text'), name: 'smtpHost', message: 'SMTP 服务器地址（如 smtp.qq.com）' },
-  { type: when(isSmtp, 'text'), name: 'smtpPort', message: 'SMTP 端口（465 或 587）', initial: '465' },
-  { type: when(isSmtp, 'text'), name: 'smtpUser', message: 'SMTP 用户名（邮箱地址）' },
-  { type: when(isSmtp, 'password'), name: 'smtpPassword', message: 'SMTP 密码 / 授权码（只写入 secret）' },
-  { type: when(isResend, 'password'), name: 'resendApiKey', message: 'Resend API Key（只写入 secret）' },
+  { type: when(isSmtp, 'text', '例如 smtp.qq.com'), name: 'smtpHost', message: 'SMTP 服务器' },
+  { type: when(isSmtp, 'text'), name: 'smtpPort', message: 'SMTP 端口', initial: '465' },
+  { type: when(isSmtp, 'text', '完整邮箱地址'), name: 'smtpUser', message: 'SMTP 用户名' },
   {
-    type: when(isCloudflareMail, 'text'),
+    type: when(isSmtp, 'password', 'QQ / 163 邮箱要填「授权码」而不是登录密码；只写入 secret'),
+    name: 'smtpPassword',
+    message: 'SMTP 密码/授权码',
+  },
+  { type: when(isResend, 'password', '只写入 secret'), name: 'resendApiKey', message: 'Resend API Key' },
+  {
+    type: when(isCloudflareMail, 'text', '回车用上面 whoami 认出来的账户'),
     name: 'cfAccountId',
     message: 'Cloudflare 账户 ID',
-    /** whoami 认出来的账户直接当默认值，省得再去控制台抄一遍。
-        QUESTIONS 是模块级常量，必须写成函数取用，否则拿到的是 import 时的 null */
     initial: () => loginAccountId ?? '',
   },
-  { type: when(isCloudflareMail, 'password'), name: 'cfEmailToken', message: 'Email Sending API Token（只写入 secret）' },
-  { type: 'confirm', name: 'useGithub', message: '启用「文章提交回 Git」（后台发布文章需要）', initial: false },
+  { type: when(isCloudflareMail, 'password', '只写入 secret'), name: 'cfEmailToken', message: 'Email 发送 Token' },
+  {
+    type: always('confirm', '后台发布与编辑文章都要写回这个仓库；关掉的话只有数据库那条路'),
+    name: 'useGithub',
+    message: '启用文章提交回 Git？',
+    initial: false,
+  },
   { type: when(usesGithub, 'text'), name: 'githubOwner', message: 'GitHub 用户名' },
-  { type: when(usesGithub, 'text'), name: 'githubRepo', message: '内容仓库名', initial: 'zero-site' },
+  { type: when(usesGithub, 'text', '放 Hugo 内容与主题的那个仓库，只写仓库名'), name: 'githubRepo', message: '内容仓库名', initial: 'zero-site' },
   { type: when(usesGithub, 'text'), name: 'githubBranch', message: '内容仓库分支', initial: 'main' },
-  { type: when(usesGithub, 'password'), name: 'githubToken', message: 'GitHub Token（contents:write，只写入 secret）' },
+  {
+    type: when(usesGithub, 'password', '需要 contents:write 权限；只写入 secret，不进配置文件也不进命令行'),
+    name: 'githubToken',
+    message: 'GitHub Token',
+  },
 ];
+
+assertShortMessages(QUESTIONS);
 
 function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string): void {
   console.log('\n\x1b[32m✅ 部署完成\x1b[0m\n');
@@ -369,6 +428,13 @@ function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, api
   console.log('  5. 迁移旧评论：pnpm migrate:waline（详见 docs/DEPLOYMENT.md）');
 }
 
+/** 少写协议头的地址只会让浏览器报 Failed to fetch，而那时候人只会去查后端 */
+function assertHttpUrl(label: string, url: string): void {
+  if (!/^https?:\/\/[^\s/]+\.[^\s/]+/i.test(url)) {
+    die(`${label}不像完整 URL：${url}\n要形如 https://blog.example.com（协议 + 域名都写全）`);
+  }
+}
+
 async function main(): Promise<void> {
   const noDeploy = process.argv.includes('--no-deploy');
   console.log('\n🚀 Zero Stack 部署向导\n');
@@ -381,10 +447,10 @@ async function main(): Promise<void> {
 
   const a = await ask(QUESTIONS);
   if (!a.siteName || !a.siteUrl || !a.cmsUrl) die('站点名称与两个地址均为必填项');
+  assertHttpUrl('站点前台地址', a.siteUrl);
+  assertHttpUrl('后台地址', a.cmsUrl);
   const apiUrl = (a.apiUrl ?? '').trim().replace(/\/+$/, '');
-  if (apiUrl && !/^https?:\/\/[^\s/]+\.[^\s/]+/i.test(apiUrl)) {
-    die(`API 地址不像完整 URL：${apiUrl}\n要形如 https://api.你的域名（协议 + 域名都写全），或直接留空用 *.workers.dev`);
-  }
+  if (apiUrl) assertHttpUrl('API 地址', apiUrl);
   for (const [name, value] of [['站点前台地址', a.siteUrl], ['后台地址', a.cmsUrl], ['API 地址', apiUrl]] as const) {
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(value)) die(`${name} 还是本地地址：线上 CORS 按精确字符串匹配，浏览器一访问就会被拒`);
   }
@@ -402,10 +468,10 @@ async function main(): Promise<void> {
   const ids = existing && reuse ? existing : createResources();
 
   writeWranglerConfig(a, ids);
-  configureSecrets(a);
 
   if (noDeploy) {
-    console.log('\n✅ 资源、配置与密钥已就绪。之后运行 pnpm deploy:api 与 pnpm deploy:cms 完成部署。');
+    info('没写密钥：wrangler secret put 的对象是已存在的 worker，这一步留到真正部署时做。');
+    console.log('\n✅ 资源与配置已就绪。之后运行 pnpm deploy:api 与 pnpm deploy:cms 完成部署。');
     return;
   }
 
@@ -414,6 +480,11 @@ async function main(): Promise<void> {
   good('D1 表结构已同步');
 
   const workerUrl = deployWorker();
+  /** 密钥必须排在 worker 部署之后：首次运行时 worker 还不存在，先写就全以 Worker not found 失败 */
+  configureSecrets(a);
+  if (apiUrl) {
+    info(`你填的 API 地址是 ${apiUrl}：确认它已在 Cloudflare 控制台绑到 worker ${WORKER_NAME}（Workers & Pages → 该 worker → 域名），没绑的话后台与前台都会连不上。`);
+  }
   /** 绑了自定义域名就用它编进后台产物：*.workers.dev 在很多网络根本连不通 */
   const finalApiUrl = apiUrl || workerUrl;
   const pagesUrl = deployCms(finalApiUrl);

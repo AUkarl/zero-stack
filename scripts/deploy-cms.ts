@@ -55,10 +55,13 @@ async function resolveApiBase(): Promise<string> {
   }
   // CI 里没有终端可问：沿用上次记下的地址，没记过就保持不内置
   if (!process.stdin.isTTY) return saved;
+  /** 说明单独打一行：prompts 每敲一个字符就重画当前行，长文案在 PowerShell 里
+      会换行且擦不干净，屏幕上留下一串重复行 */
+  console.log(`  \x1b[2mworker 域名，回车留空 = 部署后在登录页手填；${saved ? '上次：' + saved : '例如 https://zero-api.xxx.workers.dev'}\x1b[0m`);
   const res = await prompts({
     type: 'text',
     name: 'api',
-    message: `后台要连的 API 地址（worker 域名，回车留空 = 部署后在登录页手填）\n  ${saved ? '上次：' + saved : '例如 https://zero-api.xxx.workers.dev'}`,
+    message: 'API 地址',
     initial: saved,
   });
   const value = normalize(String(res.api ?? ''));
