@@ -114,32 +114,11 @@ hasCJKLanguage = true
   future = true
 
 [params]
-  # 后端地址：zero-api 部署后填入
-  apiBaseURL = "${a.apiBaseURL}"
-  # 站点后台（zero-cms）的地址：前台登录成功后，管理员跳这里。
-  # 后台是另一个 Pages 项目，与站点不同域；不填时前端按同域 /admin/ 兜底，那是 404。
-  # 也可以留空 —— 管理员第一次从后台登录时，后端会把自己的域名记成 cmsAdminUrl，前端读运行期配置。
-  # cmsBaseURL = "https://cms.你的域名/"
-  author = "${a.githubUser}"
-  description = ""
-
-  # 功能开关
-  commentEnabled = true
-  commentMaxDepth = 6
-  likeEnabled = true
-  subscribeEnabled = true
-  momentsEnabled = true
-  friendsEnabled = true
-  analyticsEnabled = true
-
-  # 前台账号系统与注册开关（后台「设置」页可改）
-  accountSystemEnabled = true
-  allowRegister = true
-
-  # 以下主题外观参数按需覆盖 zero-theme 默认值，完整清单见主题 README
-  # [params.home]
-  # [params.article]
-  # [params.footer]
+  # 这里故意什么都不写。站点的参数全部放在 config/_default/params.toml ——
+  # Hugo 会把两处合并，但 config/_default/params.toml 的优先级更高（实测同名键以它为准），
+  # 写在这里只会被那份静默盖掉：apiBaseURL 变空 = 整站退回纯静态，评论、点赞、订阅全不工作。
+  # 想覆盖主题外观，直接改 config/_default/params.toml 那一份（每个键都带注释），
+  # 或在后台「前端管理 → 主题配置文件」里改同一份文件。
 
 [markup]
   [markup.highlight]
@@ -340,17 +319,28 @@ hugo server -D
     write(resolve(siteDir, 'themes/zero/.gitkeep'), '');
   }
 
-  /* 把主题那份「全量注释版」params.toml 复制成站点自己的：
-     后台「前端管理 → 主题配置文件」读写的就是站点这份文件，缺了它就只会显示「读取不到」，
-     而它恰恰最适合当模板 —— 每个键都带注释，想改哪项直接搜键名。
-     取值优先级 data/*.json > 站点 params.toml > 主题 params.toml，所以这份复制件与主题默认一致，
-     什么都不填也是一个完整站点。 */
+  /* 站点参数只有一份：把主题那份「全量注释版」params.toml 复制成站点自己的，
+     再把后端地址与默认署名写进去。取值优先级 data/*.json > 站点 params.toml > 主题 params.toml，
+     而根目录 hugo.toml 的 [params] 低于站点这份 —— 所以后端地址只能写在这里。
+     后台「前端管理 → 主题配置文件」读写的也正是这份文件，缺了它就只会显示「读取不到」。 */
   const themeParams = resolve(siteDir, 'themes/zero/config/_default/params.toml');
+  const apiLine = `apiBaseURL = "${a.apiBaseURL}"   # zero-api 的 worker 域名，末尾不要带斜杠`;
+  const authorLine = `author = "${a.githubUser}"`;
   if (existsSync(themeParams)) {
-    write(rel('config/_default/params.toml'), readFileSync(themeParams, 'utf8'));
-    good('站点自己的 config/_default/params.toml 已按主题默认模板生成（后台「主题配置文件」可直接编辑）');
+    const raw = readFileSync(themeParams, 'utf8');
+    const patched = raw.replace(/^apiBaseURL\s*=.*$/m, apiLine).replace(/^author\s*=.*$/m, authorLine);
+    if (!/^apiBaseURL\s*=/m.test(patched)) warn('主题 params.toml 里没有 apiBaseURL 这一行，没能自动写入后端地址，请自己在 config/_default/params.toml 补一行');
+    write(rel('config/_default/params.toml'), patched);
+    good('config/_default/params.toml 已按主题默认模板生成，并写入后端地址与默认署名');
   } else {
-    warn('没读到 themes/zero/config/_default/params.toml：等子模块拉下来后，把主题那份 params.toml 复制一份到 config/_default/ 才能在后台「主题配置文件」里改');
+    write(
+      rel('config/_default/params.toml'),
+      `# 子模块还没拉下来，这里先放最小可用的一份。\n` +
+        `# 执行 git submodule update --init --recursive 之后，把 themes/zero/config/_default/params.toml\n` +
+        `# 整份复制过来替换本文件，就能拿到带注释的全量模板（后台「主题配置文件」编辑的就是它）。\n` +
+        `${apiLine}\n${authorLine}\n`,
+    );
+    warn('没读到 themes/zero/config/_default/params.toml（子模块未初始化？）：已先生成只含后端地址的最小一份，拉下主题后按上面的注释换成全量模板');
   }
 
   if (a.initGit) {

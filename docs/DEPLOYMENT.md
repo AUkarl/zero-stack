@@ -205,9 +205,9 @@ pnpm create:site
 ```
 
 向导会问站点名称、GitHub 用户名、仓库名、API 地址、站点域名、主题仓库地址，然后在 **zero-stack 的同级目录**
-生成一个可直接推送的 Hugo 仓库：`hugo.toml`（含 `params.apiBaseURL` 与各功能开关）、落地页 `content/_index.md`、
+生成一个可直接推送的 Hugo 仓库：`hugo.toml`（站点参数不放这里，见下）、落地页 `content/_index.md`、
 主题需要的**全部页面分区**（`home / about / archive / tools / work / subscribe / account / links / moments / posts`，
-少一个分区导航里就是一条 404）、示例文章与时刻、`data/friends.yml`、`.gitignore`、`.github/workflows/deploy.yml`、
+少一个分区导航里就是一条 404）、示例文章与时刻、`data/links.yaml`（友链页读的就是这个名字）、`config/_default/params.toml`（从主题那份全量注释版复制，并写入 `apiBaseURL` 与默认署名）、`.gitignore`、`.github/workflows/deploy.yml`、
 `README.md`，并在本地 `git init` + 提交。
 
 - 脚本只在本地生成与提交，**不会替你推送远端**，推送指令会打印出来由你自己执行；
@@ -440,6 +440,7 @@ pnpm check   # 本地跑同一套校验
 | `/author/<标识>/` 打不开，文章页顶部的作者名点不动 | Hugo 不读主题里的 `[taxonomies]`：作者分类法必须在**站点**的 `hugo.toml` 声明（`[taxonomies] author = "author"`，`create:site` 生成的模板已带）。老站点补这一句后，在后台把文章重存一次即可 —— 保存时会自动补 `author:`（缺省取 `defaultAuthor`），front matter 里没这个键就不会生成作者页 |
 | 装完主题觉得「跟没装一样」 | 主题自带**结构性**默认 `data/`（导航、首页布局、时刻页、SEO、工具清单、以及一份全空的 site.json），空站点也有导航和排版；站点自己的 `data/*.json` 按键覆盖主题默认、数组整份替换。带文字的占位（关于页、工坊、页脚版权与备案占位、作者表、示例友链）放在 `exampleSite/data/` —— 那是新建站点照抄的样板，不会跑到已有站点的页脚上去。另：站点没写 `data/nav.json` 却配了 `menus.*.toml` 时**菜单优先**，主题默认导航不抢别人的站 |
 | 后台「前端管理 → 主题配置文件」显示读取不到 | 站点通常没有自己的 `config/_default/params.toml`。这种情形现在会把主题那份全量注释模板载入编辑器，改完保存就在你站点里建出这份文件；`create:site` 也会预先复制好一份 |
+| 用 `pnpm create:site` 生成的站点部署完像纯静态：评论、点赞、订阅、时刻全不出现 | 已修：生成器把 `apiBaseURL` 写进根 `hugo.toml` 的 `[params]`，同时又把主题那份全量注释版复制成站点的 `config/_default/params.toml` —— 而 Hugo 合并两处时**以 `config/_default/params.toml` 为准**（同名键实测取那份的值），那份里 `apiBaseURL = ""`，于是后端地址被空值静默盖掉，主题按「无后端」渲染成纯静态。现在站点只留一份参数：`hugo.toml` 里不再写 `[params]`，后端地址与默认署名直接写进 `config/_default/params.toml`；子模块还没拉下来时先生成只含这两个键的最小版本并提示怎么换成全量模板。自查一条命令：`grep -rl '你的worker域名' public \| wc -l`，为 0 就是被盖掉了 |
 | 页面里用了 `{{< figure >}}` 就整站构建失败：`wrong number of args for return` | 已修（主题 `partials/shortcodes/safe-url.html`）：`return` 只能出现在模板体顶层，写进 `if` 分支会被 Hugo 当成一个叫 return 的函数去数参数。主题用 `hugo` 本地构建一遍即可复现 |
 
 ---
@@ -447,7 +448,7 @@ pnpm check   # 本地跑同一套校验
 ## 11. 上线后待办
 
 - [ ] 后台「设置」逐项确认：站点信息、语言、评论与点赞开关、订阅双重确认、头像模板、SEO 默认值
-- [ ] `zero-site` 里 `params.apiBaseURL` 指向正式 worker 地址（自定义域名更好）。`pnpm create:site` 生成的仓库写在根 `hugo.toml`，本仓库自带的示例站在 `config/_default/params.toml` —— 两处都只有这一个键，留空 = 整站退回纯静态（不加载评论组件、不发任何请求）
+- [ ] `zero-site` 里 `params.apiBaseURL` 指向正式 worker 地址（自定义域名更好）。**只写 `config/_default/params.toml` 那一份**：Hugo 会合并根 `hugo.toml` 的 `[params]` 与 `config/_default/params.toml`，但同名键以后者为准（实测），两处都写时根目录那份是死字。留空 = 整站退回纯静态（不加载评论组件、不发任何请求）
 - [ ] 后台「设置」填 `siteUrl`（前台正式域名）与 `mediaPublicUrl`（同一个 API 地址），并把前台域名加进 `ALLOWED_ORIGINS` 后 `pnpm deploy:api`
 - [ ] 前台页面验证评论、点赞、订阅、时刻、友链与统计埋点
 - [ ] 停用 Waline / Twikoo 的旧部署与 CDN 引用
