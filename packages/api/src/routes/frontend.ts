@@ -9,7 +9,7 @@ import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
 
 /**
- * 前端管理：导航 / 首页 / 页脚 / 关于 / 工坊。
+ * 前端管理：基本信息 / 导航 / 首页 / 页脚 / 关于 / 工坊 / 时刻 / 友链申请 / SEO。
  *
  * 内容写进站点的 data/*.json（Hugo 原生读 data 目录），主题优先读这些文件、
  * 读不到再回落到 params.toml。之所以不直接改 params.toml：那个文件里全是给人看的
@@ -96,6 +96,26 @@ const worksSchema = z.object({
 });
 
 /**
+ * 友链页「申请友链」那一栏的三段说明（data/apply.json）。
+ *
+ * 名单本身在 data/links.yaml（由后台「友链」增删改同步），这一份只管三段文字：
+ * 友链要求 / 我的信息 / 提交示例。主题按「data 优先、读不到才回落页面正文」渲染，
+ * 所以站点没建过这个文件时，content/links/_index.md 里手写的那几块照常显示。
+ * 「我的信息」与「提交示例」是 标签 + 内容 的行列表：前台一行一条，
+ * 「复制」按钮取的是整块的纯文本，行的顺序就是复制到剪贴板的顺序。
+ */
+const infoRow = z.object({ label: short, value: short });
+
+const applySchema = z.object({
+  /** 「友链要求」标题下那段引导语 */
+  intro: long.default(''),
+  /** 要求条目：一行一条，前台排成有序列表 */
+  requirements: z.array(long).max(30).default([]),
+  myInfo: z.array(infoRow).max(20).default([]),
+  submitExample: z.array(infoRow).max(20).default([]),
+});
+
+/**
  * 基本信息（站点名 / Logo / 图标 / 作者 / 简介）。
  * Hugo 的 baseURL 与 title 兜底仍在 config.toml —— 那是站点级配置，改它要重写
  * config.toml（里面有注释），这里只管 params 能管的那几样。
@@ -133,6 +153,8 @@ const siteSchema = z.object({
    */
   defaultAuthor: short.default(''),
   ogImage: href.default(''),
+  /** 落地页（/index，进站第一屏）的背景图：站内路径或完整外链都行，留空用主题自带的 img/bj.png */
+  landingImage: href.default(''),
 });
 
 /**
@@ -197,6 +219,7 @@ const SECTIONS = {
   about: { file: 'about.json', schema: aboutSchema, label: '关于页' },
   works: { file: 'works.json', schema: worksSchema, label: '工坊' },
   moments: { file: 'moments.json', schema: momentsSchema, label: '时刻页' },
+  apply: { file: 'apply.json', schema: applySchema, label: '友链申请' },
   seo: { file: 'seo.json', schema: seoSchema, label: 'SEO' },
 } as const;
 
@@ -288,6 +311,7 @@ const saveSchema = z.object({
   about: z.unknown().optional(),
   works: z.unknown().optional(),
   moments: z.unknown().optional(),
+  apply: z.unknown().optional(),
   seo: z.unknown().optional(),
   triggerBuild: z.boolean().optional().default(true),
 });

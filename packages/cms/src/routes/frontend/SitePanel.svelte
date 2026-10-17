@@ -7,6 +7,7 @@
   let pickLogo = $state(false);
   let pickFavicon = $state(false);
   let pickOg = $state(false);
+  let pickLanding = $state(false);
 
   /** 关键词在接口里是数组，界面上用一行逗号分隔更好改 */
   let keywordsText = $derived(site.keywords.join('，'));
@@ -71,6 +72,21 @@
       <button class="sm ghost" onclick={() => (pickOg = true)}>选媒体</button>
     </div>
   </label>
+  <label>
+    落地页背景图（进站第一屏 /index 那张底图）
+    <div class="row">
+      <input bind:value={site.landingImage} maxlength={LIMIT.href} placeholder="/img/bj.png" />
+      <button class="sm ghost" onclick={() => (pickLanding = true)}>选媒体</button>
+    </div>
+    <span class="muted small cnt">
+      只影响 <code>/index</code> 那一屏的背景，首页 <code>/home/</code> 与文章页都不读它。
+      {#if site.landingImage.trim()}
+        当前背景图：<img class="thumb" src={site.landingImage.trim()} alt="落地页背景图预览" />
+      {:else}
+        留空时前台用主题自带的 <code>img/bj.png</code>。
+      {/if}
+    </span>
+  </label>
   <p class="muted small">
     填站内路径（<code>/img/xxx.webp</code>，对应站点 static 目录）或完整 <code>https://</code> 外链都行。
     {#if site.logo.trim()}
@@ -101,6 +117,7 @@
 <MediaPicker bind:open={pickLogo} title="选择 Logo" onpick={(url) => (site.logo = url)} />
 <MediaPicker bind:open={pickFavicon} title="选择 favicon" onpick={(url) => (site.favicon = url)} />
 <MediaPicker bind:open={pickOg} title="选择分享图" onpick={(url) => (site.ogImage = url)} />
+<MediaPicker bind:open={pickLanding} title="选择落地页背景图" onpick={(url) => (site.landingImage = url)} />
 
 <style>
   .blk {

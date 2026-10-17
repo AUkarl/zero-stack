@@ -7,7 +7,7 @@
  * 前端先按这套拦一遍，免得用户点了保存才看到后端报错。
  */
 
-export type SectionKey = 'site' | 'nav' | 'home' | 'footer' | 'about' | 'works' | 'moments' | 'seo';
+export type SectionKey = 'site' | 'nav' | 'home' | 'footer' | 'about' | 'works' | 'moments' | 'apply' | 'seo';
 
 export interface SiteSection {
   name: string;
@@ -21,6 +21,8 @@ export interface SiteSection {
   showName: boolean;
   favicon: string;
   ogImage: string;
+  /** 落地页（/index 进站第一屏）背景图，留空用主题自带的 img/bj.png */
+  landingImage: string;
 }
 
 export interface NavItem {
@@ -102,6 +104,22 @@ export interface WorksSection {
   items: WorkItem[];
 }
 
+/** 「我的信息 / 提交示例」的一行：前台一行一条，复制按钮按这个顺序取纯文本 */
+export interface ApplyRow {
+  label: string;
+  value: string;
+}
+/**
+ * 友链页「申请友链」那三块（data/apply.json）。
+ * 名单本身在 data/links.yaml（后台「友链」维护），这一页只管三段说明文字。
+ */
+export interface ApplySection {
+  intro: string;
+  requirements: string[];
+  myInfo: ApplyRow[];
+  submitExample: ApplyRow[];
+}
+
 export interface MomentsSection {
   paginate: number;
   showLocation: boolean;
@@ -157,6 +175,7 @@ export interface FrontendData {
   about: AboutSection | null;
   works: WorksSection | null;
   moments: MomentsSection | null;
+  apply: ApplySection | null;
   seo: SeoSection | null;
   dataDir: string;
   notice: string | null;
@@ -180,6 +199,7 @@ export interface Forms {
   about: AboutSection;
   works: WorksSection;
   moments: MomentsSection;
+  apply: ApplySection;
   seo: SeoSection;
 }
 
@@ -189,22 +209,28 @@ export interface Issue {
   message: string;
 }
 
-export const SECTION_KEYS: SectionKey[] = ['site', 'nav', 'home', 'footer', 'about', 'works', 'moments', 'seo'];
+export const SECTION_KEYS: SectionKey[] = ['site', 'nav', 'home', 'footer', 'about', 'works', 'moments', 'apply', 'seo'];
 
-export const SECTION_META: Record<SectionKey, { label: string; file: string; tab: string }> = {
-  site: { label: '基本信息', file: 'site.json', tab: '基本信息' },
-  nav: { label: '导航栏', file: 'nav.json', tab: '导航栏' },
-  home: { label: '首页', file: 'home.json', tab: '首页' },
-  footer: { label: '页脚', file: 'footer.json', tab: '页脚' },
-  about: { label: '关于页', file: 'about.json', tab: '关于页' },
-  works: { label: '工坊', file: 'works.json', tab: '工坊' },
-  moments: { label: '时刻页', file: 'moments.json', tab: '时刻页' },
-  seo: { label: 'SEO', file: 'seo.json', tab: 'SEO' },
+/**
+ * 每一段的中文名、落盘文件名、子标签文字，以及「这一份 data 文件删掉之后前台改读什么」。
+ * 八段回落 params.toml，只有「友链申请」回落的是友链页自己的正文
+ * （content/links/_index.md 里手写的 .apply-col），所以那一句得单独写，不然界面会骗人。
+ */
+export const SECTION_META: Record<SectionKey, { label: string; file: string; tab: string; fallback: string }> = {
+  site: { label: '基本信息', file: 'site.json', tab: '基本信息', fallback: 'params.toml' },
+  nav: { label: '导航栏', file: 'nav.json', tab: '导航栏', fallback: 'params.toml' },
+  home: { label: '首页', file: 'home.json', tab: '首页', fallback: 'params.toml' },
+  footer: { label: '页脚', file: 'footer.json', tab: '页脚', fallback: 'params.toml' },
+  about: { label: '关于页', file: 'about.json', tab: '关于页', fallback: 'params.toml' },
+  works: { label: '工坊', file: 'works.json', tab: '工坊', fallback: 'params.toml' },
+  moments: { label: '时刻页', file: 'moments.json', tab: '时刻页', fallback: 'params.toml' },
+  apply: { label: '友链申请', file: 'apply.json', tab: '友链申请', fallback: '友链页正文' },
+  seo: { label: 'SEO', file: 'seo.json', tab: 'SEO', fallback: 'params.toml' },
 };
 
 export const LIMIT = { short: 200, href: 600, long: 4000, weightMin: -9999, weightMax: 9999 };
 
-export const CAP: Record<'nav' | 'icp' | 'icons' | 'paragraph' | 'contacts' | 'works', number> = {
+export const CAP: Record<'nav' | 'icp' | 'icons' | 'paragraph' | 'contacts' | 'works' | 'requirements' | 'infoRow', number> = {
   nav: 60,
   icp: 20,
   /** 页脚三组图标行各自的上限，与后端 footerSchema 的 max(20) 一致 */
@@ -212,6 +238,10 @@ export const CAP: Record<'nav' | 'icp' | 'icons' | 'paragraph' | 'contacts' | 'w
   paragraph: 60,
   contacts: 60,
   works: 80,
+  /** 友链要求的条数上限，与后端 applySchema 的 max(30) 一致 */
+  requirements: 30,
+  /** 「我的信息」「提交示例」各自行数上限，与后端 max(20) 一致 */
+  infoRow: 20,
 };
 
 /* ---------------------------------------------------------------- 基础读取 */
@@ -264,6 +294,7 @@ export const blankForms = (): Forms => ({
     showName: true,
     favicon: '',
     ogImage: '',
+    landingImage: '',
   },
   nav: { items: [blankNavItem()] },
   home: { layout: 'bento', desc: '', showDesc: true },
@@ -280,6 +311,13 @@ export const blankForms = (): Forms => ({
     showNickname: true,
     nickname: '',
     avatar: '',
+  },
+  // 空白模板 = 三段全空：前台这一段就退回「读不到 data 时」的样子（页面正文）
+  apply: {
+    intro: '',
+    requirements: [''],
+    myInfo: [{ label: '', value: '' }],
+    submitExample: [{ label: '', value: '' }],
   },
   // 空白模板 = params.toml 里 [seo] 的那一份默认值，主题不依赖这一层也能跑
   seo: {
@@ -385,6 +423,17 @@ export function normWorks(raw: unknown): WorksSection {
   };
 }
 
+export function normApply(raw: unknown): ApplySection {
+  const o = rec(raw);
+  const rows = (v: unknown): ApplyRow[] => arr(v).map((x) => ({ label: str(rec(x).label), value: str(rec(x).value) }));
+  return {
+    intro: str(o.intro),
+    requirements: arr(o.requirements).map(str),
+    myInfo: rows(o.myInfo),
+    submitExample: rows(o.submitExample),
+  };
+}
+
 export function normSite(raw: unknown): SiteSection {
   const o = rec(raw);
   return {
@@ -398,6 +447,7 @@ export function normSite(raw: unknown): SiteSection {
     showName: bool(o.showName, true),
     favicon: str(o.favicon),
     ogImage: str(o.ogImage),
+    landingImage: str(o.landingImage),
   };
 }
 
@@ -458,6 +508,7 @@ const NORMALIZERS: Record<SectionKey, (raw: unknown) => Forms[SectionKey]> = {
   about: normAbout,
   works: normWorks,
   moments: normMoments,
+  apply: normApply,
   seo: normSeo,
 };
 
@@ -476,6 +527,7 @@ export function readFrontendData(payload: unknown): FrontendData {
     about: d.about === null || d.about === undefined ? null : normAbout(d.about),
     works: d.works === null || d.works === undefined ? null : normWorks(d.works),
     moments: d.moments === null || d.moments === undefined ? null : normMoments(d.moments),
+    apply: d.apply === null || d.apply === undefined ? null : normApply(d.apply),
     seo: d.seo === null || d.seo === undefined ? null : normSeo(d.seo),
     dataDir: trimmed(d.dataDir, 'data'),
     notice: typeof d.notice === 'string' && d.notice.trim() ? d.notice.trim() : null,
@@ -512,6 +564,7 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
       showName: !!f.showName,
       favicon: f.favicon.trim(),
       ogImage: f.ogImage.trim(),
+      landingImage: f.landingImage.trim(),
     };
   }
   if (key === 'moments') {
@@ -608,6 +661,20 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
       contacts: f.contacts
         .map((x) => ({ label: x.label.trim(), text: x.text.trim(), url: x.url.trim(), external: !!x.external }))
         .filter((x) => x.text || x.url),
+    };
+  }
+  if (key === 'apply') {
+    const f = form as ApplySection;
+    /** 标签与内容都空的行丢掉：主题那一行本来就不输出，留着只会让「复制」出来的文本多空行 */
+    const rows = (list: ApplyRow[]) =>
+      list
+        .map((x) => ({ label: x.label.trim(), value: x.value.trim() }))
+        .filter((x) => x.label || x.value);
+    return {
+      intro: f.intro.trim(),
+      requirements: f.requirements.map((x) => x.trim()).filter(Boolean),
+      myInfo: rows(f.myInfo),
+      submitExample: rows(f.submitExample),
     };
   }
   const f = form as WorksSection;

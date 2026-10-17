@@ -114,6 +114,7 @@ export function validateSection(key: SectionKey, form: Forms[SectionKey]): Issue
     if (f.logo.length > LIMIT.href) push(`Logo 地址超过 ${LIMIT.href} 字`);
     if (f.favicon.length > LIMIT.href) push(`favicon 地址超过 ${LIMIT.href} 字`);
     if (f.ogImage.length > LIMIT.href) push(`分享图地址超过 ${LIMIT.href} 字`);
+    if (f.landingImage.length > LIMIT.href) push(`落地页背景图地址超过 ${LIMIT.href} 字`);
     if (f.keywords.length > 40) push(`关键词最多 40 个，当前 ${f.keywords.length} 个`);
     return out;
   }
@@ -125,6 +126,25 @@ export function validateSection(key: SectionKey, form: Forms[SectionKey]): Issue
     if (f.bannerImage.length > LIMIT.href) push(`横幅背景图地址超过 ${LIMIT.href} 字`);
     if (f.avatar.length > LIMIT.href) push(`头像地址超过 ${LIMIT.href} 字`);
     if (f.paginate < 1 || f.paginate > 100) push('每批条数只能是 1 到 100');
+    return out;
+  }
+
+  if (key === 'apply') {
+    const f = v as Forms['apply'];
+    if (f.intro.length > LIMIT.long) push(`友链要求的引导语超过 ${LIMIT.long} 字（当前 ${f.intro.length} 字）`);
+    if (f.requirements.length > CAP.requirements) push(`友链要求最多 ${CAP.requirements} 条，当前 ${f.requirements.length} 条`);
+    f.requirements.forEach((x, i) => {
+      if (x.length > LIMIT.long) push(`友链要求第 ${i + 1} 条超过 ${LIMIT.long} 字（当前 ${x.length} 字）`);
+    });
+    const blocks: ['myInfo' | 'submitExample', string][] = [['myInfo', '我的信息'], ['submitExample', '提交示例']];
+    for (const [field, label] of blocks) {
+      const list = f[field];
+      if (list.length > CAP.infoRow) push(`${label}最多 ${CAP.infoRow} 行，当前 ${list.length} 行`);
+      list.forEach((x, i) => {
+        if (x.label.length > LIMIT.short) push(`${label}第 ${i + 1} 行的标签超过 ${LIMIT.short} 字`);
+        if (x.value.length > LIMIT.short) push(`${label}第 ${i + 1} 行的内容超过 ${LIMIT.short} 字`);
+      });
+    }
     return out;
   }
 
@@ -218,6 +238,13 @@ export function notesOf(key: SectionKey, form: Forms[SectionKey]): string[] {
   if (key === 'moments') {
     const f = form as Forms['moments'];
     if (!f.showLocation && f.defaultLocation.trim()) out.push('位置开关已经关掉，兜底文案不会显示（保存时仍会带着这句文字）');
+  }
+  if (key === 'apply') {
+    const f = form as Forms['apply'];
+    const empty = !f.intro.trim() && !f.requirements.some((x) => x.trim()) && !f.myInfo.some((x) => x.label.trim() || x.value.trim()) && !f.submitExample.some((x) => x.label.trim() || x.value.trim());
+    if (empty) out.push('三段文字都是空的：前台「申请友链」这一栏会退回显示页面正文（content/links/_index.md 里手写的那几块）');
+    const noLabel = f.myInfo.concat(f.submitExample).filter((x) => x.value.trim() && !x.label.trim());
+    if (noLabel.length) out.push(`有 ${noLabel.length} 行只填了内容、没填标签：前台（以及「复制」出来的文本）就是光秃秃一行，一般要写成「名称」「链接」这样的标签`);
   }
   return out;
 }

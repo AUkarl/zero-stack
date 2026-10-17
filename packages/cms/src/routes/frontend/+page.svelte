@@ -1,6 +1,7 @@
 <script lang="ts">
   import { get, post } from '#lib/api';
   import AboutPanel from './AboutPanel.svelte';
+  import ApplyPanel from './ApplyPanel.svelte';
   import FallbackCard from './FallbackCard.svelte';
   import FooterPanel from './FooterPanel.svelte';
   import HomePanel from './HomePanel.svelte';
@@ -31,7 +32,8 @@
   } from './types';
 
   /**
-   * 前端管理：基本信息 / 导航栏 / 首页 / 页脚 / 关于页 / 工坊 / 时刻页，七段共用底部一个「保存设置」按钮。
+   * 前端管理：基本信息 / 导航栏 / 首页 / 页脚 / 关于页 / 工坊 / 时刻页 / 友链申请 / SEO，
+   * 九段共用底部一个「保存设置」按钮。
    *
    * 一次 POST /api/admin/frontend 把要提交的几段一起发过去，后端写多个 data/*.json，
    * 但最多只触发一次站点构建 —— 这就是全页只留一个保存按钮的原因。
@@ -44,7 +46,7 @@
    */
 
   type Pending = 'write' | 'delete' | 'skip';
-  /** 七个 data JSON 段 + 仓库源文件段（后者不用 forms/meta，只多一个 tab 值） */
+  /** 九个 data JSON 段 + 仓库源文件段（后者不用 forms/meta，只多一个 tab 值） */
   type TabKey = SectionKey | 'repo';
   interface SecMeta {
     /** 站点 data 目录里已经有这个文件 */
@@ -67,6 +69,7 @@
     about: JSON.stringify(payloadOf('about', BLANK.about)),
     works: JSON.stringify(payloadOf('works', BLANK.works)),
     moments: JSON.stringify(payloadOf('moments', BLANK.moments)),
+    apply: JSON.stringify(payloadOf('apply', BLANK.apply)),
     seo: JSON.stringify(payloadOf('seo', BLANK.seo)),
   };
 
@@ -132,6 +135,7 @@
         about: d.about,
         works: d.works,
         moments: d.moments,
+        apply: d.apply,
         seo: d.seo,
       };
       const next = {} as Forms;
@@ -261,7 +265,7 @@
 
   function removeSection(key: SectionKey) {
     const m = SECTION_META[key];
-    if (!confirm(`确定要在保存时删除 ${dataDir}/${m.file} 吗？\n删掉后「${m.label}」回落到 params.toml 的原有配置。`)) return;
+    if (!confirm(`确定要在保存时删除 ${dataDir}/${m.file} 吗？\n删掉后「${m.label}」改回去读${m.fallback}。`)) return;
     meta[key].removed = true;
   }
 
@@ -356,6 +360,7 @@ async function save() {
   const activeMeta = $derived(meta[sec]);
   const activeLabel = $derived(SECTION_META[sec].label);
   const activeFile = $derived(SECTION_META[sec].file);
+  const activeFallback = $derived(SECTION_META[sec].fallback);
 </script>
 
 <div class="row spread head">
@@ -367,9 +372,10 @@ async function save() {
 </div>
 
 <p class="muted small intro">
-  这一页管前台的<em>样子</em>：导航栏、首页、页脚、关于页、工坊。保存会写进站点 <code>{dataDir}/</code> 目录下的
-  <code>nav.json / home.json / footer.json / about.json / works.json</code>，主题优先读这些文件，读不到才回落到
-  <code>params.toml</code>；所以每一段都能单独「删除覆盖」退回原状。评论开关、注册开关这些运行时配置在「设置」页改，不在这儿。
+  这一页管前台的<em>样子</em>：导航栏、首页、页脚、关于页、工坊、时刻页、友链申请。保存会写进站点 <code>{dataDir}/</code> 目录下的
+  <code>site.json / nav.json / home.json / footer.json / about.json / works.json / moments.json / apply.json / seo.json</code>，
+  主题优先读这些文件，读不到才回落到 <code>params.toml</code>（只有「友链申请」回落的是友链页自己的正文）；
+  所以每一段都能单独「删除覆盖」退回原状。评论开关、注册开关这些运行时配置在「设置」页改，不在这儿。
   最后那个「主题配置文件」子标签是直改仓库源文件（<code>params.toml</code> 等）的入口，它有自己的读取与保存，不走下面的统一按钮。
   <strong>本页的保存没有开关可关</strong>：这些 json 就是本页的存储本身，点保存就是一次仓库提交。想让它不再往仓库写，
   就把「设置 → 内容仓库」的 owner / repo 留空（那时本页会明确报错，而不是悄悄存到别处）。
@@ -425,7 +431,8 @@ async function save() {
         {/each}
         <p class="muted small">
           规则和后端一致：短文本 ≤{LIMIT.short}、链接 ≤{LIMIT.href}、长文本 ≤{LIMIT.long}；导航 ≤{CAP.nav} 项、备案 ≤{CAP.icp} 条、
-          关于页三组段落各 ≤{CAP.paragraph} 段、联系方式 ≤{CAP.contacts} 条、工坊 ≤{CAP.works} 个。
+          关于页三组段落各 ≤{CAP.paragraph} 段、联系方式 ≤{CAP.contacts} 条、工坊 ≤{CAP.works} 个、
+          友链要求 ≤{CAP.requirements} 条、「我的信息 / 提交示例」各 ≤{CAP.infoRow} 行。
         </p>
       </div>
     {/if}
@@ -434,6 +441,7 @@ async function save() {
       label={activeLabel}
       file={activeFile}
       {dataDir}
+      fallback={activeFallback}
       pending={pendingMap[sec]}
       loaded={activeMeta.loaded}
       initialized={activeMeta.initialized}
@@ -443,9 +451,9 @@ async function save() {
     />
 
     {#if pendingMap[sec] === 'delete'}
-      <RemovedCard label={activeLabel} file={activeFile} {dataDir} onundo={() => undoRemove(sec)} />
+      <RemovedCard label={activeLabel} file={activeFile} {dataDir} fallback={activeFallback} onundo={() => undoRemove(sec)} />
     {:else if !activeMeta.loaded && !activeMeta.initialized}
-      <FallbackCard label={activeLabel} file={activeFile} {dataDir} oninit={() => initSection(sec)} />
+      <FallbackCard label={activeLabel} file={activeFile} {dataDir} fallback={activeFallback} oninit={() => initSection(sec)} />
     {:else if sec === 'site'}
       <SitePanel site={forms.site} />
     {:else if sec === 'nav'}
@@ -460,6 +468,8 @@ async function save() {
       <MomentsPanel moments={forms.moments} />
     {:else if sec === 'works'}
       <WorksPanel works={forms.works} />
+    {:else if sec === 'apply'}
+      <ApplyPanel apply={forms.apply} />
     {:else}
       <SeoPanel seo={forms.seo} />
     {/if}

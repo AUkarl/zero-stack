@@ -3,11 +3,13 @@
     label,
     file,
     dataDir,
+    fallback = 'params.toml',
     onundo,
   }: {
     label: string;
     file: string;
     dataDir: string;
+    fallback?: string;
     onundo: () => void;
   } = $props();
 </script>
@@ -15,7 +17,7 @@
 <section class="card gate">
   <h3>{label}：准备删除覆盖</h3>
   <p class="muted">
-    点「保存设置」会删除 <code>{dataDir}/{file}</code>，前台这一段重新回落到 params.toml 的配置。
+    点「保存设置」会删除 <code>{dataDir}/{file}</code>，前台这一段重新回落去读 {fallback}。
     上面的编辑内容不会保留，随时可以撤销这一步。
   </p>
   <div class="row">
