@@ -166,7 +166,7 @@
           keys: ['cloudflareAccountId', 'cloudflareEmailToken'],
           onlyFor: ['cloudflare'],
         },
-        { title: '测试发送', desc: '真发一封才知道配置对不对 —— 本地没有邮件服务，看着填对了也可能发不出去。', keys: [], test: true },
+        { title: '测试发送', desc: '真发一封才知道配置对不对 —— 本地没有邮件服务，看着填对了也可能发不出去。下面「通知链路自检」会把新评论提醒的站长那封和用户那封各发一遍，并摊开发信服务器原文。', keys: [], test: true },
       ],
     },
     {
@@ -239,7 +239,6 @@
         { key: 'githubContentDir', label: '内容目录', hint: '如 content' },
         { key: 'githubPostsDir', label: '文章目录', hint: '如 content/zh/posts（多语言）或 content/posts（单语言扁平），「文章」页写这里' },
         { key: 'githubMomentsDir', label: '时刻目录', hint: '如 content/zh/moments，「时刻」页读写这里' },
-        { key: 'gitWritebackEnabled', label: '投稿通过后自动写入仓库', kind: 'bool', hint: '只管「投稿」页审核通过那一步；关掉就只标记通过、不提交文章。「前端管理」页与友链各有自己的口径，不受这里影响' },
         { key: 'githubLinksFile', label: '友链文件', hint: '留空 = 「数据目录」（默认 data）下的 links.yaml；只有主题装在别处、或数据目录挪走了才需要填，填了以后后台列出的、审核通过写入的、定时任务读的都是这一份' },
         { key: 'githubAuthorsFile', label: '作者数据文件', hint: '如 data/authors.yaml' },
         { key: 'cloudflarePagesBuildHook', label: 'Pages 重建 Hook', hint: '选填，填了改完友链会自动重建站点' },
@@ -351,6 +350,58 @@
       testResult = { ok: false, text: `发送失败：${e instanceof Error ? e.message : '请求出错'}` };
     } finally {
       testBusy = false;
+    }
+  }
+
+  /**
+   * 通知链路自检：后端按 notifyNewComment 真正用的那套配置各发一封
+   * （站长那封 + 用户那封，后者抄送站长），把算出来的收件人和 SMTP 原文回执摊开。
+   * 「库里写着已发送、邮箱里却没有」只能这样分开看：是没发、发给谁，还是发出去没送达。
+   */
+  interface NotifyTestRow {
+    label: string;
+    to: string;
+    cc: string[];
+    subject: string;
+    sent: boolean;
+    error: string | null;
+    detail: string | null;
+  }
+  interface NotifyTestOut {
+    provider: string;
+    smtp: string;
+    from: string;
+    adminEmail: string;
+    adminEmailSource: string;
+    siteUrl: string;
+    toggles: { commentNotifyAdmin: boolean; commentNotifyReply: boolean; commentNotifyAuthor: boolean };
+    rows: NotifyTestRow[];
+    note: string;
+  }
+  let notifyBusy = $state(false);
+  let notifyResult = $state<NotifyTestOut | null>(null);
+
+  async function runNotifyTest() {
+    if (notifyBusy) return;
+    notifyBusy = true;
+    notifyResult = null;
+    try {
+      const d = await post<{ data: NotifyTestOut }>('/api/admin/email/notify-test', testTo.trim() ? { to: testTo.trim() } : {});
+      notifyResult = d.data;
+    } catch (e) {
+      notifyResult = {
+        provider: '',
+        smtp: '',
+        from: '',
+        adminEmail: '',
+        adminEmailSource: '',
+        siteUrl: '',
+        toggles: { commentNotifyAdmin: false, commentNotifyReply: false, commentNotifyAuthor: false },
+        rows: [],
+        note: e instanceof Error ? e.message : '请求出错',
+      };
+    } finally {
+      notifyBusy = false;
     }
   }
 
@@ -578,7 +629,39 @@
   {#if testResult}
     <p class="small testresult {testResult.ok ? 'ok' : 'err'}">{testResult.text}</p>
   {/if}
+  <div class="row testrow">
+    <button class="sm" onclick={() => void runNotifyTest()} disabled={notifyBusy}>
+      {notifyBusy ? '两封发送中…' : '通知链路自检（站长那封 + 用户那封，用户那封抄送你）'}
+    </button>
+    <span class="muted small">收件人不填就发给你自己；这一步走的是新评论提醒真正用的那套收件人算法与模板。</span>
+  </div>
+  {#if notifyResult}
+    <div class="notifybox">
+      <p class="small">
+        通道 <b>{notifyResult.provider || '—'}</b> · 服务器 <b>{notifyResult.smtp || '—'}</b> · 发件人 <b>{notifyResult.from || '—'}</b> ·
+        站长收件邮箱 <b>{notifyResult.adminEmail || '—'}</b>（取于 {notifyResult.adminEmailSource || '—'}）
+      </p>
+      <p class="small">
+        站点地址 <b>{notifyResult.siteUrl || '—'}</b> · 三个提醒开关：
+        站长 {notifyResult.toggles.commentNotifyAdmin ? '开' : '关'} / 回复 {notifyResult.toggles.commentNotifyReply ? '开' : '关'} / 文章作者 {notifyResult.toggles.commentNotifyAuthor ? '开' : '关'}
+        （关着的那类本来就不会发，跟通道没关系）
+      </p>
+      {#each notifyResult.rows as r (r.label)}
+        <p class="small testresult {r.sent ? 'ok' : 'err'}">
+          {r.label}：{r.sent ? '已送出' : '失败'} → {r.to}{r.cc.length ? ` （抄送 ${r.cc.join('、')}）` : ''}｜主题「{r.subject}」
+        </p>
+        {#if r.error}<p class="small err">原因：{r.error}</p>{/if}
+        {#if r.detail}<p class="small muted">服务器原文：{r.detail}</p>{/if}
+      {/each}
+      {#if !notifyResult.rows.length}<p class="small err">{notifyResult.note}</p>{/if}
+      {#if notifyResult.rows.length}<p class="muted small">{notifyResult.note}</p>{/if}
+    </div>
+  {/if}
   <p class="muted small">测试信用的就是上面几节的发信配置与「邮件模板」里填的正文，改了先保存再发才准。</p>
+  <p class="muted small">
+    「已发送 / sent」只代表中继收下了这封信（SMTP 回 250）。250 不等于投进对方收件箱：地址不存在、被判为垃圾、
+    服务商限流都照样回 250。这里显示已送出而邮箱（含垃圾邮件箱）里没有，就查发信邮箱服务商的投递日志。
+  </p>
 {/snippet}
 
 {#each GROUPS as g (g.title)}
@@ -721,6 +804,16 @@
   }
   .testresult {
     margin: 0.35rem 0 0;
+  }
+  .notifybox {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    word-break: break-all;
   }
   .fields {
     display: grid;

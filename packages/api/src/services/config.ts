@@ -116,7 +116,6 @@ export type ConfigKey =
   | 'githubRepo'
   | 'githubBranch'
   | 'githubContentDir'
-  | 'gitWritebackEnabled'
   | 'githubLinksFile'
   | 'cloudflarePagesBuildHook'
   /** 站点所在 Cloudflare 域（zone）的 ID：删文章后按 URL 清边缘缓存要用 */
@@ -238,7 +237,6 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'githubRepo',
   'githubBranch',
   'githubContentDir',
-  'gitWritebackEnabled',
   'githubLinksFile',
   'cloudflarePagesBuildHook',
   'cfZoneId',
@@ -370,7 +368,6 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   translateKey: '',
   draftsEnabled: 'true',
   authorVerifyEnabled: 'true',
-  gitWritebackEnabled: 'false',
   githubLinksFile: 'data/links.yaml',
   cloudflarePagesBuildHook: '',
   cfZoneId: '',

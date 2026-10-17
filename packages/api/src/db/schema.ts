@@ -540,7 +540,7 @@ export const authorRequests = sqliteTable(
     /** JSON 数组：[{ platform, handle, proof }] */
     social: text('social').notNull().default('[]'),
     reason: text('reason'),
-    /** 'pending' | 'approved' | 'rejected' */
+    /** 'pending' | 'approved' | 'rejected' | 'returned'（站长退回给本人改资料，认证位不动） */
     status: text('status').notNull().default('pending'),
     reviewerId: text('reviewer_id').references(() => users.id, { onDelete: 'set null' }),
     adminNote: text('admin_note'),

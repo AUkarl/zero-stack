@@ -20,6 +20,8 @@ export interface SmtpOptions {
   from: string;
   fromName?: string;
   to: string;
+  /** 抄送：抬头写 Cc，信封上也各投一次。为空时跟原来完全一样 */
+  cc?: string[];
   subject: string;
   html: string;
   replyTo?: string;
@@ -87,9 +89,11 @@ function dotStuff(text: string): string {
 
 function buildMessage(o: SmtpOptions): string {
   const from = o.fromName ? `${encodeHeader(o.fromName)} <${o.from}>` : `<${o.from}>`;
+  const cc = envelopeOf(o);
   const headers = [
     `From: ${from}`,
     `To: <${o.to}>`,
+    cc.length > 1 ? `Cc: ${cc.slice(1).map((x) => `<${x}>`).join(', ')}` : null,
     `Subject: ${encodeHeader(o.subject)}`,
     o.replyTo ? `Reply-To: <${o.replyTo}>` : null,
     'MIME-Version: 1.0',
@@ -99,9 +103,25 @@ function buildMessage(o: SmtpOptions): string {
   return headers.join(EOL) + EOL + EOL + encodeBody(o.html);
 }
 
+/** 信封收件人：主收 + 抄送，去掉重复与空串（抄送自己时不该多收一封） */
+function envelopeOf(o: SmtpOptions): string[] {
+  const out: string[] = [];
+  for (const x of [o.to, ...(o.cc ?? [])]) {
+    const e = (x ?? '').trim().toLowerCase();
+    if (e && !out.includes(e)) out.push(e);
+  }
+  return out;
+}
+
 export interface SmtpResult {
   success: boolean;
   error?: string;
+  /**
+   * 服务器原文回执（RCPT 各条应答 + DATA 结尾那行 250）。
+   * 「库里写着 sent 但邮箱里没有」只能靠它判断：中继回 250 只代表它收下了这封信，
+   * 真正投没投进对方邮箱、有没有进垃圾箱，要再看服务商的投递日志。
+   */
+  detail?: string;
 }
 
 function hostnameOf(email: string): string {
@@ -153,23 +173,27 @@ export async function sendViaSmtp(o: SmtpOptions): Promise<SmtpResult> {
     const fromReply = await readReply(data);
     if (!fromReply.startsWith('250')) return { success: false, error: `发件人被拒绝：${fromReply}` };
 
-    await write(data, `RCPT TO:<${o.to}>${EOL}`);
-    const toReply = await readReply(data);
-    if (!toReply.startsWith('250') && !toReply.startsWith('251')) {
-      return { success: false, error: `收件人被拒绝：${toReply}` };
+    const rcptLines: string[] = [];
+    for (const one of envelopeOf(o)) {
+      await write(data, `RCPT TO:<${one}>${EOL}`);
+      const toReply = await readReply(data);
+      rcptLines.push(toReply.trim());
+      if (!toReply.startsWith('250') && !toReply.startsWith('251')) {
+        return { success: false, error: `收件人被拒绝：${toReply}`, detail: rcptLines.join(' | ') };
+      }
     }
 
     await write(data, `DATA${EOL}`);
     const ready = await readReply(data);
-    if (!ready.startsWith('354')) return { success: false, error: `无法进入 DATA 阶段：${ready}` };
+    if (!ready.startsWith('354')) return { success: false, error: `无法进入 DATA 阶段：${ready}`, detail: rcptLines.join(' | ') };
 
     await write(data, `${dotStuff(buildMessage(o))}${EOL}.${EOL}`);
     const sent = await readReply(data);
-    if (!sent.startsWith('250')) return { success: false, error: `投递失败：${sent}` };
+    if (!sent.startsWith('250')) return { success: false, error: `投递失败：${sent}`, detail: rcptLines.join(' | ') };
 
     await write(data, `QUIT${EOL}`);
     safeClose(data);
-    return { success: true };
+    return { success: true, detail: [...rcptLines, sent.trim()].join(' | ') };
   } catch (e) {
     if (socket) safeClose(socket);
     return { success: false, error: e instanceof Error ? e.message : String(e) };

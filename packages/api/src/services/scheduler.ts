@@ -4,6 +4,7 @@ import { comments, friendPosts, friends, jobRuns, reactions, visits } from '../d
 import { getConfig, getConfigBool, getConfigInt } from './config';
 import { runDueBroadcastJobs } from './broadcast';
 import { pushNewPostsToSubscribers } from './feed-push';
+import { cleanSummary } from './feed-summary';
 import { readRepoFile, repoBackend, writeRepoFile } from './repo';
 import { normalizeFriendUrl, parseLinksYaml, type LinkSite } from './links-yaml';
 import { linksFilePath } from './friends-file';
@@ -153,7 +154,7 @@ async function checkFriends(env: Env): Promise<string> {
     .where(eligible(now))
     .limit(100);
   const due = (f: (typeof candidates)[number]) => !f.lastCheckedAt || now - f.lastCheckedAt >= intervalH * 3600;
-  const rows = candidates.filter((f) => due(f) && (!onlyRss || (f.rssUrl ?? '').trim() !== ''));
+  const rows = candidates.filter((f) => f.kind !== 'alliance' && due(f) && (!onlyRss || (f.rssUrl ?? '').trim() !== ''));
 
   let alive = 0;
   let cooled = 0;
@@ -198,8 +199,14 @@ async function checkFriends(env: Env): Promise<string> {
  */
 async function fetchFriendFeeds(env: Env): Promise<string> {
   const db = createDb(env);
-  const rows = await db.select().from(friends).where(eligible(Math.floor(Date.now() / 1000))).limit(100);
+  const all = await db.select().from(friends).where(eligible(Math.floor(Date.now() / 1000))).limit(100);
+  /*
+   * 朋友动态只收「友链」，站点联盟不参与：联盟条目是互挂的站，抓它的旧文章上动态页
+   * 既没意义也会挤掉真朋友。kind 为空的老数据按友链处理。
+   */
+  const rows = all.filter((f) => f.kind !== 'alliance');
   let added = 0;
+  let filled = 0;
 
   for (const f of rows) {
     const feedUrl = f.rssUrl ?? (await inferFeed(f.url));
@@ -210,11 +217,19 @@ async function fetchFriendFeeds(env: Env): Promise<string> {
       const items = parseFeed(xml, f.url).slice(0, 10);
       for (const item of items) {
         const exists = await db
-          .select({ id: friendPosts.id })
+          .select({ id: friendPosts.id, image: friendPosts.image })
           .from(friendPosts)
           .where(and(eq(friendPosts.friendId, f.id), eq(friendPosts.link, item.link)))
           .limit(1);
-        if (exists.length) continue;
+        if (exists.length) {
+          /* 封面是这次才加上的字段：老条目里那些没记封面的，这次顺手补上，
+             不然「朋友动态」的图要等文章被重新发一遍才有，用户看到的一直是空框。 */
+          if (item.image && !exists[0]!.image) {
+            await db.update(friendPosts).set({ image: item.image }).where(eq(friendPosts.id, exists[0]!.id));
+            filled++;
+          }
+          continue;
+        }
         await db.insert(friendPosts).values({
           id: newId(),
           friendId: f.id,
@@ -235,7 +250,7 @@ async function fetchFriendFeeds(env: Env): Promise<string> {
       /* 单个站点失败不影响其它 */
     }
   }
-  return `抓取 ${rows.length} 个源，新增 ${added} 篇文章`;
+  return `抓取 ${rows.length} 个源（联盟站已排除），新增 ${added} 篇文章，补封面 ${filled} 篇`;
 }
 
 /**
@@ -261,6 +276,18 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
     const when = p.pubDate ?? p.fetchedAt;
     if (!latest.has(p.friendId)) latest.set(p.friendId, when);
   }
+
+  /*
+   * 动态只收友链站：站点联盟是互挂的站，以前一起抓，结果「朋友动态」里冒出联盟站的文章
+   * （而那些站在设置里根本没填 RSS，是被 inferFeed 猜出来的）。
+   * allianceUrls 用来把仓库里那份旧 friendfeed.json 中已经写进去的联盟条目一并剔掉，
+   * 不然它们会靠「保留没在库里的那几条」这条规则一直留在文件里。
+   */
+  const allianceUrls = new Set(rows.filter((f) => f.kind === 'alliance').map((f) => normalizeFriendUrl(f.url)));
+  const mine = posts.filter((p) => {
+    const owner = byId.get(p.friendId);
+    return !owner || owner.kind !== 'alliance';
+  });
 
   // 页面顶部那句话的口径：30 天不可访问、或 90 天没有新动态 → 迷失的小船
   const lostAfter = Math.max(Number(await getConfig(env, 'friendsLostAfterDays')) || 30, 0) * 86400;
@@ -296,9 +323,9 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
   const feed = {
     // 用最新一条动态的时间当作 updated，而不是跑任务的时间：
     // 没有新内容时这份文件就该一个字节都不变，否则每次都算「有改动」，白触发一次 Pages 构建
-    updated: posts.length ? new Date((posts[0]!.pubDate ?? posts[0]!.fetchedAt) * 1000).toISOString() : '',
-    count: posts.length,
-    items: posts.slice(0, 60).map((p) => {
+    updated: mine.length ? new Date((mine[0]!.pubDate ?? mine[0]!.fetchedAt) * 1000).toISOString() : '',
+    count: mine.length,
+    items: mine.slice(0, 60).map((p) => {
       const owner = byId.get(p.friendId);
       return {
         title: p.title,
@@ -335,7 +362,9 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
   }
 
   const oldFeed = (await readJson(env, feedPath)) as { items?: { siteurl?: string; url?: string }[] } | null;
-  const kept = (oldFeed?.items ?? []).filter((it) => !inDb.has(norm(it.siteurl ?? '')) && listed.has(norm(it.siteurl ?? '')));
+  const kept = (oldFeed?.items ?? []).filter(
+    (it) => !inDb.has(norm(it.siteurl ?? '')) && listed.has(norm(it.siteurl ?? '')) && !allianceUrls.has(norm(it.siteurl ?? '')),
+  );
   const items = [...feed.items, ...kept]
     .sort((a, b) => String((b as { date?: string }).date ?? '').localeCompare(String((a as { date?: string }).date ?? '')))
     .slice(0, 80);
@@ -500,7 +529,7 @@ function parseFeed(xml: string, siteUrl: string): FeedItem[] {
     items.push({
       title: stripCdata(decodeEntities(title)).trim(),
       link: stripCdata(decodeEntities(link)).trim() || new URL(link, siteUrl).toString(),
-      summary: stripTags(stripCdata(decodeEntities(description))).slice(0, 300).trim(),
+      summary: cleanSummary(stripTags(stripCdata(decodeEntities(description)))).slice(0, 300),
       image: pickItemImage(chunk, stripCdata(decodeEntities(description)), siteUrl),
       pubDate: date ? Math.floor(new Date(date).getTime() / 1000) || null : null,
     });

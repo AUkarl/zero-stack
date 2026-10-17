@@ -244,7 +244,19 @@ app.get('/comments', async (c) => {
     .limit(limit)
     .offset(offset);
 
-  return ok({ total: rows.length, status, items: rows });
+  /*
+   * 被拦截的评论只告诉本人「没过审」这一件事：spamReason 里是命中了哪条规则、
+   * 哪条关键词、几分 —— 那是站主的审核依据，写给用户看等于把过滤器的说明书公开了，
+   * 人家照着改两个字就能绕过。规则细节仍然原样存在库里，后台「评论审核」看得见。
+   */
+  return ok({
+    total: rows.length,
+    status,
+    items: rows.map((r) => ({
+      ...r,
+      spamReason: r.status === 'approved' || r.status === 'pending' ? null : '内容不符合本站社区规范，未通过审核',
+    })),
+  });
 });
 
 const commentEditSchema = z.object({ content: z.string().trim().min(1).max(MAX_CONTENT) });
@@ -990,11 +1002,18 @@ app.get('/author-request', async (c) => {
   const db = createDb(c.env);
   const rows = await db.select().from(authorRequests).where(eq(authorRequests.userId, target.id)).orderBy(desc(authorRequests.createdAt)).limit(10);
   let social: unknown[] = [];
+  let donate: string[] = [];
   if (rows[0]) {
     try {
       social = JSON.parse(rows[0].social || '[]');
     } catch {
       social = [];
+    }
+    try {
+      const v: unknown = JSON.parse(rows[0].donateImages || '[]');
+      donate = Array.isArray(v) ? v.map((x) => String(x ?? '').trim()).filter(Boolean) : [];
+    } catch {
+      donate = [];
     }
   }
   // 入口是否开放由后台的三个状态共同决定，前端只读这里算好的结果，避免「明明开了却显示未开放」
@@ -1002,18 +1021,25 @@ app.get('/author-request', async (c) => {
   const enabled = await getConfigBool(c.env, 'authorVerifyEnabled', true);
   const allowed = me.canAuthor;
   const pending = rows[0]?.status === 'pending';
+  /*
+   * 站长点「退回改资料」后，最新那份是 'returned'：认证保留，但表单要重新开放 ——
+   * 他要改的就是笔名 / 简介 / 头像 / 联系方式那几样，堵住入口只能靠站内私信沟通。
+   */
+  const returned = rows[0]?.status === 'returned';
   const blocked = !enabled
     ? '站点当前关闭了作者认证入口，站主在「设置 → 用户中心」打开后即可申请。'
     : !allowed
       ? '你还没有共创权限，请站主在后台「用户」页把你的用户组设为「共创」。'
-      : me.authorVerified
-        ? target.role === 'admin'
-          ? '管理员默认就是本站的认证作者，不需要申请；署名与作者资料在「我的信息 → 站长作者资料」里改。'
-          : '你已通过作者认证，资料如需修改请直接联系站主。'
-        : pending
-          ? '已有一份认证申请正在审核中。'
-          : '';
-  const canApply = enabled && allowed && !me.authorVerified && !pending;
+      : returned
+        ? ''
+        : me.authorVerified
+          ? target.role === 'admin'
+            ? '管理员默认就是本站的认证作者，不需要申请；署名与作者资料在「我的信息 → 站长作者资料」里改。'
+            : '你已通过作者认证，资料如需修改请直接联系站主。'
+          : pending
+            ? '已有一份认证申请正在审核中。'
+            : '';
+  const canApply = enabled && allowed && !pending && (!me.authorVerified || returned);
   return ok({
     verified: me.authorVerified,
     handle: me.handle,
@@ -1022,8 +1048,23 @@ app.get('/author-request', async (c) => {
     pending,
     canApply,
     blocked,
+    // 表单要按最新那份预填，退回改资料时才有意义 —— 笔名 / 简介之外，头像、个人站、
+    // 说明和赞赏图也要带回来，否则用户得把八条社交平台重打一遍。
     latest: rows[0]
-      ? { id: rows[0].id, penName: rows[0].penName, bio: rows[0].bio, status: rows[0].status, adminNote: rows[0].adminNote, createdAt: rows[0].createdAt, reviewedAt: rows[0].reviewedAt, social }
+      ? {
+          id: rows[0].id,
+          penName: rows[0].penName,
+          bio: rows[0].bio,
+          avatar: rows[0].avatar,
+          website: rows[0].website,
+          reason: rows[0].reason,
+          donateImages: donate,
+          status: rows[0].status,
+          adminNote: rows[0].adminNote,
+          createdAt: rows[0].createdAt,
+          reviewedAt: rows[0].reviewedAt,
+          social,
+        }
       : null,
     history: rows.map((r) => ({ id: r.id, penName: r.penName, status: r.status, createdAt: r.createdAt, reviewedAt: r.reviewedAt })),
   });
@@ -1033,7 +1074,15 @@ app.post('/author-request', async (c) => {
   const { target } = await resolveAccountTarget(c);
   const me = withAdminAuthorBits(target);
   if (!me.canAuthor) fail(403, '站主尚未开放你的作者认证入口');
-  if (me.authorVerified) {
+  /* 站长「退回改资料」之后（最新那份是 returned）允许再交一次：认证位保留，改的是笔名与资料本身 */
+  const latest = await createDb(c.env)
+    .select({ status: authorRequests.status })
+    .from(authorRequests)
+    .where(eq(authorRequests.userId, target.id))
+    .orderBy(sql`created_at desc`)
+    .limit(1);
+  const returned = latest[0]?.status === 'returned';
+  if (me.authorVerified && !returned) {
     fail(409, target.role === 'admin' ? '管理员本来就是认证作者，作者资料请在「我的信息 → 站长作者资料」里改' : '你已通过作者认证，如需修改资料请直接联系站主');
   }
   const parsed = authorSchema.safeParse(await c.req.json().catch(() => null));

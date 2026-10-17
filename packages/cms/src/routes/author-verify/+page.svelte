@@ -29,6 +29,7 @@
     ['pending', '待核验'],
     ['approved', '已通过'],
     ['rejected', '已驳回'],
+    ['returned', '已退回'],
     ['all', '全部'],
   ];
 
@@ -98,6 +99,26 @@
     }
   }
 
+  /**
+   * 退回给申请人改资料。只动这份申请单：他的认证徽章、作者标识、已发文章署名都不受影响，
+   * 重新提交后这份回到「待核验」，再点一次通过就生效。
+   */
+  async function sendBack(r: ReqRow) {
+    if (!form.note.trim() && !confirm('不填说明直接退回？用户在前台只会看到「站长已退回」，改什么最好写清楚。')) return;
+    busy = r.id;
+    error = '';
+    try {
+      await post(`/api/admin/author-requests/${r.id}/send-back`, { note: form.note.trim() });
+      notice = `${r.penName} 的认证已退回，认证徽章保留；他改完重新提交会回到「待核验」`;
+      open = null;
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : '退回失败';
+    } finally {
+      busy = '';
+    }
+  }
+
   async function remove(r: ReqRow) {
     if (!confirm('删除这条认证申请？记录会从库里清掉。')) return;
     busy = r.id;
@@ -114,6 +135,11 @@
   }
 
   $effect(() => void load());
+
+  const STATUS_TEXT: Record<string, string> = { pending: '待核验', approved: '已通过', rejected: '已驳回', returned: '已退回' };
+  const statusText = (s: string) => STATUS_TEXT[s] ?? s;
+  /** 退回不是否定，视觉上跟「待核验」同色；红色只留给真驳回 */
+  const statusCls = (s: string) => (s === 'approved' ? 'good' : s === 'rejected' ? 'bad' : 'pending');
 </script>
 
 <div class="row spread head">
@@ -124,6 +150,8 @@
 <p class="muted small">
   通过后账号会拿到认证徽章，笔名与简介同时写入该账号；用户也可以在后台「用户」页单独勾选权限。
   「作者标识」是文章 front matter 里 author 写的那个值，也是作者页地址 /author/标识/ 的一段，只能用英文、数字和短横线；通过后该用户的投稿发布时会自动用它署名。
+  已经通过的人想改笔名、简介、头像或联系方式：点开那份申请，按「退回改资料」——认证徽章、作者标识、已发文章的署名都不受影响，
+  只是把申请单退回给他，他改完重新提交会回到「待核验」，再点一次通过就生效。
 </p>
 
 <div class="tabs">
@@ -159,9 +187,7 @@
             <td class="clip">{r.bio || '—'}</td>
             <td>{r.social.length} 项</td>
             <td>
-              <span class="badge {r.status === 'approved' ? 'good' : r.status === 'rejected' ? 'bad' : 'pending'}">
-                {r.status === 'approved' ? '已通过' : r.status === 'rejected' ? '已驳回' : '待核验'}
-              </span>
+              <span class="badge {statusCls(r.status)}">{statusText(r.status)}</span>
               {#if r.status === 'approved' && !r.authorVerified}
                 <span class="badge pending">徽章已撤</span>
               {/if}
@@ -193,13 +219,16 @@
                   <label>笔名<input bind:value={form.penName} maxlength="64" /></label>
                   <label>作者标识<input bind:value={form.handle} maxlength="40" placeholder="如 zhizhi，留空则不改" /></label>
                   <label class="full">简介<input bind:value={form.bio} maxlength="300" placeholder="通过后写入账号资料" /></label>
-                  <label class="full">审核备注<input bind:value={form.note} maxlength="500" placeholder="驳回时建议写明缺什么证明" /></label>
+                  <label class="full">审核备注<input bind:value={form.note} maxlength="500" placeholder="驳回或退回时建议写明缺什么、要改哪里" /></label>
                 </div>
                 <div class="row acts">
                   <span class="grow"></span>
                   <button class="sm" onclick={() => (open = null)}>取消</button>
                   {#if r.status === 'pending'}
                     <button class="sm danger" onclick={() => void reject(r)} disabled={busy === r.id}>驳回</button>
+                  {/if}
+                  {#if r.status === 'approved'}
+                    <button class="sm" onclick={() => void sendBack(r)} disabled={busy === r.id}>退回改资料</button>
                   {/if}
                   <button class="sm primary" onclick={() => void approve(r)} disabled={busy === r.id}>
                     {busy === r.id ? '处理中…' : '通过认证'}

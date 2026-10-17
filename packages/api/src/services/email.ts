@@ -7,10 +7,14 @@ import { getConfig, getConfigBool, getConfigInt } from './config';
 export interface EmailResult {
   success: boolean;
   error?: string;
+  /** 服务商 / SMTP 的原文回执，见 sendViaSmtp 的注释：250 只代表中继收下了 */
+  detail?: string;
 }
 
 interface SendInput {
   to: string;
+  /** 抄送一份（后台用来核对「用户收到的那封长什么样」） */
+  cc?: string[];
   subject: string;
   html: string;
   from?: string;
@@ -115,6 +119,7 @@ export async function sendBySmtp(env: Env, input: SendInput): Promise<EmailResul
     from,
     fromName: fromName ?? undefined,
     to: input.to,
+    cc: input.cc,
     subject: input.subject,
     html: input.html,
     replyTo: from ?? undefined,
@@ -135,12 +140,14 @@ async function sendViaResend(env: Env, input: SendInput): Promise<EmailResult> {
       body: JSON.stringify({
         from: fromName ? `${fromName} <${from}>` : from,
         to: [input.to],
+        ...(input.cc?.length ? { cc: input.cc } : {}),
         subject: input.subject,
         html: input.html,
       }),
     });
-    if (!res.ok) return { success: false, error: `Resend ${res.status}: ${await res.text()}` };
-    return { success: true };
+    const text = await res.text();
+    if (!res.ok) return { success: false, error: `Resend ${res.status}: ${text}`, detail: text };
+    return { success: true, detail: text };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -154,15 +161,18 @@ async function sendViaCloudflare(env: Env, input: SendInput): Promise<EmailResul
   if (!accountId || !token || !from) return { success: false, error: 'Cloudflare Email Sending 未配置完整' };
 
   const boundary = '----=_ZeroMailBoundary';
+  /* 这个接口只认 to 字段（可重复），所以抄送按多一个 to 投出去 */
   const mime = [
     '--' + boundary,
     'Content-Disposition: form-data; name="from"',
     '',
     from,
-    '--' + boundary,
-    'Content-Disposition: form-data; name="to"',
-    '',
-    input.to,
+    ...[input.to, ...(input.cc ?? [])].flatMap((one) => [
+      '--' + boundary,
+      'Content-Disposition: form-data; name="to"',
+      '',
+      one,
+    ]),
     '--' + boundary,
     'Content-Disposition: form-data; name="subject"',
     '',
@@ -182,8 +192,8 @@ async function sendViaCloudflare(env: Env, input: SendInput): Promise<EmailResul
       body: mime,
     });
     const text = await res.text();
-    if (!res.ok) return { success: false, error: `Cloudflare Email ${res.status}: ${text}` };
-    return { success: true };
+    if (!res.ok) return { success: false, error: `Cloudflare Email ${res.status}: ${text}`, detail: text };
+    return { success: true, detail: text };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : String(e) };
   }

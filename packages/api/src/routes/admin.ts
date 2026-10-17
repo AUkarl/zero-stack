@@ -21,6 +21,7 @@ import {
   validateAuthorsYaml,
 } from '../services/authors';
 import { deleteCommentSubtree } from '../services/comment-tree';
+import { notifySelfTest } from '../services/comment-notify';
 import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
@@ -888,6 +889,35 @@ app.post('/email/test', async (c) => {
     ip: clientIp(c),
   });
   return ok({ sent: res.success, error: res.error ?? null, kind, to: parsed.data.to });
+});
+
+/**
+ * POST /api/admin/email/notify-test { to? }
+ * 新评论提醒链路自检：按 notifyNewComment 用的同一套配置与模板各发一封
+ * （站长那封 + 用户那封，后者抄送站长），回里带实际算出的收件人和 SMTP 原文回执。
+ * 收件人不填就发给站长自己（adminNotifyEmail → emailFrom → 账号邮箱）。
+ */
+app.post('/email/notify-test', async (c) => {
+  const admin = requireAdmin(c);
+  const env = c.env;
+  const parsed = z.object({ to: z.string().email().max(200).optional() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) fail(400, '收件人要填合法邮箱，或者整段留空（发给你自己）');
+  const to =
+    parsed.data.to ||
+    (await getConfig(env, 'adminNotifyEmail'))?.trim() ||
+    (await getConfig(env, 'emailFrom'))?.trim() ||
+    admin.email ||
+    '';
+  if (!to) fail(400, '没有可用收件人：请在「设置 → 发信方式」填发件地址，或在这里指定一个邮箱');
+  const result = await notifySelfTest(env, to);
+  await writeAudit(env, {
+    actor: admin,
+    action: 'config',
+    target: 'email:notify-test',
+    detail: { to, rows: result.rows.map((r) => ({ to: r.to, cc: r.cc, sent: r.sent, error: r.error })) },
+    ip: clientIp(c),
+  });
+  return ok(result);
 });
 
 app.get('/email-logs', async (c) => {

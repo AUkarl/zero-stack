@@ -16,7 +16,7 @@ import { postDrafts, users } from '../db/schema';
 import { canonSlug } from '../lib/slug';
 import { siteAuthorName } from './authors';
 import { getConfig, getConfigBool } from './config';
-import { queueEmail, renderEmail } from './email';
+import { queueEmail, renderEmail, sendEmail } from './email';
 import { commentEmailHtml } from './email-content';
 
 export interface NotifyComment {
@@ -210,6 +210,9 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
       );
       await queueEmail(env, {
         to: r.to,
+        // 发给用户的那几封各抄站长一份：他能在自己邮箱里直接看到「用户收到的那封长什么样」，
+        // 出问题时不用猜到底是没发、发了别的内容，还是发出去了没送达。
+        cc: adminEmail && r.to !== adminEmail.toLowerCase() ? [adminEmail] : undefined,
         subject: r.subject,
         html,
         from: fromMail || undefined,
@@ -231,4 +234,103 @@ async function sameAccount(env: Env, userId: string | null, email: string): Prom
   } catch {
     return false;
   }
+}
+
+/* ------------------------------------------------------------------ 通知链路自检 */
+
+export interface NotifySelfTestRow {
+  /** 这一封在链路里扮演谁 */
+  label: string;
+  to: string;
+  cc: string[];
+  subject: string;
+  sent: boolean;
+  error: string | null;
+  /** 服务商 / SMTP 的原文回执 */
+  detail: string | null;
+}
+
+export interface NotifySelfTest {
+  provider: string;
+  smtp: string;
+  from: string;
+  adminEmail: string;
+  adminEmailSource: 'adminNotifyEmail' | 'emailFrom（没单独填站长收件邮箱）' | '（两处都没填）';
+  siteUrl: string;
+  toggles: { commentNotifyAdmin: boolean; commentNotifyReply: boolean; commentNotifyAuthor: boolean };
+  rows: NotifySelfTestRow[];
+  note: string;
+}
+
+/**
+ * 后台「通知链路自检」：按 notifyNewComment 真正用的那套配置与模板各发一封，
+ * 并把 SMTP / 服务商的原文回执、实际算出来的收件人摊开给站主看。
+ *
+ * 为什么不走队列：这里要的是「当场知道结果」，队列是异步的，点完按钮只看到已入队，
+ * 反而更迷惑。sendEmail 与队列消费者用的是同一个发送层，通道一致性不受影响。
+ */
+export async function notifySelfTest(env: Env, to: string): Promise<NotifySelfTest> {
+  const siteName = (await getConfig(env, 'siteName')) ?? '';
+  const fromMail = (await getConfig(env, 'emailFrom'))?.trim() ?? '';
+  const configuredAdmin = (await getConfig(env, 'adminNotifyEmail'))?.trim() ?? '';
+  const adminEmail = configuredAdmin || fromMail;
+  const base = await siteBase(env);
+  const ownerName = await siteAuthorName(env);
+  const sample =
+    '这是一封由后台「通知链路自检」发出的样例信，用来确认新评论提醒的通道、模板与收件人。' +
+    `发信时间是 ${new Date().toISOString()}。收到它就说明这条链路是通的。`;
+
+  const send = async (label: string, recipient: string, cc: string[], subject: string, nickname: string, where: string): Promise<NotifySelfTestRow> => {
+    const html = await renderEmail(
+      env,
+      'comment',
+      { author: '测试用户', where, content: sample, url: `${base}/`, title: '通知链路自检', siteName },
+      { title: subject, nickname, rawKeys: ['content'] },
+    );
+    const res = await sendEmail(env, { to: recipient, cc: cc.length ? cc : undefined, subject, html, from: fromMail || undefined, kind: 'notice' });
+    return { label, to: recipient, cc, subject, sent: res.success, error: res.error ?? null, detail: res.detail ?? null };
+  };
+
+  // 第 1 封：站长期待收到的「新评论待处理」
+  const toAdmin = adminEmail || to;
+  const rows: NotifySelfTestRow[] = [];
+  rows.push(
+    await send(
+      '站长那一封（commentNotifyAdmin）',
+      toAdmin,
+      [],
+      `【${siteName}】新评论待处理`,
+      ownerName || '站长',
+      '文章「通知链路自检」',
+    ),
+  );
+  // 第 2 封：用户那一封（回复提醒），并抄送站长一份
+  rows.push(
+    await send(
+      '用户那一封（commentNotifyReply）+ 抄送站长',
+      to,
+      adminEmail && adminEmail.toLowerCase() !== to.toLowerCase() ? [adminEmail] : [],
+      `【${siteName}】测试用户 回复了你的评论`,
+      to,
+      '文章「通知链路自检」的评论下',
+    ),
+  );
+
+  return {
+    provider: (await getConfig(env, 'emailProvider')) ?? 'smtp',
+    smtp: `${(await getConfig(env, 'smtpHost')) || '（未填）'}:${(await getConfig(env, 'smtpPort')) || '（未填）'}`,
+    from: fromMail || '（未填 emailFrom）',
+    adminEmail: adminEmail || '（空）',
+    adminEmailSource: configuredAdmin ? 'adminNotifyEmail' : fromMail ? 'emailFrom（没单独填站长收件邮箱）' : '（两处都没填）',
+    siteUrl: base || '（未配置 siteUrl，信里的链接会只剩路径）',
+    toggles: {
+      commentNotifyAdmin: await getConfigBool(env, 'commentNotifyAdmin', true),
+      commentNotifyReply: await getConfigBool(env, 'commentNotifyReply', true),
+      commentNotifyAuthor: await getConfigBool(env, 'commentNotifyAuthor', true),
+    },
+    rows,
+    note:
+      'sent = 中继已经收下这封信（SMTP 回 250）。250 不等于投进对方收件箱：' +
+      '地址不存在、被判为垃圾、服务商限流都照样回 250。两封都 sent 却邮箱里没有，就查发信邮箱服务商的投递日志与垃圾箱。',
+  };
 }

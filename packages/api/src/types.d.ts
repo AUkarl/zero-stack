@@ -55,6 +55,8 @@ interface Env {
 /** 邮件出站队列的消息体 */
 interface EmailJob {
   to: string;
+  /** 抄送地址，队列消费者会原样转给发送层 */
+  cc?: string[];
   subject: string;
   html: string;
   from?: string;

@@ -11,6 +11,7 @@ import { createDb } from '../db/client';
 import { subscribers } from '../db/schema';
 import { getConfig, getConfigBool } from './config';
 import { mailQuotaCheck, queueEmail, renderEmail } from './email';
+import { cleanSummary } from './feed-summary';
 
 const STATE_KEY = 'zero:subscribe-push:last';
 
@@ -204,7 +205,7 @@ async function fetchFeed(url: string): Promise<FeedItem[]> {
       title: unescapeXml(tagText(block, 'title') ?? ''),
       link,
       pubDate: tagText(block, 'pubDate') ?? '',
-      summary: unescapeXml(stripTags(tagText(block, 'description') ?? tagText(block, 'content:encoded') ?? '')).slice(0, 300),
+      summary: cleanSummary(unescapeXml(stripTags(tagText(block, 'description') ?? tagText(block, 'content:encoded') ?? ''))).slice(0, 300),
     });
   }
   return items;
@@ -229,6 +230,11 @@ function tagAttr(xml: string, name: string): string | null {
 function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
+
+/**
+ * RSS 的 description 往往是整篇正文（Hugo 默认给全文），末尾还带着主题自己那截页脚。
+ * 清洗口径与朋友动态那条链路共用一份，见 services/feed-summary.ts。
+ */
 
 function unescapeXml(s: string): string {
   return s

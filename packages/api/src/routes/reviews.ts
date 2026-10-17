@@ -17,7 +17,7 @@ import { authorRequests, postDrafts, users } from '../db/schema';
 import { writeAudit } from '../services/audit';
 import { upsertAuthor, type AuthorSocialRow } from '../services/authors';
 import { withAdminAuthorBits } from '../services/admin-author';
-import { getConfig, getConfigBool } from '../services/config';
+import { getConfig } from '../services/config';
 import { purgePageUrls, type PurgeResult } from '../services/cf-purge';
 import { postWebPath } from '../services/frontmatter';
 import { writeFile } from '../services/git';
@@ -84,6 +84,8 @@ async function rememberSubmitterAuthor(env: Env, userId: string, actor: { id?: s
       email: users.email,
       bio: users.bio,
       website: users.website,
+      // 作者表头像必填：先取账号自己填的那张（个人中心「我的资料」里那张），没有才按邮箱推
+      image: users.image,
       authorVerified: users.authorVerified,
     })
     .from(users)
@@ -103,7 +105,7 @@ async function rememberSubmitterAuthor(env: Env, userId: string, actor: { id?: s
     {
       handle: key,
       name: me.name || key,
-      avatar: avatarForEmail(me.email || ''),
+      avatar: (me.image ?? '').trim() || avatarForEmail(me.email || ''),
       email: me.email || '',
       bioZh: me.bio,
       website: me.website,
@@ -266,19 +268,28 @@ draftsAdmin.post('/:id/approve', async (c) => {
   let synced = false;
   let syncError: string | null = null;
   let commit: string | null = null;
-  const autoPublish = await getConfigBool(c.env, 'gitWritebackEnabled', false);
-  if (parsed.data.publish !== false && autoPublish) {
+  /*
+   * 点「通过」就把文章写进仓库并触发构建 —— 以前这里还要先看设置里的「投稿通过后自动写入仓库」
+   * （默认关着），于是站长点了通过、文章却还在库里没上线，得再点一次「补发」才对，
+   * 而那一步在界面上看起来像失败了。开关已删：审核通过 = 发布，「补发」按钮留着当重试入口
+   * （写仓库失败时状态仍是 approved + publishedPath 为空，补发就是补这一步）。
+   */
+  if (parsed.data.publish !== false) {
     try {
-      const settings = await repoTarget(c.env);
-      const result = await writeFile({ ...settings, path, content: markdown, message: `zero-cms: 投稿发布 ${row.title}` });
-      synced = result.success;
-      syncError = result.success ? null : result.error ?? '提交失败';
-      commit = result.success ? result.sha ?? null : null;
+      if ((await repoBackend(c.env)) === 'none') {
+        syncError = '未配置内容仓库（githubOwner/githubRepo + GITHUB_TOKEN，或本地 GIT_LOCAL_DIR），文章只标记通过、没写进站点';
+      } else {
+        const settings = await repoTarget(c.env);
+        const result = await writeFile({ ...settings, path, content: markdown, message: `zero-cms: 投稿发布 ${row.title}` });
+        synced = result.success;
+        syncError = result.success ? null : result.error ?? '提交失败';
+        commit = result.success ? result.sha ?? null : null;
+      }
     } catch (e) {
       syncError = e instanceof Error ? e.message : String(e);
     }
   } else {
-    syncError = autoPublish ? '已跳过写入' : '未开启 Git 回写，仅标记通过';
+    syncError = '按提交时选的「只标记通过」处理，没写进仓库';
   }
 
   await db
@@ -639,8 +650,10 @@ authorsAdmin.post('/:id/approve', async (c) => {
       {
         handle: fileHandle,
         name: penName,
-        // 申请里留空就用邮箱的 Cravatar / QQ 头像，跟评论头像走同一条退化链
-        avatar: (row.avatar || '').trim() || avatarForEmail(email),
+        // 头像以账号上「用户自己设置过的那张」为准，其次才是申请里填的；都没有才退回邮箱的
+        // Cravatar / QQ 头像，跟评论头像走同一条退化链
+        avatar:
+          (account.image ?? '').trim() || (row.avatar ?? '').trim() || avatarForEmail(email),
         email,
         bioZh: b.bio ?? row.bio ?? '',
         website: row.website || account.website || '',
@@ -679,6 +692,37 @@ authorsAdmin.post('/:id/reject', async (c) => {
     .where(eq(authorRequests.id, row.id));
   await writeAudit(c.env, { actor: admin, action: 'authorRequest', target: row.id, detail: { event: 'reject' }, ip: clientIp(c) });
   return ok({ id: row.id, status: 'rejected' });
+});
+
+/**
+ * POST /api/admin/author-requests/:id/send-back —— 把「已通过」的那份退回给申请人改资料。
+ *
+ * 只动申请单本身：状态回 'returned'、写下站长的意见、清掉审核时间。
+ * 账号的认证位、作者标识、用户组、已发文章的署名一概不碰 —— 退回是为了让他把笔名、
+ * 简介、头像、联系方式改对，不是撤销他的作者身份。
+ * 他重新提交后这份会回到 'pending'，再核验一次即可。
+ */
+authorsAdmin.post('/:id/send-back', async (c) => {
+  const admin = requireAdmin(c);
+  const parsed = z.object({ note: z.string().trim().max(500).optional() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) fail(400, '参数有误');
+  const db = createDb(c.env);
+  const rows = await db.select().from(authorRequests).where(eq(authorRequests.id, c.req.param('id'))).limit(1);
+  const row = rows[0];
+  if (!row) fail(404, '申请不存在');
+  if (row.status !== 'approved') fail(409, '只有已通过的申请才需要退回；待核验的那份直接驳回就行');
+  await db
+    .update(authorRequests)
+    .set({ status: 'returned', reviewerId: admin.id, adminNote: parsed.data.note || null, reviewedAt: null })
+    .where(eq(authorRequests.id, row.id));
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'authorRequest',
+    target: row.id,
+    detail: { event: 'send-back', userId: row.userId, note: parsed.data.note || '' },
+    ip: clientIp(c),
+  });
+  return ok({ id: row.id, status: 'returned', note: parsed.data.note || '' });
 });
 
 authorsAdmin.delete('/:id', async (c) => {
