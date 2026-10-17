@@ -333,7 +333,9 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
         site: owner?.name ?? '',
         siteurl: owner?.url ?? '',
         date: new Date((p.pubDate ?? p.fetchedAt) * 1000).toISOString(),
-        summary: (p.summary ?? '').replace(/\s+/g, ' ').trim().slice(0, 160),
+        // 入库那次已经清过一遍，这里再按同一口径清一次：早先存进去的旧行还带着对方站点
+        // 那截页脚（「站点名 · 订阅更新 · 退订」），下一次跑就能把它们洗干净，不用重建库
+        summary: cleanSummary((p.summary ?? '').replace(/\s+/g, ' ').trim()).slice(0, 160),
         // 抓取时就记下的那张封面；老库里没有的为空串，前台按「友链头像 → 邮箱头像」往下退
         image: p.image ?? '',
       };

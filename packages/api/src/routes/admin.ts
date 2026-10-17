@@ -426,8 +426,7 @@ async function notifyPostSubscribers(env: Env, adminId: string, path: string, pa
   const html =
     `<h2>${escapeHtml(title)}</h2>` +
     (summary ? `<p>${escapeHtml(summary)}</p>` : '') +
-    `<p><a href="${link}">阅读全文</a></p>` +
-    (site ? `<hr><p style="color:#888;font-size:12px">${escapeHtml(site)} · <a href="${link}/subscribe/">订阅更新</a> · <a href="${link}#unsubscribe">退订</a></p>` : '');
+    `<p><a href="${link}">阅读全文</a></p>`;
   const jobId = await createBroadcastJob(env, {
     subject: `${site ? site + '：' : ''}${title}`,
     html,

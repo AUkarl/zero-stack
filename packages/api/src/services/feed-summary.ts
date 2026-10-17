@@ -1,9 +1,9 @@
 /**
  * feed-summary.ts — RSS 摘要入库前的清洗
  *
- * 对方站点的 <description> 往往是整篇正文（Hugo 默认给全文），末尾还带着主题自己那截页脚 ——
+ * 有些站点的 <description> 是整篇正文（Hugo 默认给全文），末尾还带着主题自己那截页脚 ——
  * 「站点名 · [订阅更新](/posts/xxx//subscribe/) · [退订](/posts/xxx/#unsubscribe)」这一行，
- * 原样进订阅邮件与朋友动态就是两行看不懂的东西：markdown 没渲染、地址还是相对那篇文章的。
+ * 原样进订阅邮件与朋友动态就是看不懂的两行字：markdown 没渲染、地址还是相对那篇文章的。
  *
  * 两条链路共用这里：订阅推送（services/feed-push.ts）与朋友动态抓取（services/scheduler.ts）。
  * 我们自己在邮件末尾拼的那行「不再想收到本站邮件？点这里退订」是模板加的，拼在这一步之后，不受影响。
