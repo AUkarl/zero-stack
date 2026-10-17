@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, put, del } from '#lib/api';
+  import { get, put, del, purgeNote, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { renderMarkdown, splitFrontMatter } from '#lib/markdown';
   import { frontUrl } from '#lib/session.svelte';
@@ -353,11 +353,13 @@
     if (!confirm(`删除 ${m.name}？仓库里的这条时刻文件会被提交删除。`)) return;
     error = '';
     try {
-      await del(`/api/admin/content/file?path=${encodeURIComponent(m.path)}`);
+      const res = await del<{ data: { purge: PurgeOut | null } }>(
+        `/api/admin/content/file?path=${encodeURIComponent(m.path)}`,
+      );
       if (editing === m.path) resetForm();
       await load();
-      notice = '已删除';
-      setTimeout(() => (notice = ''), 2500);
+      notice = `已删除${purgeNote(res?.data?.purge)}`;
+      setTimeout(() => (notice = ''), 8000);
     } catch (e) {
       error = e instanceof Error ? e.message : '删除失败';
     }

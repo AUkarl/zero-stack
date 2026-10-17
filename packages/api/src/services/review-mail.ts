@@ -14,6 +14,7 @@ import { eq } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { users } from '../db/schema';
 import { getConfig } from './config';
+import { postWebPath } from './frontmatter';
 import { queueEmail, renderEmail } from './email';
 
 /** 发送结论：notified 是「信已经交出去」，失败原因只在 notifyError 里 */
@@ -73,7 +74,15 @@ async function siteHome(env: Env): Promise<string> {
  * body 是各流程自己拼好的 HTML 段落（已经逐段转义过），所以按 rawKeys 里的 {content} 原样插入；
  * 外壳与称呼来自后台「邮件模板 → 其它通知」，改文案不必发版。
  */
-async function notifyOne(env: Env, to: string, subject: string, body: string, url = ''): Promise<NotifyOutcome> {
+async function notifyOne(
+  env: Env,
+  to: string,
+  subject: string,
+  body: string,
+  /** 没有地址就别给按钮：空 url 会让信里出现一枚看不见字的灰块，点了还什么也不发生 */
+  url = '',
+  actionLabel = '回到站点查看',
+): Promise<NotifyOutcome> {
   const address = to.trim();
   if (!address) return { notified: false, notifyError: '没有可用的收件邮箱' };
   const site = await siteName(env);
@@ -81,7 +90,7 @@ async function notifyOne(env: Env, to: string, subject: string, body: string, ur
   const html = await renderEmail(
     env,
     'notice',
-    { intro: subject, content: body, title: subject, url, action: url ? '回到站点查看' : '' },
+    { intro: subject, content: body, title: subject, url, action: url ? actionLabel : '' },
     { title: subject, rawKeys: ['content'] },
   );
   try {
@@ -117,7 +126,15 @@ export async function sendFriendReviewResult(env: Env, app: FriendAppLike, appro
         reason ? `站主说明：${escapeHtml(reason)}` : '站主没有留下具体理由，欢迎修改后重新提交。',
         links,
       );
-  return notifyOne(env, app.email ?? '', approved ? '友链申请已通过' : '友链申请未通过', body);
+  /* 按钮要落到具体页面：友链页能看到自己是否已上架，比只给一个首页有用得多 */
+  return notifyOne(
+    env,
+    app.email ?? '',
+    approved ? '友链申请已通过' : '友链申请未通过',
+    body,
+    home ? `${home}/links/` : '',
+    approved ? '去友链页看看' : '回本站看看',
+  );
 }
 
 /**
@@ -168,5 +185,14 @@ export async function sendDraftReviewResult(env: Env, draft: DraftLike, approved
     );
   }
 
-  return notifyOne(env, email, subject, body);
+  /* 已经发布出去的投稿才给按钮（指向那篇文章）；没发布的给个首页链接只会让人以为文章上线了 */
+  const web = draft.publishedPath ? postWebPath(String(draft.publishedPath)) : '';
+  return notifyOne(
+    env,
+    email,
+    subject,
+    body,
+    home && web ? `${home}${web.startsWith('/') ? web : `/${web}`}` : '',
+    home && web ? '去读这篇文章' : '',
+  );
 }

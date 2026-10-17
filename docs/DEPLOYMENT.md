@@ -447,6 +447,17 @@ pnpm check   # 本地跑同一套校验
 | 后台「前端管理 → 主题配置文件」显示读取不到 | 站点通常没有自己的 `config/_default/params.toml`。这种情形现在会把主题那份全量注释模板载入编辑器，改完保存就在你站点里建出这份文件；`create:site` 也会预先复制好一份 |
 | 用 `pnpm create:site` 生成的站点部署完像纯静态：评论、点赞、订阅、时刻全不出现 | 已修：生成器把 `apiBaseURL` 写进根 `hugo.toml` 的 `[params]`，同时又把主题那份全量注释版复制成站点的 `config/_default/params.toml` —— 而 Hugo 合并两处时**以 `config/_default/params.toml` 为准**（同名键实测取那份的值），那份里 `apiBaseURL = ""`，于是后端地址被空值静默盖掉，主题按「无后端」渲染成纯静态。现在站点只留一份参数：`hugo.toml` 里不再写 `[params]`，后端地址与默认署名直接写进 `config/_default/params.toml`；子模块还没拉下来时先生成只含这两个键的最小版本并提示怎么换成全量模板。自查一条命令：`grep -rl '你的worker域名' public \| wc -l`，为 0 就是被盖掉了 |
 | 页面里用了 `{{< figure >}}` 就整站构建失败：`wrong number of args for return` | 已修（主题 `partials/shortcodes/safe-url.html`）：`return` 只能出现在模板体顶层，写进 `if` 分支会被 Hugo 当成一个叫 return 的函数去数参数。主题用 `hugo` 本地构建一遍即可复现 |
+| 后台删了文章，原链接还能打开；强刷无效 | 不是缓存问题就是 CDN：Pages 出来的 HTML 在边缘是 `cache-control: public, s-maxage=604800`（7 天），仓库删了、站点重建了，边缘仍会端出旧那份。判断依据：`curl -sI https://你的域名/posts/xxx/ \| grep -i cf-cache-status` 回 `HIT` 就是 CDN 命中，与浏览器无关。现在删除接口在重建之后会自动按 URL 清这一条（文章与时刻都算），需要「设置 → 内容仓库」里的 `cfZoneId` + `cfPurgeToken`（API 令牌只给 Zone 的 Cache: purge 权限即可）。没配时不报错，会在删除结果里写明要粘到控制台「缓存 → 清除缓存 → 自定义缓存清除」的那行完整地址 |
+| 新评论通知发给了发件邮箱，站长收不到 | 收件人以前固定取 `emailFrom`（发件箱）。现在是 `adminNotifyEmail`（「设置 → 评论 → 站长收件箱」那一栏），留空才回落发件箱。后台「发信方式 → 测试发送」发得到但通知收不到，就是这一栏没填 —— 发信日志 `email_logs` 里那条的 `to` 写的就是实际收件人 |
+| 不知道订阅的人有没有点确认邮件 | 「订阅者」页顶部现在有一行汇总（已确认 / 待确认 / 已退订），待确认就是「信发到了但没点，或压根没收到」；表里「确认时间」那列就是点击时间。另外 `/api/subscribe/confirm` 与 `/unsub` 不再 302 跳首页，而是自己回一页回执，订阅者能看到「是谁、点成功了没有」 |
+| 邮件里那个「确认订阅」按钮点不开 / 跳到一个 404 | 确认链接必须由**接口自己的域名**拼（Pages 上的站点没有 `/api` 代理）。后端第一次收到订阅请求时会自动把 worker 域名记进 `apiBaseUrl`，换域名后在「设置 → 内容仓库 → 接口地址」改。模板里 `{url}` 留空时那一行按钮整行不再渲染，不会出现「点开是空链接」的邮件 |
+| 页面里的邮箱显示成 `[email protected]`，复制下来还是一串乱码 | Cloudflare 的 Email Protection（仪表盘 → 邮箱 → Email Routing → 邮箱保护）会在投递时重写 HTML 里的裸邮箱。主题已把「友链申请 → 我的信息」里 `@` 前的部分用 `<wbr>` 断开（`partials/links-apply.html`），`<wbr>` 是零宽元素、不进 `innerText`，所以复制按钮取到的还是干净地址；后台关掉「邮箱保护」也能解决，但会连带失去 spam 地址保护 |
+| 关于页的头像/昵称和后台「我的信息 → 账号资料」不一致 | 站长保存账号资料时，后端会把昵称与头像同步进内容仓库的 `data/owner.json`（`setOwnerProfile`），主题关于页顶部读那份（`partials/about-content.html`：owner.json > `params.aboutName/aboutAvatar`）。单独一个文件而不是并进 `about.json`：那份整份归「前端管理 → 关于页」的表单，两个写入方挤在一起，存一次关于页就会把同步来的头像抹掉。保存结果里会写明有没有落进仓库、构建有没有触发 |
+| 时刻页关掉「顶部横幅背景图」后留一大块空白 | 已修：关掉背景时横幅压成一条紧凑的浅色身份栏；头像与昵称也一起关掉时整块不再输出（以前那个 280px 的框还留着）。改的是主题 `layouts/moments/list.html` 与 `assets/css/shuo.css` 的 `no-bg` 变体 |
+| 友链图标 / 评论头像拿不到，或者拿错了人 | 统一后的链是：**本人填的** → Gravatar → Cravatar →（qq.com / foxmail.com 且 @ 前是纯数字）QQ 头像 → 没有就留白（评论区留首字母色块）。三家都带 `d=404`，写 `d=mp` 会拿到一张通用灰影人，链条当场断在那里。后台「头像与媒体 → 头像地址模板」填了就顶到最前（等于整条链换图床）。友链那三处还多一档：定时任务探到的 favicon，缓存在 `data/linksicons.json`（只补缺，人工改过的不覆盖）；以前这个探测没有，主题只能在建站时干等 |
+| 注册用户没设头像时评论没有头像 | 已修：`/api/comments` 以前对登录用户把邮箱硬写成 `null`（`avatars(isUser ? null : …)`），于是「没单独设头像的注册用户」一律掉到首字母，邮箱注册过 Gravatar 也拿不到。现在取评论行存的 `authorEmail`，再兜账号里那份邮箱 |
+| 个人中心「点赞 / 收藏」一直显示「未同步标题」 | 已修：以前只查 `post_drafts`（只含这个人自己的投稿），别人写的、以及站长在后台直接写的文章查不到。现在按地址去内容仓库的 `content/…/posts/<文件名>.md` 读 front matter 标题（一次列目录 + 只读用得到的那几个文件）。时刻卡片按设计没有标题，改显示「时刻」标记，不再顶那块牌子 |
+| `/author/<标识>/` 与文章底部作者框说的不是同一个人，作者页文章数也偏少 | 已修，三处口径统一到同一份 `data/authors.yaml`：① 后端写 front matter 的 `author:` 现在只用作者标识（没有标识的按邮箱前缀推一个），不再退回中文昵称 —— 昵称被 Hugo `urlize` 之后与 yaml 里的键就不是同一个串了；② 署名找作者页时按「原值 → 小写 → urlize」三档查 `Site.Taxonomies`（它的键是小写化的原值，不是 urlize 后的地址片段，以前只查 urlize 那份，标识里一旦有大写或空格就点不动）；③ 作者页只数 `/posts/` 里的文章，且没写 `author:` 的算到默认作者名下（署名显示的就是他，以前不算，所以数量对不上）；④ 默认作者取 `data/site.json`（后台那份）优先，以前这一页只读 `params.default_author`；⑤ 赞赏码只给站长，投稿作者的框里不再挂站长的收款码 |
 
 ---
 

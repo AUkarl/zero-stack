@@ -151,8 +151,16 @@ export async function renderEmail(
   const key = TEMPLATE_CONFIG_KEY[kind];
   const configured = opts.template ?? (await getConfig(env, key)) ?? '';
   const shell = await shellVars(env, opts.nickname);
+  const raw = configured.trim() ? configured : DEFAULT_TEMPLATES[kind];
+  /*
+   * 没有 url 就把「带 {url} 的那一整行」整行去掉。fillTemplate 只会把空值替换成空串，
+   * 结果留下一枚 `<a href=""></a>`：邮件里是一个看不见字的灰块，点了什么也不发生
+   * （友链审核结果信以前就是这样）。整行删掉才是「这封信本来就没有跳转按钮」。
+   * 按行处理而不是事后正则删 HTML：后台可以自己改模板，行结构比标签稳定。
+   */
+  const template = (vars.url ?? '').trim() ? raw : raw.split('\n').filter((line) => !line.includes('{url}')).join('\n');
   const body = fillTemplate(
-    configured.trim() ? configured : DEFAULT_TEMPLATES[kind],
+    template,
     { siteName: shell.siteName, siteUrl: shell.siteUrl, ...vars },
     opts.rawKeys,
   );

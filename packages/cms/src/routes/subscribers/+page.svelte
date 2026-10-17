@@ -35,16 +35,31 @@
   let error = $state('');
   let notice = $state('');
 
+  /**
+   * 各状态各多少人。列表是按当前标签过滤过的，数不出全貌，所以每次一并取 status=all 的全量来数。
+   * 「待确认」就是信已发到、但人还没点信里那个确认按钮 —— 这一栏解决的就是
+   * 「订阅用户到底有没有点确认邮件」这件事：点了的人会挪进「已确认」并带上确认时间。
+   */
+  let counts = $state({ all: 0, confirmed: 0, pending: 0, unsubscribed: 0 });
+
   async function load() {
     loading = true;
     error = '';
     try {
-      const [s, l] = await Promise.all([
+      const [s, l, all] = await Promise.all([
         get<{ data: Subscriber[] }>(`/api/admin/subscribers?status=${tab}`),
         get<{ data: EmailLog[] }>('/api/admin/email-logs'),
+        get<{ data: Subscriber[] }>('/api/admin/subscribers?status=all'),
       ]);
       subs = s.data || [];
       logs = l.data || [];
+      const list = all.data || [];
+      counts = {
+        all: list.length,
+        confirmed: list.filter((x) => x.status === 'confirmed').length,
+        pending: list.filter((x) => x.status === 'pending').length,
+        unsubscribed: list.filter((x) => x.status === 'unsubscribed').length,
+      };
     } catch (e) {
       error = msg(e);
     } finally {
@@ -144,6 +159,11 @@
   {/each}
   <span class="muted small">当前 {subs.length} 条</span>
 </div>
+
+<p class="muted small">
+  共 {counts.all} 个邮箱：已确认 <b>{counts.confirmed}</b>（点过信里的确认按钮）、待确认 <b>{counts.pending}</b>（信发到了但还没点，或压根没收到）、已退订
+  <b>{counts.unsubscribed}</b>。只有「已确认」的会收到群发；确认时间在看下表格里那一列。
+</p>
 
 <div class="card table-wrap">
   <table class="cols-wide">

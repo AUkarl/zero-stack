@@ -27,6 +27,8 @@ export interface Comment {
   avatar: string;
   /** 邮箱 md5 拼的 gravatar，avatar 加载失败时的第二级退化 */
   gravatar?: string;
+  /** 第二级之后还要依次试的地址（Cravatar、QQ 号头像），img onerror 一路往下换 */
+  fallbacks?: string[];
   emailDomain?: string;
   isAuthor: boolean;
   group?: CommentGroup;

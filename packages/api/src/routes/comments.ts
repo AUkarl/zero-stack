@@ -6,7 +6,7 @@ import { comments, commenters, users } from '../db/schema';
 import { createDb } from '../db/client';
 import { getConfig, getConfigBool, getConfigInt } from '../services/config';
 import { newId, randomToken } from '../lib/crypto';
-import { avatarForEmail, emailMd5, isEmail, nicknameFromEmail } from '../lib/avatar';
+import { avatarChainForEmail, emailMd5, isEmail, nicknameFromEmail } from '../lib/avatar';
 import { fail, ok } from '../lib/errors';
 import { canonSlug } from '../lib/slug';
 import { clientIp, userAgent } from '../lib/http';
@@ -49,31 +49,33 @@ type CommentRow = typeof comments.$inferSelect;
 type SortKey = 'latest' | 'oldest' | 'hot';
 
 /* ------------------------------------------------------------------
- * 头像：统一走 avatarForEmail（QQ/foxmail 数字邮箱 → q1.qlogo.cn，其余 → Cravatar），
- * 后台 avatarTemplate 只覆盖非 QQ 那条链路；登录用户若设了账号头像（users.image）优先用它。
- * 除 avatar 外再给 gravatar 备胎与邮箱域名，前端按 avatar → gravatar → 首字母三级退化。
+ * 头像：本人填的 URL 最优先；没填就按邮箱依次试 Gravatar → Cravatar →（QQ 号）q1.qlogo.cn，
+ * 后台「头像与媒体」的 avatarTemplate 填了就顶到最前面（等于整条链换图床）。
+ * 一级都没命中时前端退到首字母色块（CommentNode 的 onerror 一路往下换，换完才落首字母）。
  * ----------------------------------------------------------------*/
 
 interface AvatarSet {
   avatar: string;
+  /** 第二级：老版组件只认 avatar + gravatar 两档，留着它保证旧包还能逐级退化 */
   gravatar: string;
+  /** 第三级起继续往下试的地址，前端按顺序 onerror 降级 */
+  fallbacks: string[];
   emailDomain: string;
 }
 
 function avatars(email: string | null | undefined, template: string, image?: string | null): AvatarSet {
   const domain = (mail: string) => (mail.includes('@') ? mail.split('@')[1] ?? '' : '');
   const override = (image ?? '').trim();
-  if (override) return { avatar: override, gravatar: '', emailDomain: domain((email ?? '').trim().toLowerCase()) };
+  if (override) return { avatar: override, gravatar: '', fallbacks: [], emailDomain: domain((email ?? '').trim().toLowerCase()) };
 
   const mail = (email ?? '').trim().toLowerCase();
-  if (!mail.includes('@')) return { avatar: '', gravatar: '', emailDomain: '' };
-  const hash = emailMd5(mail);
-  const primary = avatarForEmail(mail);
-  // QQ 头像国内最快且不需要哈希，始终优先；其余情况允许后台整体换掉图床
-  const avatar = template && !primary.includes('q1.qlogo.cn')
-    ? template.replaceAll('{hash}', hash).replaceAll('{email}', encodeURIComponent(mail))
-    : primary;
-  return { avatar, gravatar: `https://www.gravatar.com/avatar/${hash}?d=mp&s=64`, emailDomain: domain(mail) };
+  if (!mail.includes('@')) return { avatar: '', gravatar: '', fallbacks: [], emailDomain: '' };
+  const t = (template ?? '').trim();
+  const head = t ? t.replaceAll('{hash}', emailMd5(mail)).replaceAll('{email}', encodeURIComponent(mail)) : '';
+  // 模板本身常就写成 cravatar 那条地址，去重免得同一个图白试两回
+  const list = [head, ...avatarChainForEmail(mail)].filter(Boolean).filter((u, i, arr) => arr.indexOf(u) === i);
+  const [first = '', second = '', ...rest] = list;
+  return { avatar: first, gravatar: second, fallbacks: rest, emailDomain: domain(mail) };
 }
 
 /* ------------------------------------------------------------------
@@ -87,6 +89,8 @@ interface Profile {
   website: string | null;
   userGroup: string | null;
   role: string | null;
+  /** 只用来推头像（本人没填头像时按邮箱走 gravatar→cravatar→QQ），不会随评论发出去 */
+  email: string | null;
 }
 
 const PROFILE_COLS = {
@@ -96,6 +100,7 @@ const PROFILE_COLS = {
   website: users.website,
   userGroup: users.userGroup,
   role: users.role,
+  email: users.email,
 };
 
 async function profilesOf(env: Env, ids: string[]): Promise<Map<string, Profile>> {
@@ -106,14 +111,15 @@ async function profilesOf(env: Env, ids: string[]): Promise<Map<string, Profile>
     .select(PROFILE_COLS)
     .from(users)
     .where(inArray(users.id, list));
-  for (const r of rows) map.set(r.id, { name: r.name, image: r.image, website: r.website, userGroup: r.userGroup, role: r.role });
+  for (const r of rows)
+    map.set(r.id, { name: r.name, image: r.image, website: r.website, userGroup: r.userGroup, role: r.role, email: r.email });
   return map;
 }
 
 async function profileOf(env: Env, id: string): Promise<Profile | null> {
   const rows = await createDb(env).select(PROFILE_COLS).from(users).where(eq(users.id, id)).limit(1);
   const r = rows[0];
-  return r ? { name: r.name, image: r.image, website: r.website, userGroup: r.userGroup, role: r.role } : null;
+  return r ? { name: r.name, image: r.image, website: r.website, userGroup: r.userGroup, role: r.role, email: r.email } : null;
 }
 
 /** 登录用户以账号昵称为准（改名后旧评论跟着变），游客用评论里存的那份 */
@@ -209,7 +215,11 @@ function makeShaper(avatarTemplate: string, profiles: Map<string, Profile>) {
       authorId: row.authorId,
       // 登录用户没单独填链接时，点昵称/头像跳账号里配的個人站点
       authorLink: row.authorLink ?? (profile?.website || null),
-      ...avatars(isUser ? null : row.authorEmail, avatarTemplate, isUser ? profile?.image : null),
+      /* 登录用户：账号里填了头像就用那张；没填就用他的邮箱走 Gravatar→Cravatar→QQ。
+         以前这里把邮箱硬写成 null，于是「没单独设头像的注册用户」一律掉到首字母色块，
+         邮箱明明注册了 Gravatar 也拿不到图。评论行自己存过一份 authorEmail，先拿它，
+         再兜账号那一份（改过邮箱的旧评论存的还是老地址，所以账号那份只作补充）。 */
+      ...avatars(isUser ? row.authorEmail || profile?.email : row.authorEmail, avatarTemplate, isUser ? profile?.image : null),
       isAuthor: isUser,
       /** 'admin'（站长）| 'coauthor'（共创）| 'friend'（朋友）| null（游客） */
       group: authorGroup(isUser, profile),
@@ -658,8 +668,12 @@ app.post('/', async (c) => {
     });
   }
 
+  /*
+   * 用户端只说「内容不合适」，不说命中了哪条规则、也不暴露「垃圾/审核拦截」这类判定用语：
+   * 规则文本是给站长看的（在「评论审核」页），发给提交者只会教人怎么绕过它。
+   */
   const message =
-    status === 'spam' ? '评论疑似垃圾内容，已被审核拦截' : status === 'pending' ? '评论已提交，等待审核' : '评论成功';
+    status === 'spam' ? '内容不符合本站社区规范，未通过审核' : status === 'pending' ? '评论已提交，等待审核' : '评论成功';
 
   // 邮件提醒是附带动作：站内任何错误都不能让已经落库的评论失败
   const notifying = notifyNewComment({

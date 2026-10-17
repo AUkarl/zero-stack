@@ -54,6 +54,24 @@ export const patch = <T = any>(p: string, body: unknown) => api<T>(p, { method: 
 export const put = <T = any>(p: string, body: unknown) => api<T>(p, { method: 'PUT', body: JSON.stringify(body) });
 export const del = <T = any>(p: string) => api<T>(p, { method: 'DELETE' });
 
+/** DELETE /api/admin/content/file 与投稿撤回里那段 purge 的结果（没配 Cloudflare 时为 null） */
+export interface PurgeOut {
+  attempted: boolean;
+  ok: boolean;
+  detail: string;
+  urls: string[];
+}
+
+/**
+ * 删完文章在界面上补的那半句：缓存清没清、没清的话地址是什么。
+ * 边缘缓存不清，用户看到的仍是「删了还能打开」，所以这句必须显眼地说出来，不能只躺在响应体里。
+ */
+export function purgeNote(p: PurgeOut | null | undefined): string {
+  if (!p) return '';
+  if (p.ok) return `；${p.detail}`;
+  return `；边缘缓存没清掉（${p.detail}），在 Cloudflare 控制台「缓存 → 清除缓存 → 自定义缓存清除」里粘贴这行地址：${p.urls.join('  ')}`;
+}
+
 /** 站点绝对地址：后台显示的站内路径要点开就是真页面，没配 siteUrl 时返回空串（调用方降级成纯文本） */
 export function siteOf(site: string | null | undefined, path: string): string {
   const base = (site ?? '').replace(/\/+$/, '');

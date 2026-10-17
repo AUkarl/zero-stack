@@ -94,7 +94,7 @@ export const DEFAULT_TEMPLATES: Record<TemplateKind, string> = {
 <p>不是你本人的订阅请求？忽略这封邮件即可，我们不会保存任何信息。</p>`,
 
   comment: `<p><strong>{author}</strong> 在{where}留下一条新评论：</p>
-<blockquote style="margin:16px 0;padding:12px 16px;background:#f5f6f6;border-left:3px solid #0d8368;border-radius:0 8px 8px 0;white-space:pre-wrap">{content}</blockquote>
+<blockquote style="margin:16px 0;padding:12px 16px;background:#f5f6f6;border-left:3px solid #0d8368;border-radius:0 8px 8px 0">{content}</blockquote>
 <p style="margin:18px 0"><a href="{url}" style="${EMAIL_BUTTON_STYLE}">去看这条评论</a></p>
 <p style="font-size:12px;color:#8b949e">原文出处：{title}</p>`,
 

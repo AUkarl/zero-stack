@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { del, get, post, patch } from '#lib/api';
+  import { del, get, post, patch, purgeNote, type PurgeOut } from '#lib/api';
   import { fmtDate, timeAgo } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
 
@@ -196,9 +196,12 @@
     error = '';
     notice = '';
     try {
-      const d = await post<{ data: { deleted: boolean; path: string | null; error: string | null } }>(`/api/admin/drafts/${r.id}/withdraw`, {});
+      const d = await post<{ data: { deleted: boolean; path: string | null; error: string | null; purge: PurgeOut | null } }>(
+        `/api/admin/drafts/${r.id}/withdraw`,
+        {},
+      );
       notice = d.data.deleted
-        ? `已撤回并删除仓库文件 ${d.data.path ?? ''}`
+        ? `已撤回并删除仓库文件 ${d.data.path ?? ''}${purgeNote(d.data.purge)}`
         : `撤回失败：${d.data.error ?? '未知原因'}`;
       open = null;
       await load();

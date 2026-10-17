@@ -290,6 +290,34 @@ export async function setSiteDefaultAuthor(env: Env, handle: string): Promise<{ 
   return { ok: res.success, detail: res.success ? path : res.error ?? '写入失败' };
 }
 
+/**
+ * 把站长的账号资料（昵称 + 头像）落到 data/owner.json，供前台关于页顶部取用。
+ *
+ * 后台「我的信息 → 账号资料」一保存就调这里一次：主题 about-content.html 读 data/owner.json 的
+ * name / avatar（读不到才回落 params.aboutName / aboutAvatar），所以改完昵称头像不用再去
+ * 动 params.toml，等一次站点构建就跟上。
+ *
+ * 为什么不并进 about.json：那份文件整份归「前端管理 → 关于页」的表单，它提交的是表单
+ * schema 里的那些键，一起写就会在下次保存关于页时把同步过来的头像抹掉。owner.json 只有
+ * 这一个写入方，主题侧也就不必判断谁覆盖了谁。
+ *
+ * 值没变就不写：一次保存等于一次提交 + 一轮 Pages 构建，白白费额度。changed=false 时调用方
+ * 连带把构建也跳过，用户看到的提示才是「本来就是这样」而不是「又重建了一回」。
+ */
+export async function setOwnerProfile(
+  env: Env,
+  profile: { name: string; avatar: string },
+): Promise<{ ok: boolean; changed: boolean; detail: string }> {
+  if ((await repoBackend(env)) === 'none') return { ok: false, changed: false, detail: '未配置内容仓库，账号资料没处可写' };
+  const dir = await dataDir(env);
+  const path = dataPath(dir, 'owner.json');
+  const existing = await readRepoFile(env, path).catch(() => null);
+  const next = JSON.stringify({ name: profile.name, avatar: profile.avatar }, null, 2) + '\n';
+  if (existing?.content.trim() === next.trim()) return { ok: true, changed: false, detail: `${path} 本来就是这份内容` };
+  const res = await writeRepoFile(env, path, next, 'zero-cms: 同步站长账号资料到关于页', { action: 'config' });
+  return { ok: res.success, changed: res.success, detail: res.success ? path : res.error ?? '写入失败' };
+}
+
 app.get('/', async (c) => {
   requireAdmin(c);
   const dir = await dataDir(c.env);

@@ -17,6 +17,7 @@ import { canonSlug } from '../lib/slug';
 import { siteAuthorName } from './authors';
 import { getConfig, getConfigBool } from './config';
 import { queueEmail, renderEmail } from './email';
+import { commentEmailHtml } from './email-content';
 
 export interface NotifyComment {
   id: string;
@@ -126,9 +127,16 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
   const { env, slug, comment, parent } = input;
   try {
     const siteName = (await getConfig(env, 'siteName')) ?? '';
-    const adminEmail = (await getConfig(env, 'emailFrom'))?.trim() ?? '';
+    const fromMail = (await getConfig(env, 'emailFrom'))?.trim() ?? '';
+    /**
+     * 站长那一封的收件人：以前硬用 emailFrom，于是「发给站长」的邮件其实是发给发件邮箱自己，
+     * 站主换邮箱收提醒就只能改发件地址（而发件地址还牵着 SMTP 登录名，不能乱改）。
+     * 现在先取「设置 → 评论提醒与展示 → 站长收件邮箱」，没填才回落到发件邮箱 —— 大多数站两者本来就是同一个。
+     */
+    const adminEmail = (await getConfig(env, 'adminNotifyEmail'))?.trim() || fromMail;
     const articleTitle = prettyTitle(slug, input.title);
-    const url = `${await siteBase(env)}${canonSlug(slug)}`;
+    const base = await siteBase(env);
+    const url = `${base}${canonSlug(slug)}`;
 
     const recipients: Recipient[] = [];
     const push = (r: Recipient) => {
@@ -192,18 +200,19 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
         {
           author: comment.authorName || '匿名',
           where: r.where,
-          content: comment.content,
+          /* 表情与图片按前台那套渲染成 <img>，信里不再是 [weibo:smile] 这种字面标记 */
+          content: commentEmailHtml(comment.content, base),
           url,
           title: articleTitle,
           siteName,
         },
-        { title: r.subject, nickname: r.nickname },
+        { title: r.subject, nickname: r.nickname, rawKeys: ['content'] },
       );
       await queueEmail(env, {
         to: r.to,
         subject: r.subject,
         html,
-        from: adminEmail || undefined,
+        from: fromMail || undefined,
         kind: 'notice',
         postId: slug,
       });

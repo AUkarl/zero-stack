@@ -339,6 +339,9 @@ export const friendPosts = sqliteTable(
     title: text('title').notNull(),
     link: text('link').notNull(),
     summary: text('summary'),
+    /** 抓 RSS 时顺带记下这篇文章的封面（media:thumbnail / enclosure / 正文首图），
+        前台「朋友动态」的九宫格优先用它，没有才退到友链自己填的头像 */
+    image: text('image'),
     pubDate: integer('pub_date'),
     fetchedAt: integer('fetched_at').notNull().default(unixNow),
   },

@@ -15,7 +15,7 @@
 import { and, asc, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { broadcastJobs, subscribers } from '../db/schema';
-import { getConfig } from './config';
+import { apiBase } from './config';
 import { mailQuotaCheck, queueEmail, renderEmail } from './email';
 import { newId } from '../lib/crypto';
 
@@ -36,7 +36,7 @@ export interface RunSummary {
 /** 每封群发邮件底部都要带的退订行：退订只能凭 token 链接 */
 async function unsubscribeFooter(env: Env, token: string): Promise<string> {
   if (!token) return '';
-  const base = ((await getConfig(env, 'siteUrl')) ?? env.SITE_URL ?? '').replace(/\/+$/, '');
+  const base = await apiBase(env);
   const href = `${base}/api/subscribe/unsub?token=${encodeURIComponent(token)}`;
   return `<p style="color:#999;font-size:12px;margin-top:24px;">不再想收到本站邮件？<a href="${href}">点这里退订</a>。</p>`;
 }

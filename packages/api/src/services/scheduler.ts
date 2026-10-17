@@ -221,6 +221,7 @@ async function fetchFriendFeeds(env: Env): Promise<string> {
           title: item.title,
           link: item.link,
           summary: item.summary,
+          image: item.image,
           pubDate: item.pubDate,
           fetchedAt: Math.floor(Date.now() / 1000),
         });
@@ -242,7 +243,8 @@ async function fetchFriendFeeds(env: Env): Promise<string> {
  *
  * 前台「朋友动态」与「左邻右舍」的在线/失联分组只读这两个文件（Hugo 的 data 目录），
  * 库里有了数据而文件没更新，页面上就还是旧内容 —— 所以每次检测/抓取之后都要同步一次。
- * linksicons.json 不在此列：它存的是人工补过的 favicon 映射，比这里的 avatar 更全，不能被覆盖。
+ * linksicons.json 也在这批里写，但只补缺：那是「站点地址 → favicon」的缓存，
+ * 人工在里面改过某条图标的话不会被这一轮覆盖掉（见 syncLinkIcons）。
  */
 async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (paths: string[]) => void): Promise<string> {
   if ((await repoBackend(env)) === 'none') return '未配置内容仓库，跳过 data 文件写回';
@@ -305,7 +307,8 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
         siteurl: owner?.url ?? '',
         date: new Date((p.pubDate ?? p.fetchedAt) * 1000).toISOString(),
         summary: (p.summary ?? '').replace(/\s+/g, ' ').trim().slice(0, 160),
-        image: '',
+        // 抓取时就记下的那张封面；老库里没有的为空串，前台按「友链头像 → 邮箱头像」往下退
+        image: p.image ?? '',
       };
     }),
   };
@@ -342,6 +345,9 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
     [statusPath, JSON.stringify(mergedStatus, null, 2) + '\n'],
     [feedPath, JSON.stringify(mergedFeed, null, 2) + '\n'],
   ];
+  // 探到favicon 才写：一轮 Cron 什么都没探到（全都记过）时不要把文件重排一遍触发无谓的提交
+  const icons = await syncLinkIcons(env, dir, linkSites);
+  if (icons) files.push([`${dir}/linksicons.json`, icons]);
   const written: string[] = [];
   for (const [path, content] of files) {
     const res = await writeRepoFile(env, path, content, 'zero-api: 同步友链检测与朋友动态', { audit: false });
@@ -353,6 +359,96 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
   return written.length
     ? `写入 ${written.join('、')}（本次 ${rows.length} 站 / 动态 ${items.length} 条）`
     : `内容与仓库一致，未提交（本次 ${rows.length} 站 / 动态 ${items.length} 条）`;
+}
+
+/**
+ * 友链站点图标（favicon）探测，结果并进 data/linksicons.json（{站点地址: 图标地址}）。
+ *
+ * 为什么放在定时任务里而不是模板里：前台那份名单是 Hugo 构建出来的，构建期去抓几十个
+ * 外站 favicon 会把 Pages 构建拖到超时；图标又几乎不变，一天探一次完全够。
+ * 前台取图标的顺序（layouts/links/list.html）：友链自己填的头像 → 这份缓存 →
+ * 按邮箱算的 Gravatar→Cravatar→QQ → 留白。
+ *
+ * 只出网探「这份文件里还没记过的」站：探过的一律跳过，包括探不到而记成空串的那些 ——
+ * 不然每天 Cron 都要替一个从来不给 favicon 的站白撞两回墙。一轮最多探 12 个，
+ * 免得刚导入一大批友链时把 Cron 的执行时间吃满。
+ *
+ * 已有条目原样保留（人工在这份文件里补过的图标不被覆盖），键排序后写出，
+ * 内容没变就交给上层按 unchanged 处理，不会多一次提交、多一轮构建。
+ */
+async function syncLinkIcons(env: Env, dir: string, linkSites: LinkSite[]): Promise<string | null> {
+  const path = `${dir}/linksicons.json`;
+  const raw = await readRepoFile(env, path).catch(() => null);
+  const map: Record<string, string> = {};
+  if (raw?.content.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(raw.content);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) map[k] = typeof v === 'string' ? v : '';
+    } catch {
+      // 文件被写坏时不敢整份覆盖：那是人工补过的图标缓存，宁可不写也不能抹掉
+      return null;
+    }
+  }
+
+  const seen = new Set(Object.keys(map).map(normalizeFriendUrl));
+  const todo = linkSites
+    .map((s) => (s.url ?? '').trim())
+    .filter((u) => u && !seen.has(normalizeFriendUrl(u)))
+    .slice(0, 12);
+  if (!todo.length) return null;
+
+  for (const url of todo) map[url] = await probeSiteIcon(url);
+  const sorted: Record<string, string> = {};
+  for (const k of Object.keys(map).sort()) sorted[k] = map[k]!;
+  return JSON.stringify(sorted, null, 2) + '\n';
+}
+
+/**
+ * 单个站点的图标：先读首页 <link rel="…icon…"> 的 href（各家喜欢用自有尺寸的 png/svg，
+ * 比 favicon.ico 清楚），再退到 <origin>/favicon.ico —— 后者要真取到 200 且是图片才写，
+ * 否则前台拿到的是一张永远加载失败的地址，还不如留空让人家走下一级。
+ */
+async function probeSiteIcon(url: string): Promise<string> {
+  let origin = '';
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return '';
+  }
+  const http = (s: string) => (/^https?:\/\//i.test(s) ? s.slice(0, 500) : '');
+  try {
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10_000),
+      headers: { 'user-agent': 'zero-cms/1.0 (+friend-icons)', Accept: 'text/html,*/*' },
+    });
+    if (res.ok) {
+      // 只截前 60KB：icon 声明都在 <head> 里，正文再长也不必看完
+      const html = (await res.text()).slice(0, 60_000);
+      for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+        const tag = m[0]!;
+        if (!/rel="[^"]*(?:apple-touch-icon|shortcut icon|icon)[^"]*"/i.test(tag)) continue;
+        const href = /\bhref="([^"]+)"/i.exec(tag)?.[1]?.trim();
+        if (!href) continue;
+        try {
+          const out = http(new URL(href, `${origin}/`).toString());
+          if (out) return out;
+        } catch {
+          /* 相对地址拼不出合法 URL 就当下一个 */
+        }
+      }
+    }
+  } catch {
+    /* 首页取不到就直接试 favicon.ico，很多站首页反爬但 favicon 放行 */
+  }
+  try {
+    const res = await fetch(`${origin}/favicon.ico`, { redirect: 'follow', signal: AbortSignal.timeout(8_000) });
+    if (res.ok && /^image/i.test(res.headers.get('content-type') ?? '')) return http(`${origin}/favicon.ico`);
+  } catch {
+    /* 没 favicon 的站不少见，留空即可 */
+  }
+  return '';
 }
 
 async function readJson(env: Env, path: string): Promise<unknown> {
@@ -387,6 +483,8 @@ interface FeedItem {
   title: string;
   link: string;
   summary: string;
+  /** 这条动态自己的封面（media:thumbnail / media:content / 图片 enclosure / 正文首图），取不到就空串 */
+  image: string;
   pubDate: number | null;
 }
 
@@ -403,10 +501,58 @@ function parseFeed(xml: string, siteUrl: string): FeedItem[] {
       title: stripCdata(decodeEntities(title)).trim(),
       link: stripCdata(decodeEntities(link)).trim() || new URL(link, siteUrl).toString(),
       summary: stripTags(stripCdata(decodeEntities(description))).slice(0, 300).trim(),
+      image: pickItemImage(chunk, stripCdata(decodeEntities(description)), siteUrl),
       pubDate: date ? Math.floor(new Date(date).getTime() / 1000) || null : null,
     });
   }
   return items;
+}
+
+/**
+ * 一条动态的封面图。友链作者的 RSS 各家写法不一，按常见程度依次试：
+ * media:thumbnail / media:content（图片类）→ 图片类型的 enclosure → item 里直接的 image →
+ * 正文 HTML 里第一张 <img>。都拿不到就返回空串，前台自己退到友链头像或留白。
+ *
+ * 相对地址按对方站点解析（有人写 /cover/a.png），只认 http(s)，
+ * 其余协议（data:、javascript:）一律丢掉：这张图最后会进 <img src>，别给它机会。
+ */
+function pickItemImage(chunk: string, html: string, siteUrl: string): string {
+  const byUrlAttr = (name: string) => {
+    const m = chunk.match(new RegExp(`<${name}[^>]*\\burl="([^"]+)"`, 'i'));
+    return m ? m[1]!.trim() : '';
+  };
+  // media:content 可能有好几个（音频 + 封面），优先带 medium="image" / type="image/..." 的那一个
+  let media = '';
+  for (const m of chunk.matchAll(/<media:content\b([^>]*)>/gi)) {
+    const attrs = m[1] ?? '';
+    const url = /\burl="([^"]+)"/i.exec(attrs)?.[1]?.trim() ?? '';
+    if (!url) continue;
+    if (!media) media = url;
+    if (/medium="image"/i.test(attrs) || /type="image\//i.test(attrs)) {
+      media = url;
+      break;
+    }
+  }
+  let raw = byUrlAttr('media:thumbnail') || media;
+  if (!raw) {
+    const enc = chunk.match(/<enclosure\b([^>]*)\/?>/i);
+    if (enc) {
+      const url = /\burl="([^"]+)"/i.exec(enc[1] ?? '')?.[1] ?? '';
+      const type = /\btype="([^"]+)"/i.exec(enc[1] ?? '')?.[1] ?? '';
+      // 没标 type 的旧源也当图片收（对方只有音频时极少见，真拿到音频前台也只是显示不出来）
+      if (url && (!type || /^image\//i.test(type))) raw = url;
+    }
+  }
+  if (!raw) raw = (tag(chunk, 'image') ?? '').trim();
+  if (!raw) raw = html.match(/<img\b[^>]*\bsrc="([^"]+)"/i)?.[1]?.trim() ?? '';
+  if (!raw) return '';
+  let abs = '';
+  try {
+    abs = new URL(decodeEntities(raw), siteUrl).toString();
+  } catch {
+    return '';
+  }
+  return /^https?:\/\//i.test(abs) ? abs.slice(0, 500) : '';
 }
 
 function tag(xml: string, name: string): string | null {

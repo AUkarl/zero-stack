@@ -28,7 +28,6 @@ export type ConfigKey =
   | 'accountSystemEnabled'
   | 'allowRegister'
   | 'requireInviteCode'
-  | 'requireEmailVerified'
   | 'inviteCodeLength'
   | 'inviteCodeUses'
   // 评论
@@ -120,8 +119,16 @@ export type ConfigKey =
   | 'gitWritebackEnabled'
   | 'githubLinksFile'
   | 'cloudflarePagesBuildHook'
+  /** 站点所在 Cloudflare 域（zone）的 ID：删文章后按 URL 清边缘缓存要用 */
+  | 'cfZoneId'
+  /** Purge Cache 的令牌，只写不回读 */
+  | 'cfPurgeToken'
+  /** 接口自己的域名（邮件里的确认 / 退订链接用它拼绝对地址），首次请求自动记下 */
+  | 'apiBaseUrl'
   /* 评论提醒与展示 */
   | 'commentNotifyAdmin'
+  /** 新评论等「给站长」的邮件收件地址；留空回落到发件邮箱 emailFrom */
+  | 'adminNotifyEmail'
   | 'commentNotifyReply'
   | 'commentNotifyAuthor'
   | 'commentShowMeta'
@@ -162,7 +169,6 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'accountSystemEnabled',
   'allowRegister',
   'requireInviteCode',
-  'requireEmailVerified',
   'inviteCodeLength',
   'inviteCodeUses',
   'commentEnabled',
@@ -235,7 +241,11 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'gitWritebackEnabled',
   'githubLinksFile',
   'cloudflarePagesBuildHook',
+  'cfZoneId',
+  'cfPurgeToken',
+  'apiBaseUrl',
   'commentNotifyAdmin',
+  'adminNotifyEmail',
   'commentNotifyReply',
   'commentNotifyAuthor',
   'commentShowMeta',
@@ -294,7 +304,6 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   accountSystemEnabled: 'true',
   allowRegister: 'true',
   requireInviteCode: 'false',
-  requireEmailVerified: 'false',
   inviteCodeLength: '8',
   inviteCodeUses: '1',
   commentEnabled: 'true',
@@ -311,7 +320,13 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   subscribeFeedUrl: '',
   emailProvider: 'smtp',
   emailDailyLimit: '100',
-  avatarTemplate: 'https://cravatar.cn/avatar/{hash}?d=mp&s=64',
+  /**
+   * 头像模板默认留空 = 用内置那条链（Gravatar → Cravatar → QQ 号 → 首字母，见 lib/avatar.ts）。
+   * 填了就整条链换图床、顶到最前面。以前默认值是 cravatar 的 `d=mp`（没有头像也给一张通用灰影人），
+   * 那等于把链条锁死在第一级：本人明明在 Gravatar / QQ 上有图也永远取不到，
+   * 所以这个默认必须空着，让链条自己往下退。
+   */
+  avatarTemplate: '',
   smtpPort: '587',
   smtpSecure: 'true',
   friendsEnabled: 'true',
@@ -358,8 +373,13 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   gitWritebackEnabled: 'false',
   githubLinksFile: 'data/links.yaml',
   cloudflarePagesBuildHook: '',
+  cfZoneId: '',
+  cfPurgeToken: '',
+  apiBaseUrl: '',
   githubBranch: 'main',
   commentNotifyAdmin: 'true',
+  // 站长的收件箱：不填就发到发件邮箱（很多站就是同一个邮箱，没必要多填一次）
+  adminNotifyEmail: '',
   commentNotifyReply: 'true',
   commentNotifyAuthor: 'true',
   commentShowMeta: 'true',
@@ -470,6 +490,7 @@ export const SECRET_KEYS: ConfigKey[] = [
   'resendApiKey',
   'cloudflareEmailToken',
   'cloudflarePagesBuildHook',
+  'cfPurgeToken',
   'spamExternalKey',
   'spamProviderKeyId',
   'spamProviderSecret',
@@ -506,7 +527,6 @@ const PUBLIC_KEYS: ConfigKey[] = [
   'accountSystemEnabled',
   'allowRegister',
   'requireInviteCode',
-  'requireEmailVerified',
   'commentEnabled',
   'commentProvider',
   'commentProviders',
@@ -588,4 +608,30 @@ export async function rememberCmsOrigin(env: Env, origin: string | null | undefi
   if (!/^https?:\/\/[^/?#]+$/.test(clean)) return;
   if ((await getConfig(env, 'cmsAdminUrl')) !== undefined) return;
   await setConfig(env, 'cmsAdminUrl', `${clean}/`);
+}
+
+/**
+ * 记下接口自己的域名（worker 或绑定的自定义域）。
+ *
+ * 为什么需要它：邮件里的「确认订阅」「退订」指向的是**接口自己**的 `/api/...`，
+ * 而站点域名是 Pages 上的一份 Hugo 静态站，没有 /api 代理 —— 拿站点地址拼这种链接，
+ * 点开就是 404，订阅因此永远确认不上（这就是原来那处 bug）。定时任务、群发这些
+ * 没有请求上下文的场合拿不到 origin，所以第一次收到请求时记一次，之后可人工改。
+ */
+export async function rememberApiOrigin(env: Env, origin: string | null | undefined): Promise<void> {
+  const clean = String(origin ?? '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/[^/?#]+$/.test(clean)) return;
+  if ((await getConfig(env, 'apiBaseUrl'))?.trim()) return;
+  await setConfig(env, 'apiBaseUrl', clean);
+}
+
+/**
+ * 拼接口自己的绝对地址。没记过就退回站点地址 —— 同域部署（站点和接口共用一个域名）时那是对的，
+ * 不同域时后台「设置 → 内容仓库」里手填一次即可。
+ */
+export async function apiBase(env: Env): Promise<string> {
+  const stored = (await getConfig(env, 'apiBaseUrl'))?.trim();
+  if (stored) return stored.replace(/\/+$/, '');
+  const site = (await getConfig(env, 'siteUrl'))?.trim() || env.SITE_URL || '';
+  return site.replace(/\/+$/, '');
 }

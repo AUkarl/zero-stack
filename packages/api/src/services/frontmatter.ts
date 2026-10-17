@@ -278,6 +278,21 @@ export function postWebPath(path: string): string {
   return `/posts/${slug}/`;
 }
 
+/**
+ * 内容文件对应的站内地址：posts → /posts/<文件名>/，moments → /moments/<文件名>/。
+ *
+ * postWebPath 只认 posts 那一段：时刻不在 posts 下，拿它算会得到 /zh/moments/x.md 这种
+ * 谁也匹配不到的串（删时刻时数据库里的评论 / 点赞 / 访问记录就是这样漏清的）。
+ * 时刻卡片用的地址固定是 /moments/<文件名去扩展名>/，与主题那边 moments/list.html 一致。
+ */
+export function contentWebPath(path: string): string {
+  const clean = String(path ?? '').replace(/\\/g, '/');
+  if (/(^|\/)posts\//.test(clean)) return postWebPath(clean);
+  const stem = (clean.match(/([^/]+)\.mdx?$/i) ?? [])[1] ?? '';
+  if (stem && /(^|\/)moments\//.test(clean)) return `/moments/${stem}/`;
+  return postWebPath(clean);
+}
+
 /* ------------------------------------------------------------------ 内容目录 */
 
 /** 内容目录（后台可配），去掉首尾斜杠 */

@@ -51,7 +51,8 @@
       hasOwnerKey(slug, node.id),
   );
 
-  /* 头像三级退化：后端 avatar → 邮箱 md5 的 cravatar/gravatar → 首字母色块（img onerror 依次降级） */
+  /* 头像逐级退化：后端给的每一张依次试（avatar → gravatar → cravatar → QQ），
+     全挂了才落到首字母色块（sources 取空 = avatarSrc 为空） */
   let step = $state(0);
   const sources = $derived(avatarSources(node));
   const avatarSrc = $derived(sources[step] ?? '');

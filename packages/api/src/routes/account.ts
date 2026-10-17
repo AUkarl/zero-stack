@@ -55,7 +55,9 @@ import { userGroupName, withAdminAuthorBits } from '../services/admin-author';
 import { writeAudit } from '../services/audit';
 import { getConfig, getConfigBool } from '../services/config';
 import { deleteCommentSubtree } from '../services/comment-tree';
+import { parseFrontMatter, postsDir } from '../services/frontmatter';
 import { inspectComment, type Verdict } from '../services/moderation';
+import { listRepoDir, readRepoFile, type RepoEntry } from '../services/repo';
 import { emailHash, hashPassword, newId, verifyPassword } from '../lib/crypto';
 import { clientIp, userAgent } from '../lib/http';
 import { hashIp } from '../lib/ua';
@@ -335,22 +337,85 @@ app.get('/reactions', async (c) => {
     .limit(limit)
     .offset(offset);
 
-  // 站内的文章标题没有单独入库，能从投稿表里查到就带上，查不到前端显示 slug
-  const slugs = rows.map((r) => r.slug);
-  const known = slugs.length
-    ? await db
-        .select({ slug: sql<string>`concat('/', ${postDrafts.slug})`, title: postDrafts.title, status: postDrafts.status })
-        .from(postDrafts)
-        .where(and(eq(postDrafts.userId, target.id), inArray(sql`concat('/', post_drafts.slug)`, slugs)))
-    : [];
-  const bySlug = new Map(known.map((r) => [r.slug, r]));
+  const titles = await reactionTitles(c.env, db, target.id, rows.map((r) => r.slug));
 
   return ok({
     kind,
     total: rows.length,
-    items: rows.map((r) => ({ ...r, title: bySlug.get(r.slug)?.title ?? null })),
+    items: rows.map((r) => ({
+      ...r,
+      /** post = 站内文章（该有标题）；moment = 时刻卡片（按设计就没有标题）；other = 认不出来的地址 */
+      target: /^\/moments\/|^moments\//.test(r.slug) ? 'moment' : /^\/posts\/|^posts\//.test(r.slug) ? 'post' : 'other',
+      title: titles.get(normSlug(r.slug)) ?? null,
+    })),
   });
 });
+
+/** 去掉首尾斜杠，仓库文件名与站内地址都用这一份口径比对 */
+function normSlug(s: string): string {
+  return String(s ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+/**
+ * 点赞 / 收藏的目标标题。
+ *
+ * reactions 表只存了 targetSlug，标题在两个地方：自己投稿那张表里（含还没发布的），
+ * 以及内容仓库的 posts 目录（管理员直接在后台写的文章不进 post_drafts，
+ * 所以以前只查投稿表的结果就是：别人写的文章、甚至站长自己发的文章，前台一律显示
+ * 「未同步标题」）。时刻卡片按设计没有标题，不查，也不该让人以为同步坏了。
+ *
+ * 成本控住：目录只列一次，然后只读这次真正用到的那几个文件（最多 40 个）。
+ */
+async function reactionTitles(env: Env, db: ReturnType<typeof createDb>, userId: string, slugs: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const posts = [...new Set(slugs.map(normSlug).filter((s) => s.startsWith('posts/')))];
+  if (!posts.length) return out;
+
+  const want = new Set(posts);
+
+  try {
+    const known = await db
+      .select({ slug: sql<string>`concat('/', ${postDrafts.slug})`, title: postDrafts.title })
+      .from(postDrafts)
+      .where(and(eq(postDrafts.userId, userId), inArray(sql`concat('/', post_drafts.slug)`, posts.map((p) => `/${p}`))));
+    for (const r of known) {
+      const k = normSlug(r.slug);
+      if (r.title && !out.has(k)) out.set(k, String(r.title));
+      want.delete(k);
+    }
+  } catch {
+    /* 投稿表读失败不影响去仓库找 */
+  }
+  if (!want.size) return out;
+
+  let dir = '';
+  let entries: RepoEntry[] = [];
+  try {
+    dir = await postsDir(env);
+    entries = await listRepoDir(env, dir);
+  } catch {
+    return out; // 没配内容仓库：拿到的就是投稿表那一份，剩下按「没有标题」处理
+  }
+  const byName = new Map<string, string>();
+  for (const e of entries) {
+    if (e.type !== 'file' || !/\.mdx?$/i.test(e.name)) continue;
+    byName.set(e.name.replace(/\.mdx?$/i, ''), e.path || `${dir}/${e.name}`);
+  }
+  for (const slug of [...want].slice(0, 40)) {
+    const path = byName.get(slug.split('/').pop() ?? '');
+    if (!path) continue;
+    try {
+      const file = await readRepoFile(env, path);
+      if (!file) continue;
+      const { front } = parseFrontMatter(file.content);
+      const title = String(front.title ?? '').trim();
+      if (title) out.set(slug, title);
+    } catch {
+      /* 单篇读失败只少这一条的标题 */
+    }
+  }
+  return out;
+}
 
 /** POST /api/account/reactions/:id/withdraw —— 撤回自己点出去的赞或收藏 */
 app.post('/reactions/:id/withdraw', async (c) => {

@@ -84,7 +84,7 @@
   <h3>顶部横幅</h3>
   <label class="switch">
     <input type="checkbox" bind:checked={moments.bannerShowBackground} />
-    <span>显示横幅背景图（关掉就是纯色头部）</span>
+    <span>显示横幅背景图（关掉就压成一条紧凑的浅色身份栏；下面的头像、昵称也一起关掉时，整块横幅不再出现）</span>
   </label>
   <label>
     背景图地址

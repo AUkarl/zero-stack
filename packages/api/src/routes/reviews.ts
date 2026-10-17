@@ -18,6 +18,8 @@ import { writeAudit } from '../services/audit';
 import { upsertAuthor, type AuthorSocialRow } from '../services/authors';
 import { withAdminAuthorBits } from '../services/admin-author';
 import { getConfig, getConfigBool } from '../services/config';
+import { purgePageUrls, type PurgeResult } from '../services/cf-purge';
+import { postWebPath } from '../services/frontmatter';
 import { writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild } from '../services/git';
 import { deleteRepoFile, repoBackend } from '../services/repo';
@@ -39,16 +41,32 @@ function toYamlString(v: string): string {
 }
 
 /**
- * 文章署名用的作者标识：认证过的账号用 handle（前台据此取作者卡片与认证徽章，
- * 也能在 data/authors.yaml 里查到资料）；没认证的保持原有兜底顺序。
+ * 文章 front matter 的 author 值 = data/authors.yaml 的键 = /author/<键>/ 的地址片段。
+ * 三处必须是同一个串，否则署名点不进作者页、作者页也查不到那份资料：
+ *   · 有作者标识（handle）就用它，认证流程与后台都会把它收成小写字母 / 数字 / 短横线；
+ *   · 没有标识的老账号退回邮箱前缀（同样过 canonHandle）；
+ *   · 连邮箱都没有才用昵称，最后兜「读者」。
+ *
+ * 以前第二档直接上昵称：中文 / 空格 / 大写写进 front matter 后，Hugo 生成的 term 是
+ * urlize 之后的样子（"Zero Author" → zero-author），而 authors.yaml 里存的是原始那个键，
+ * 于是署名看着正常、点进作者页却是一片空，文章数也和她真正写过的对不上。
  */
 export function authorKeyFor(
-  row: { role?: string | null; name: string | null; handle: string | null; authorVerified: boolean | null } | undefined,
+  row: {
+    role?: string | null;
+    name: string | null;
+    handle: string | null;
+    email?: string | null;
+    authorVerified: boolean | null;
+  } | undefined,
 ): string {
   // 管理员恒为认证作者：handle 由 withAdminAuthorBits 补齐（库里没有时按注册信息推一个）
   const me = row ? withAdminAuthorBits(row) : row;
-  if (me?.authorVerified && me.handle) return me.handle;
-  return me?.handle || me?.name || '读者';
+  const handle = (me?.handle ?? '').trim();
+  if (handle) return handle;
+  const fromMail = canonHandle(String(me?.email ?? '').split('@')[0] ?? '');
+  if (fromMail) return fromMail;
+  return (me?.name ?? '').trim() || '读者';
 }
 
 /**
@@ -231,7 +249,15 @@ draftsAdmin.post('/:id/approve', async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const path = await postPath(c.env, row);
   const authorRows = await db
-    .select({ role: users.role, name: users.name, handle: users.handle, authorVerified: users.authorVerified, accountSlug: users.accountSlug })
+    .select({
+      role: users.role,
+      name: users.name,
+      handle: users.handle,
+      // 没有标识的账号要按邮箱前缀推一个 author 键（昵称拼不出合法地址），所以邮箱得一起取
+      email: users.email,
+      authorVerified: users.authorVerified,
+      accountSlug: users.accountSlug,
+    })
     .from(users)
     .where(eq(users.id, row.userId))
     .limit(1);
@@ -294,7 +320,15 @@ draftsAdmin.post('/:id/publish', async (c) => {
 
   const path = await postPath(c.env, row);
   const authorRows = await db
-    .select({ role: users.role, name: users.name, handle: users.handle, authorVerified: users.authorVerified, accountSlug: users.accountSlug })
+    .select({
+      role: users.role,
+      name: users.name,
+      handle: users.handle,
+      // 没有标识的账号要按邮箱前缀推一个 author 键（昵称拼不出合法地址），所以邮箱得一起取
+      email: users.email,
+      authorVerified: users.authorVerified,
+      accountSlug: users.accountSlug,
+    })
     .from(users)
     .where(eq(users.id, row.userId))
     .limit(1);
@@ -415,6 +449,7 @@ draftsAdmin.post('/:id/withdraw', async (c) => {
   if (row.status !== 'withdraw_requested') fail(409, `投稿当前是 ${row.status}，作者没有发起撤回申请`);
 
   const path = (row.publishedPath ?? '').trim();
+  let purge: PurgeResult | null = null;
   if (path) {
     const backend = await repoBackend(c.env);
     if (backend === 'none') {
@@ -433,6 +468,8 @@ draftsAdmin.post('/:id/withdraw', async (c) => {
     }
     // 文章下线了，顺手请 Pages 重建一次，否则线上还挂着旧文章
     await triggerPagesBuild(c.env);
+    // 重建只换掉源站那一份，边缘缓存里那条地址还能撑 7 天 —— 一并清掉
+    purge = await purgePageUrls(c.env, [postWebPath(path)]);
   }
 
   await db.delete(postDrafts).where(eq(postDrafts.id, row.id));
@@ -440,11 +477,11 @@ draftsAdmin.post('/:id/withdraw', async (c) => {
     actor: admin,
     action: 'draft',
     target: row.id,
-    detail: { event: 'withdraw', deleted: true, path: path || null, slug: row.slug },
+    detail: { event: 'withdraw', deleted: true, path: path || null, slug: row.slug, purge },
     ip: clientIp(c),
   });
   const mail = await sendDraftReviewResult(c.env, { ...row, publishedPath: null }, true, '你的撤回申请已同意，文章已从站点移除。');
-  return ok({ id: row.id, deleted: true, path: path || null, error: null, ...mail });
+  return ok({ id: row.id, deleted: true, path: path || null, purge, error: null, ...mail });
 });
 
 /** POST /api/admin/drafts/:id/withdraw-reject —— 驳回撤回申请：稿件保持已发布，理由留档 */

@@ -4,7 +4,7 @@
  * Gravatar / Cravatar 都按「邮箱小写后的 MD5」取图，而 WebCrypto 在部分运行时里
  * 不保证给出 MD5，所以这里带一份纯 JS 的 MD5（输入只是邮箱，用于拼 URL，不涉及敏感存储）。
  *
- * 退化链：q1.qlogo.cn / cravatar.cn → 前端 onerror 依次换 gravatar.cn → 首字母占位。
+ * 退化链：gravatar.com → cravatar.cn →（QQ 号）q1.qlogo.cn → 前端首字母色块占位。
  */
 
 const MD5_S = [
@@ -81,22 +81,41 @@ export function emailMd5(email: string): string {
 }
 
 /**
- * 按邮箱给出头像地址，优先级：
- *   1. QQ / Foxmail 邮箱、且 @ 前是纯数字 → QQ 头像（国内最快，不需要哈希）
- *   2. 其他邮箱 → Cravatar（Gravatar 的国内镜像，同一套 MD5 规则）
- * 加载失败由前端依次退化到 gravatar.cn、首字母占位；返回空串表示无邮箱。
+ * 按邮箱给出头像候选，从高到低：
+ *   1. Gravatar（www.gravatar.com，国际通用，同一套 MD5）
+ *   2. Cravatar（国内镜像，同一套 MD5，多数号在两边是同一张图）
+ *   3. QQ / Foxmail 且 @ 前是纯数字 → q1.qlogo.cn 的 QQ 头像
+ * 三级都 `d=404`：没有头像就回 404，前端 onerror 才能退到下一级，
+ * 最后落到首字母色块（用 d=mp 会拿到一张通用的灰影人，链条当场断在这里）。
+ * 返回空数组 = 连邮箱都没有。
  */
-export function avatarForEmail(email: string): string {
+export function avatarChainForEmail(email: string): string[] {
   const mail = String(email || '').trim().toLowerCase();
   const at = mail.indexOf('@');
-  if (at < 1) return '';
+  if (at < 1) return [];
   const local = mail.slice(0, at);
   const domain = mail.slice(at + 1);
-
+  const hash = md5(mail);
+  const chain = [`https://www.gravatar.com/avatar/${hash}?d=404&s=128`, `https://cravatar.cn/avatar/${hash}?d=404&s=128`];
   if ((domain === 'qq.com' || domain === 'foxmail.com') && /^\d{5,12}$/.test(local)) {
-    return `https://q1.qlogo.cn/g?b=qq&nk=${local}&s=100`;
+    chain.push(`https://q1.qlogo.cn/g?b=qq&nk=${local}&s=100`);
   }
-  return `https://cravatar.cn/avatar/${md5(mail)}?d=404&s=64`;
+  return chain;
+}
+
+/**
+ * 邮箱派生头像的第一选：后台「头像与媒体」里填了 avatarTemplate 就按模板拼
+ * （{hash} / {email} 两个占位符），否则用候选链的第一级（Gravatar）。
+ * 后台模板是整条链的总开关：换了它等于换图床，所以它优先于链上任何一级。
+ */
+export function avatarForEmail(email: string, template = ''): string {
+  const t = String(template || '').trim();
+  if (t) {
+    const mail = String(email || '').trim().toLowerCase();
+    if (!mail.includes('@')) return '';
+    return t.replaceAll('{hash}', md5(mail)).replaceAll('{email}', encodeURIComponent(mail));
+  }
+  return avatarChainForEmail(email)[0] ?? '';
 }
 
 /** 昵称留空时按邮箱派生：zhangsan@qq.com → z***@qq.com */

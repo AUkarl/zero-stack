@@ -135,19 +135,19 @@
 <FooterIconList
   title="支持服务图标（services）"
   hint="页脚中栏的一排图标，站点联盟、打赏之类的入口。名称与地址至少填一个，否则保存时丢掉这条。"
-  items={footer.services}
+  bind:items={footer.services}
 />
 
 <FooterIconList
   title="社交链接 第一排（socialRow1）"
   hint="页脚右栏上面那排。站内地址（如 /index.xml）也可以填，会自动当普通链接打开。"
-  items={footer.socialRow1}
+  bind:items={footer.socialRow1}
 />
 
 <FooterIconList
   title="社交链接 第二排（socialRow2）"
   hint="页脚右栏下面那排。两排都为空时右栏只剩回到顶部按钮。"
-  items={footer.socialRow2}
+  bind:items={footer.socialRow2}
 />
 
 <style>

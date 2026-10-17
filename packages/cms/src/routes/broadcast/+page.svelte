@@ -37,6 +37,16 @@
     finishedAt: number | null;
   }
 
+  /** POST /api/admin/subscribe/push 的结果：ran=false 时 reason 就是「为什么一封都没发」 */
+  interface PushOutcome {
+    ran: boolean;
+    reason: string;
+    newPosts: string[];
+    recipients: number;
+    queued: number;
+    baseline: boolean;
+  }
+
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
 
   let subject = $state('');
@@ -180,9 +190,15 @@
   async function pushNew(reset: boolean) {
     pushing = true;
     error = '';
+    notice = '';
     try {
-      const d = await post<{ data: Record<string, unknown> }>('/api/admin/subscribe/push', { reset });
-      notice = `推送结果：${JSON.stringify(d.data)}`;
+      const d = await post<{ data: PushOutcome }>('/api/admin/subscribe/push', { reset });
+      const o = d.data;
+      /* 后端一律回 200 + ran:false + 一句原因（开关关着 / RSS 抓不到 / 额度不够…），
+         这里把那句人话原样摊开，别让人对着一坨 JSON 猜「推送到底跑没跑」。 */
+      const tail = `${o.newPosts.length ? `新文章 ${o.newPosts.length} 篇；` : ''}${o.recipients ? `已确认订阅者 ${o.recipients} 位，入队 ${o.queued} 封` : '没有已确认订阅者'}`;
+      if (!o.ran) error = `没有发出任何邮件：${o.reason}${tail ? `（${tail}）` : ''}`;
+      else notice = `${o.reason}${o.baseline ? '（第一次跑只记基线，下一篇文章才会发信）' : ''}${tail ? ` · ${tail}` : ''}`;
       await loadMeta();
     } catch (e) {
       error = msg(e);
@@ -208,6 +224,8 @@
 
 <p class="muted small">
   邮件按 <code>siteUrl</code> 生成退订链接，收件人只包含已确认订阅者。发信不可用时这里会直接报错，不会假装发送成功。
+  「新文章自动推送」是每天一次的定时任务（世界时 02:00）比站点 RSS 找新文章，最近一次跑成什么样在
+  <a href="/">首页的「定时任务」表</a>里；想当场验证就点下面那两个按钮，结果会写明抓到的 RSS、几篇新文章、给几位订阅者入了队多少封。
 </p>
 
 {#if error}<p class="err">{error}</p>{/if}

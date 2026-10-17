@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, post, del } from '#lib/api';
+  import { get, post, del, purgeNote, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { splitFrontMatter } from '#lib/markdown';
   import MediaPicker from './MediaPicker.svelte';
@@ -385,9 +385,11 @@
     const extra = queuedHere ? '\n这篇还在本地暂存里，删除会一并从暂存移除（否则下次「保存到 Git」会把它又推回仓库）。' : '';
     if (!file || !confirm(`确定删除 ${file}？${extra}`)) return;
     try {
-      await del(`/api/admin/content/file?path=${encodeURIComponent(file)}`);
+      const res = await del<{ data: { purge: PurgeOut | null } }>(
+        `/api/admin/content/file?path=${encodeURIComponent(file)}`,
+      );
       if (queuedHere) drafts = removeDraft(drafts, queuedHere.path);
-      notice = '文件已删除';
+      notice = `文件已删除${purgeNote(res?.data?.purge)}`;
       file = '';
       body = '';
       baseBody = '';

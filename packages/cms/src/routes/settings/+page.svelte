@@ -46,7 +46,6 @@
         { key: 'accountSystemEnabled', label: '前台账号系统', kind: 'bool' },
         { key: 'allowRegister', label: '允许注册', kind: 'bool' },
         { key: 'requireInviteCode', label: '注册需邀请码', kind: 'bool', hint: '邀请码在「用户」页的「邀请码」tab 生成' },
-        { key: 'requireEmailVerified', label: '登录前必须验证邮箱', kind: 'bool' },
         { key: 'cmsAdminUrl', label: '后台地址', hint: '管理员在前台登录成功后跳这里。后台是独立的 Pages 项目，与站点不同域：留空时前端只能按同域 /admin/ 兜底，那个路径必然是 404。管理员第一次从后台登录时会自动记下后台自己的域名，换域名后在这里改' },
         { key: 'inviteCodeLength', label: '随机码长度', kind: 'number', hint: '4 ~ 16' },
         { key: 'inviteCodeUses', label: '随机码默认可用次数', kind: 'number', hint: '0 表示不限' },
@@ -65,7 +64,12 @@
       desc: '评论区按 /api/config 在运行时挂载对应系统，与构建期写死的 provider 不一致时前台会自动接管，60 秒内生效，不用重新构建站点。',
       fields: [
         { key: 'commentEnabled', label: '开启评论', kind: 'bool' },
-        { key: 'commentAllowAnonymous', label: '允许游客评论', kind: 'bool' },
+        {
+          key: 'commentAllowAnonymous',
+          label: '允许游客评论',
+          kind: 'bool',
+          hint: '只有「注册与邀请码 → 前台账号系统」打开时这一项才有作用：账号系统关着时前台本来就没有登录入口，评论一律按游客处理（接口会强制放行，见 api routes/comments.ts 的 allowAnonymous）；评论选用 Waline 等第三方服务商时也不归这项管，去服务商自己的后台设',
+        },
         { key: 'commentRequireReview', label: '游客评论需审核', kind: 'bool', hint: '登录用户评论始终直接通过' },
         { key: 'commentMaxDepth', label: '最大嵌套层级', kind: 'number', hint: '2 ~ 7' },
         { key: 'commentRateLimit', label: '每小时评论上限', kind: 'number', hint: '同一 IP 对同一篇文章，0 表示不限流' },
@@ -91,15 +95,18 @@
       fields: [
         { key: 'subscribeEnabled', label: '开启订阅', kind: 'bool' },
         { key: 'subscribeDoubleOptIn', label: '双重确认', kind: 'bool', hint: '关闭后直接置为已确认，容易被灌订阅' },
-        { key: 'subscribePushEnabled', label: '新文章自动推送', kind: 'bool', hint: '定时任务比对 RSS，只发给已确认订阅者' },
-        { key: 'subscribeFeedUrl', label: '用于比对的 RSS 地址', hint: '例如 https://你的站点/index.xml' },
+        { key: 'subscribePushEnabled', label: '新文章自动推送', kind: 'bool', hint: '每天一次的定时任务（世界时 02:00，北京 10:00）抓下面这个 RSS，比上次位点新的文章就发一封汇总信，只发给已确认订阅者。这一页改完不会立刻发信，要验证去「群发」页点「推送新文章」，它会写明卡在哪一步（开关关着 / RSS 抓不到 / 没有已确认订阅者 / 发信额度不够）' },
+        { key: 'subscribeFeedUrl', label: '用于比对的 RSS 地址', hint: '留空则按「站点地址 + /index.xml」拼；Pages 的站点是 https://你的域名/index.xml，Hugo 的 RSS 就是这个。填错的话推送只会报「RSS 里没有条目」' },
       ],
     },
     {
       title: '头像与媒体',
-      desc: '{hash} 会被替换为邮箱的 MD5；公开版不内置任何个人信息。',
+      desc:
+        '这一组只管两件全站兜底：① 匿名评论者的头像地址模板（留空按内置链 Gravatar→Cravatar→QQ→首字母，填了整条链换图床；注册者自己填的头像永远优先）；' +
+        '② 媒体库的公开域名（R2 自定义域或 CDN，留空走后台代理链接）。' +
+        '站点 Logo / 分享图在「前端管理 → 基本信息」，时刻横幅与头像在「前端管理 → 时刻页」，管理员自己的头像在「我的信息 → 账号资料」，都在别处，这里不重复。',
       fields: [
-        { key: 'avatarTemplate', label: '头像地址模板', hint: 'cravatar.cn（国内可达）或 gravatar.com' },
+        { key: 'avatarTemplate', label: '头像地址模板', hint: '留空就是内置那条链：Gravatar → Cravatar →（QQ 号）QQ 头像 → 首字母。填了就整条链换图床并顶到最前（{hash} 换成邮箱 MD5，{email} 换成 URL 编码后的邮箱）。别写 d=mp 这类「没有也给一张通用灰影人」的参数，那样链条当场断在第一级，本人真有头像也取不到' },
         { key: 'mediaBaseUrl', label: '媒体公开域名', hint: 'R2 自定义域名或 CDN，留空则走后台代理链接' },
       ],
     },
@@ -236,6 +243,22 @@
         { key: 'githubLinksFile', label: '友链文件', hint: '留空 = 「数据目录」（默认 data）下的 links.yaml；只有主题装在别处、或数据目录挪走了才需要填，填了以后后台列出的、审核通过写入的、定时任务读的都是这一份' },
         { key: 'githubAuthorsFile', label: '作者数据文件', hint: '如 data/authors.yaml' },
         { key: 'cloudflarePagesBuildHook', label: 'Pages 重建 Hook', hint: '选填，填了改完友链会自动重建站点' },
+        {
+          key: 'cfZoneId',
+          label: 'Cloudflare Zone ID',
+          hint: '删文章后要把那条地址从边缘缓存里清掉（Pages 的 HTML 在 CDN 上缓存 7 天，不清就还能用老链接打开，强刷也没用）。在 Cloudflare 控制台选中站点域名，右侧概览里能复制 Zone ID',
+        },
+        {
+          key: 'cfPurgeToken',
+          label: 'Purge Cache 令牌',
+          kind: 'secret',
+          hint: 'My Profile → API Tokens → 自定义令牌，权限只给「Zone - Cache - Purge」（清除缓存）即可；令牌只存不回读，这一栏显示为空是正常的，留空表示不改动',
+        },
+        {
+          key: 'apiBaseUrl',
+          label: '接口地址',
+          hint: '邮件里的「确认订阅」「退订」指向接口自己的 /api/...，必须用这个域名拼（站点域名是 Pages 上的静态站，没有 /api 代理，写成站点地址点开就是 404）。第一次有人订阅时会自动记下，之后换域名在这里改',
+        },
       ],
     },
     {
@@ -273,6 +296,11 @@
       desc: '提醒邮件走「发信方式」里配好的通道；关闭对应开关只是不再发信，评论本身不受影响。',
       fields: [
         { key: 'commentNotifyAdmin', label: '新评论提醒管理员', kind: 'bool' },
+        {
+          key: 'adminNotifyEmail',
+          label: '站长收件邮箱',
+          hint: '「新评论提醒管理员」「投稿 / 友链申请待处理」这类给站长的信发到这里。留空就发到「发信方式」里的发件邮箱 —— 很多站两者本来就是同一个地址。以前没有这一项，给站长的提醒永远发回发件邮箱自己',
+        },
         { key: 'commentNotifyReply', label: '被回复时提醒', kind: 'bool' },
         { key: 'commentNotifyAuthor', label: '提醒文章作者', kind: 'bool' },
         { key: 'commentShowMeta', label: '前台展示属地 / 设备等信息', kind: 'bool' },

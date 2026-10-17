@@ -190,16 +190,17 @@ app.post('/register', async (c) => {
     });
   }
 
-  const otp = await sendEmailOtp(env, email, id);
+  /*
+   * 注册时不再自动发验证邮件：很多人注册完就关掉页面，那封信既花 SMTP 额度又没人点。
+   * 要验证邮箱的人自己到「账号安全 → 邮箱验证」点发送，验证码登录 / 找回密码那条路
+   * 仍然走同一套 send-code 接口（POST /api/auth/send-code、/api/auth/verify-email）。
+   */
   const base = { id, role: 'reader', verified: false, account_slug: slug, accountSlug: slug, slug, user_group: 'friend' };
-  if (!otp.sent) {
-    return ok({
-      ...base,
-      mailSent: false,
-      message: '账号已创建，但验证邮件发送失败。可以直接用密码登录，或到后台配好邮件后再来验证邮箱。',
-    });
-  }
-  return ok({ ...base, mailSent: true, message: `注册成功，账号标识 ${slug}，验证码已发送至邮箱` });
+  return ok({
+    ...base,
+    mailSent: false,
+    message: `注册成功，账号标识 ${slug}。现在就能用密码登录；要绑定邮箱验证，登录后到「账号安全 → 邮箱验证」点发送。`,
+  });
 });
 
 /* ------------------------------------------------------------------ 邮箱验证码 */
@@ -338,10 +339,6 @@ app.post('/login', async (c) => {
     if (!code) failExtra(401, '请输入邮箱收到的 6 位验证码', { next: 'email-code', policy });
     const check = await verifyEmailOtp(env, email, code);
     if (!check.ok) failExtra(401, check.message ?? '验证码不正确', { next: 'email-code', policy });
-  }
-
-  if (!row.emailVerified && (await getConfigBool(env, 'requireEmailVerified', false))) {
-    fail(403, '邮箱尚未验证，请先用验证码登录');
   }
 
   // 凭据都过了才判开关：关闭登录时只拦非管理员，站长仍要从后台地址进来

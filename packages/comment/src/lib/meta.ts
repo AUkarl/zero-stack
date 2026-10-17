@@ -108,11 +108,21 @@ export function infoLine(
 }
 
 /* ------------------------------------------------------------------
- * 头像三级退化：后端 avatar → 邮箱 md5 的 gravatar → 首字母色块
+ * 头像逐级退化：后端 avatar → gravatar → fallbacks（cravatar、QQ 头像）→ 首字母色块
+ * 后端给几级就试几级，同一地址重复出现只算一次（后台头像模板常常就是链上那一条）。
  * ----------------------------------------------------------------*/
 
-export function avatarSources(node: { avatar?: string | null; gravatar?: string | null }): string[] {
-  return [node.avatar, node.gravatar].map((s) => String(s || '').trim()).filter(Boolean);
+export function avatarSources(node: {
+  avatar?: string | null;
+  gravatar?: string | null;
+  fallbacks?: string[] | null;
+}): string[] {
+  const out: string[] = [];
+  for (const raw of [node.avatar, node.gravatar, ...(node.fallbacks ?? [])]) {
+    const v = String(raw || '').trim();
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
 }
 
 export function initialOf(name: string | null | undefined, emailDomain?: string | null): string {

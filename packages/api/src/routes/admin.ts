@@ -3,7 +3,7 @@ import { desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
 import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
-import { getAllConfig, getConfig, isConfigKey, isSecretKey, maskSecrets, setConfig } from '../services/config';
+import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, setConfig } from '../services/config';
 import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
 import { ensureAdminAuthorIdentity } from '../services/admin-author';
 import { avatarForEmail, emailMd5 } from '../lib/avatar';
@@ -23,6 +23,7 @@ import {
 import { deleteCommentSubtree } from '../services/comment-tree';
 import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor } from './frontend';
+import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
 import { clientIp } from '../lib/http';
 import { errorMessage, fail, ok } from '../lib/errors';
@@ -33,6 +34,7 @@ import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, wri
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, deleteMediaObject, objectPath, type MediaBucket } from '../services/media';
 import {
   buildMarkdown,
+  contentWebPath,
   excerpt,
   orderFront,
   parseFrontMatter,
@@ -524,11 +526,13 @@ app.post('/content/batch', async (c) => {
 /**
  * DELETE /api/admin/content/file?path=
  *
- * 删掉 markdown 之后还必须做三件事，否则「后端删了文章、前端还能用原链接打开」：
+ * 删掉 markdown 之后还必须做四件事，否则「后端删了文章、前端还能用原链接打开」：
  * 1. 请求站点重新构建 —— 旧的那份 HTML 还在 Pages 上，不重建就一直能访问；
  * 2. 清掉后台的文章列表缓存；
  * 3. 摘掉这篇文章挂在数据库里的数据（评论、点赞/收藏、访问记录），
- *    不然它们会一直留在「热门页面 Top」和统计里，像这个页面还在。
+ *    不然它们会一直留在「热门页面 Top」和统计里，像这个页面还在；
+ * 4. 把这条地址从 Cloudflare 边缘缓存里清掉（purge）—— 重建只换源站那一份，
+ *    边缘按 7 天 max-age 还会继续端出旧页面，用户强刷也刷不掉。
  */
 app.delete('/content/file', async (c) => {
   const admin = requireAdmin(c);
@@ -553,7 +557,7 @@ app.delete('/content/file', async (c) => {
 
   let purged: { comments?: number; reactions?: number; visits?: number } = {};
   if (ref) {
-    const web = postWebPath(path);
+    const web = contentWebPath(path);
     const slugs = [...new Set([web, web.replace(/\/+$/, ''), `/${web.replace(/^\/+/, '')}`])];
     const db = createDb(env);
     const rows = await db.delete(comments).where(inArray(comments.postSlug, slugs));
@@ -568,14 +572,18 @@ app.delete('/content/file', async (c) => {
 
   await kvDelete(env, POSTS_CACHE_KEY);
   const build = c.req.query('build') === '0' ? null : await triggerPagesBuild(env);
+  /* 重建之外还要清边缘缓存：Pages 的 HTML 在 CDN 上是 7 天 max-age，
+     不清的话「后台删了文章、前端还能打开」会一直复现，而且用户强刷也没用。
+     只有 markdown 文章才有站内地址；删别的文件（比如数据文件）不用清。 */
+  const purge = ref ? await purgePageUrls(env, [contentWebPath(path)]) : null;
   await writeAudit(env, {
     actor: admin,
     action: 'content',
     target: path,
-    detail: { event: 'delete', purged, purgedBuild, build: build ? 'requested' : 'skipped' },
+    detail: { event: 'delete', purged, purgedBuild, purge, build: build ? 'requested' : 'skipped' },
     ip: clientIp(c),
   });
-  return ok({ ...result, purged, purgedBuild, build });
+  return ok({ ...result, purged, purgedBuild, purge, build });
 });
 
 /* ---------------- 仓库配置文件：白名单内的整份读写 ---------------- */
@@ -811,7 +819,8 @@ app.post('/broadcast', async (c) => {
     .from(subscribers)
     .where(eq(subscribers.status, 'confirmed'));
 
-  const base = ((await getConfig(c.env, 'siteUrl')) ?? c.env.SITE_URL ?? '').replace(/\/+$/, '');
+  /* 退订链接指向接口自己（Pages 上的站点域名没有 /api 代理），没记过就退回站点地址 */
+  const base = await apiBase(c.env);
   let queued = 0;
   for (const s of list) {
     // 退订只能凭邮件里的 token 链接，所以每封都要带上这一行
@@ -911,7 +920,8 @@ async function buildEmailPreview(env: Env, kind: EmailKind, nickname?: string): 
     return await renderEmail(
       env,
       'subscribe',
-      { url: `${home}/api/subscribe/confirm?token=示例token`, email: 'you@example.com' },
+      // 预览要和真发出去的一致：确认链接是接口自己的地址，不是站点域名
+      { url: `${await apiBase(env)}/api/subscribe/confirm?token=示例token`, email: 'you@example.com' },
       { ...base, actionNote: '确认链接 24 小时内有效，过期后重新提交一次订阅即可。' },
     );
   }

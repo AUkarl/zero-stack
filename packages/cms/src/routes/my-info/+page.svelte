@@ -149,19 +149,44 @@
     notice = '';
     const body = { name: name.trim(), bio: bio.trim(), website: website.trim(), image: image.trim() };
     try {
-      await patch(EP.profile, body);
+      const res = await patch<{ data: { image: string | null; ownerSync: OwnerSync | null } }>(EP.profile, body);
       const p = await guard<Profile>(EP.permissions, () => get(EP.permissions));
       if (p) profile = p;
       await session.refresh();
-      notice =
+      notice = [
         (p?.image ?? '') === body.image
-          ? '资料已保存（昵称 / 简介 / 个人站）。'
-          : `资料已保存，但头像没有入库：后端 ${EP.profile} 只落 name / bio / website，image 字段被丢弃。`;
+          ? '资料已保存（昵称 / 简介 / 个人站 / 头像）。'
+          : `资料已保存，但头像没有入库：后端 ${EP.profile} 回读的 image 与提交的不一致。`,
+        ownerSyncText(res?.data?.ownerSync),
+      ]
+        .filter(Boolean)
+        .join(' ');
     } catch (e) {
       error = errText(e);
     } finally {
       busy = '';
     }
+  }
+
+  /** PATCH /api/user/profile 回关于页同步那段的结果（只有站长那份有） */
+  interface OwnerSync {
+    ok: boolean;
+    changed: boolean;
+    detail: string;
+    build?: { triggered: boolean; error?: string };
+  }
+
+  /**
+   * 站长的账号资料会顺手写进内容仓库的 data/owner.json，前台关于页顶部的头像与昵称读那份。
+   * 写没写、重建成没建成都要说清楚——不说，人只会觉得「后台改了前台不动」。
+   */
+  function ownerSyncText(s: OwnerSync | null | undefined): string {
+    if (!s) return '';
+    if (!s.ok) return `关于页没同步（${s.detail}）：账号资料本身已保存，前台还是原来的头像与昵称。`;
+    if (!s.changed) return '前台关于页的头像与昵称本来就是这份，不用重建。';
+    return s.build?.triggered
+      ? '已同步到前台关于页（头像与昵称），等这次站点构建完成就生效。'
+      : `已写入 data/owner.json，但没能自动触发构建（${s.build?.error ?? '未知原因'}）：去 Cloudflare Pages 手动构建一次才会换下来。`;
   }
 
   let showAvatar = $state(false);
@@ -581,7 +606,11 @@
 <!-- ---------------------------------------------------------- 资料编辑 -->
 <section class="card blk">
   <h3>账号资料</h3>
-  <p class="muted small">保存到 PATCH {EP.profile}，后端接受 name / bio / website。</p>
+  <p class="muted small">
+    保存到 PATCH {EP.profile}，后端接受 name / bio / website / image。
+    站长的这一份还会同步进内容仓库的 <code>data/owner.json</code>：前台关于页顶部的头像与昵称读的就是它
+    （没填头像时按邮箱取 Gravatar→Cravatar→QQ），保存后会提示同步结果与是否已触发站点构建。
+  </p>
   {#if profile}
     <div class="grid2">
       <label>昵称<input bind:value={name} maxlength="64" /></label>
