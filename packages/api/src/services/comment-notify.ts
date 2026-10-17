@@ -246,8 +246,10 @@ export interface NotifySelfTestRow {
   subject: string;
   sent: boolean;
   error: string | null;
-  /** 服务商 / SMTP 的原文回执 */
+  /** 发信服务器的原文回执 */
   detail: string | null;
+  /** 这一封在「发信记录」里那一行的 id，两边可以逐条对上 */
+  logId: string | null;
 }
 
 export interface NotifySelfTest {
@@ -288,7 +290,7 @@ export async function notifySelfTest(env: Env, to: string): Promise<NotifySelfTe
       { title: subject, nickname, rawKeys: ['content'] },
     );
     const res = await sendEmail(env, { to: recipient, cc: cc.length ? cc : undefined, subject, html, from: fromMail || undefined, kind: 'notice' });
-    return { label, to: recipient, cc, subject, sent: res.success, error: res.error ?? null, detail: res.detail ?? null };
+    return { label, to: recipient, cc, subject, sent: res.success, error: res.error ?? null, detail: res.detail ?? null, logId: res.logId ?? null };
   };
 
   // 第 1 封：站长期待收到的「新评论待处理」

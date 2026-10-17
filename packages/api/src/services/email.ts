@@ -1,14 +1,17 @@
-import { gte, sql } from 'drizzle-orm';
+import { eq, gte, sql } from 'drizzle-orm';
 import { sendViaSmtp } from '../adapters/smtp';
 import { createDb } from '../db/client';
 import { emailLogs } from '../db/schema';
-import { getConfig, getConfigBool, getConfigInt } from './config';
+import { newId } from '../lib/crypto';
+import { getConfig, getConfigInt } from './config';
 
 export interface EmailResult {
   success: boolean;
   error?: string;
   /** 服务商 / SMTP 的原文回执，见 sendViaSmtp 的注释：250 只代表中继收下了 */
   detail?: string;
+  /** 这一封在 email_logs 里的行号，后台与服务商日志对账就用它 */
+  logId?: string;
 }
 
 interface SendInput {
@@ -20,6 +23,8 @@ interface SendInput {
   from?: string;
   kind?: EmailJob['kind'];
   postId?: string;
+  /** 队列消费者带入队时那一行的 id 回来更新，不再新插一行 */
+  logId?: string;
 }
 
 /* ------------------------------------------------------------------
@@ -67,13 +72,69 @@ export async function mailQuotaCheck(env: Env, count: number): Promise<{ ok: boo
   };
 }
 
-/** 同步直发：登录验证码等即时性强的邮件走这条路径，用户能立刻看到失败原因 */
+/**
+ * 发一封邮件，并在 email_logs 里留一行。
+ *
+ * 记账放在这层而不是队列消费者里，是因为「库里没记录」和「通知根本没触发」以前完全分不开：
+ * 消费者没跑起来（队列被停、批处理抛异常、Worker 被杀）时一行都不留，站主只能干瞪眼。
+ * 现在入队之前就写 queued，发送后回写 sent / failed + 服务器原文回执。
+ * input.logId 带上已有那行（队列消费）时不再新建，就地更新。
+ */
 export async function sendEmail(env: Env, input: SendInput): Promise<EmailResult> {
+  const logId = await openEmailLog(env, input);
+  const result = await deliverEmail(env, input);
+  await closeEmailLog(env, logId, result);
+  return logId ? { ...result, logId } : result;
+}
+
+/** 按 emailProvider 分流到具体通道，不记账 */
+async function deliverEmail(env: Env, input: SendInput): Promise<EmailResult> {
   const provider = ((await getConfig(env, 'emailProvider')) ?? 'smtp') as EmailProvider;
 
   if (provider === 'resend') return sendViaResend(env, input);
   if (provider === 'cloudflare') return sendViaCloudflare(env, input);
   return sendBySmtp(env, input);
+}
+
+/** 有 logId 就直接用（消费者更新入队时那一行），否则新建一行 queued */
+async function openEmailLog(env: Env, input: SendInput): Promise<string | null> {
+  if (input.logId) return input.logId;
+  try {
+    const id = newId();
+    await createDb(env)
+      .insert(emailLogs)
+      .values({
+        id,
+        to: input.to,
+        cc: input.cc?.length ? input.cc.join(', ') : null,
+        subject: input.subject,
+        status: 'queued',
+        postId: input.postId ?? null,
+        createdAt: Math.floor(Date.now() / 1000),
+      });
+    return id;
+  } catch (e) {
+    // 记不了账不能拦住发信：宁可少一行日志，也别把验证码/通知一起弄丢
+    console.warn('[zero-api] 写 email_logs 失败', e);
+    return null;
+  }
+}
+
+async function closeEmailLog(env: Env, id: string | null, result: EmailResult): Promise<void> {
+  if (!id) return;
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    await createDb(env)
+      .update(emailLogs)
+      .set(
+        result.success
+          ? { status: 'sent', sentAt: now, error: null, detail: result.detail ?? null }
+          : { status: 'failed', error: result.error ?? '未知原因', detail: result.detail ?? null },
+      )
+      .where(eq(emailLogs.id, id));
+  } catch (e) {
+    console.warn('[zero-api] 回写 email_logs 失败', e);
+  }
 }
 
 /**
@@ -82,12 +143,15 @@ export async function sendEmail(env: Env, input: SendInput): Promise<EmailResult
  */
 export async function queueEmail(env: Env, input: SendInput): Promise<EmailResult> {
   if (!env.EMAIL_QUEUE) return sendEmail(env, input);
-  const job: EmailJob = { ...input, from: input.from };
+  const logId = await openEmailLog(env, input);
+  const job: EmailJob = { ...input, from: input.from, logId: logId ?? undefined };
   try {
     await env.EMAIL_QUEUE.send(job);
-    return { success: true };
+    return { success: true, logId: logId ?? undefined, detail: '已进入发送队列，等待消费者投信' };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) };
+    const error = e instanceof Error ? e.message : String(e);
+    await closeEmailLog(env, logId, { success: false, error });
+    return { success: false, error, logId: logId ?? undefined };
   }
 }
 
@@ -100,8 +164,13 @@ export async function sendBySmtp(env: Env, input: SendInput): Promise<EmailResul
   const from = input.from ?? (await getConfig(env, 'emailFrom'));
   const fromName = await getConfig(env, 'emailFromName');
   const port = Number((await getConfig(env, 'smtpPort')) ?? 587);
-  // smtpSecure = true 表示 465 隐式 TLS；587/2525 走 STARTTLS
-  const implicitTls = (await getConfigBool(env, 'smtpSecure', false)) && port === 465;
+  /**
+   * 握手方式按端口定：465 只有隐式 TLS（实测明文连过去收不到任何应答），所以 465 一律走 TLS，
+   * 不再让「465 + smtpSecure 没勾」变成明文连过去白等 30 秒。
+   * smtpSecure 留着当显式覆盖：非 465 端口勾上它，表示那个端口也只收隐式 TLS（自建服务常见）。
+   */
+  const secureRaw = await getConfig(env, 'smtpSecure');
+  const implicitTls = port === 465 || secureRaw === 'true' || secureRaw === '1';
 
   if (!host || !user || !password || !from) {
     const missing = [!host && 'SMTP 服务器', !user && 'SMTP 用户名', !password && 'SMTP 密码 / 授权码', !from && '发件人地址']

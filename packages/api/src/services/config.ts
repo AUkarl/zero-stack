@@ -326,7 +326,13 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
    */
   avatarTemplate: '',
   smtpPort: '587',
-  smtpSecure: 'true',
+  /**
+   * 握手方式主要看端口：465 一定是隐式 TLS（实测明文连过去对方不应答）。
+   * 这一项只在非 465 端口上生效，勾了表示「这个端口也只收隐式 TLS」（自建中继常见）。
+   * 默认必须是 false：静态默认一旦是 true，587 / 2525 也会被当成语义上的 TLS 端口，
+   * 而对端要的是 STARTTLS —— 握手直接失败，验证码一封都发不出去。
+   */
+  smtpSecure: 'false',
   friendsEnabled: 'true',
   friendsAutoCheck: 'true',
   /** true = 每天的可用性检测只检填了 RSS 地址的友链 */

@@ -129,7 +129,13 @@
         { key: 'emailFromName', label: '发件人名称' },
         { key: 'smtpHost', label: 'SMTP 服务器' },
         { key: 'smtpPort', label: 'SMTP 端口', kind: 'number' },
-        { key: 'smtpSecure', label: '使用 SSL/TLS', kind: 'bool' },
+        {
+          key: 'smtpSecure',
+          label: '使用 SSL/TLS',
+          kind: 'bool',
+          hint: '465 端口一定走隐式 TLS（实测明文连过去对方不应答），这一项不勾也照样是 TLS；' +
+            '它只给「587 / 2525 之类的端口但服务端只收隐式 TLS」的自建环境用，勾上表示那个端口也直接上 TLS',
+        },
         { key: 'smtpUser', label: 'SMTP 用户名' },
         {
           key: 'smtpPassword',
@@ -366,6 +372,7 @@
     sent: boolean;
     error: string | null;
     detail: string | null;
+    logId: string | null;
   }
   interface NotifyTestOut {
     provider: string;
@@ -417,7 +424,8 @@
 
   const SMTP_PRESETS = [
     { label: 'QQ 邮箱 465', host: 'smtp.qq.com', port: '465', secure: 'true' },
-    { label: 'QQ 邮箱 587', host: 'smtp.qq.com', port: '587', secure: 'true' },
+    // 587 是 STARTTLS：secure 必须留 false，勾上等于对这个端口要求隐式 TLS，握手直接谈不拢
+    { label: 'QQ 邮箱 587', host: 'smtp.qq.com', port: '587', secure: 'false' },
     { label: '网易 163', host: 'smtp.163.com', port: '465', secure: 'true' },
     { label: 'Gmail', host: 'smtp.gmail.com', port: '465', secure: 'true' },
     { label: '阿里企业邮箱', host: 'smtp.qiye.aliyun.com', port: '465', secure: 'true' },
@@ -652,6 +660,7 @@
         </p>
         {#if r.error}<p class="small err">原因：{r.error}</p>{/if}
         {#if r.detail}<p class="small muted">服务器原文：{r.detail}</p>{/if}
+        {#if r.logId}<p class="small muted">已记进「群发 → 发信记录」，行号 {r.logId}</p>{/if}
       {/each}
       {#if !notifyResult.rows.length}<p class="small err">{notifyResult.note}</p>{/if}
       {#if notifyResult.rows.length}<p class="muted small">{notifyResult.note}</p>{/if}

@@ -414,9 +414,9 @@ pnpm check   # 本地跑同一套校验
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |
 | 后台提示 `AUTH_EXPIRED` / 401 | Cookie 跨域丢失：检查 `ALLOWED_ORIGINS` 是否包含后台 origin；换域名后需重新登录 |
 | 后台能打开、接口却全部失败，控制台报 CORS | `ALLOWED_ORIGINS` 是**精确字符串**匹配，差一个字符就不放行。Pages 每次预览部署的地址都不同（`https://<hash>.<项目名>.pages.dev`），只有生产地址稳定 —— 白名单填生产地址，并用生产地址访问后台；前台站点、自定义域名 Worker 各自都要列进来，逗号分隔，改完必须 `pnpm deploy:api` 才生效 |
-| 邮件全部 `failed` | `SMTP_PASSWORD` 未写入，或后台 `smtpHost/smtpPort/smtpUser/emailFrom` 未填；465 需要 `smtpSecure=true`，587 用 `false` |
+| 邮件全部 `failed` | `SMTP_PASSWORD` 未写入，或后台 `smtpHost/smtpPort/smtpUser/emailFrom` 未填。465 一定走隐式 TLS（实测阿里 465 用明文连过去 6 秒收不到一个字节），587 / 2525 走 STARTTLS；`smtpSecure` 只在非 465 端口上才有意义 |
 | 群发/订阅推送显示「整批未发送」，任务仍留在排队 | 当日发信额度不够这次收件人数（`emailDailyLimit`，默认 100 封/天）。第二天 Cron 会自动续跑；要当天发完就把上限调到 ≥ 订阅人数，或分批发 |
-| QQ / 163 邮箱收不到信 | 必须用「授权码」而不是登录密码，且发件人地址要与 SMTP 账号一致；`smtpSecure=true` 只在 465 端口生效（隐式 TLS），587 / 2525 留 `false` 走 STARTTLS |
+| QQ / 163 邮箱收不到信 | 必须用「授权码」而不是登录密码，且发件人地址要与 SMTP 账号一致；`smtpSecure` 对 465 没有意义（那端口只有隐式 TLS），587 / 2525 留 `false` 走 STARTTLS —— 在非 465 端口勾上它等于要求那个端口直接上 TLS，握手会谈不拢 |
 | 上传成功但图片 403 / 前台不显示 | 桶未开启公开访问且 `mediaPublicUrl` 没填；或 Markdown 里存的还是站内相对路径 —— 站点与 Worker 不同源时相对地址会指回站点。改 `mediaPublicUrl` 后重新插入一次即可，旧文章里的地址要手动替换 |
 | 后台「前端管理」保存报「未配置内容仓库」 | 这一页写的是站点的 `data/*.json`，需要仓库写回通道：`GITHUB_TOKEN` + `githubOwner/githubRepo`，或本地的 `GIT_LOCAL_DIR`（本地开发还要 `GIT_LOCAL_HTTP` 指向 `pnpm repo:bridge`） |
 | 后台保存文章成功、仓库没有变化 | 未配置 `GITHUB_TOKEN`，或 `githubOwner/githubRepo/githubBranch/githubContentDir` 与实际不符；看 worker 日志 |

@@ -263,10 +263,18 @@ export const emailLogs = sqliteTable(
   {
     id: text('id').primaryKey(),
     to: text('to').notNull(),
+    /** 抄送地址，逗号分隔。通知类邮件抄送站长一份，这里留痕，收件箱能看出「站长收到的那份是不是同一封」 */
+    cc: text('cc'),
     subject: text('subject').notNull(),
     /** 'queued' | 'sent' | 'failed' */
     status: text('status').notNull().default('queued'),
     error: text('error'),
+    /**
+     * 发信服务器的原文回执（SMTP 各步应答与最后那条 250，例：250 Ok: queued as 3B2F3F1C）。
+     * 「库里 sent、邮箱里没有」时唯一能把两边对上的凭据：拿这里的队列号去邮件服务商的
+     * 收发日志查那一封信，就知道是我们没发出去、发出去被判垃圾、还是服务商压根没接。
+     */
+    detail: text('detail'),
     postId: text('post_id'),
     createdAt: integer('created_at').notNull().default(unixNow),
     sentAt: integer('sent_at'),

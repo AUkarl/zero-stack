@@ -4,10 +4,12 @@ import { connect } from 'cloudflare:sockets';
  * 极简 SMTP 客户端，直接跑在 Workers 的原生 TCP socket 上，
  * 所以"支持所有 SMTP 邮箱"是真实实现，不依赖第三方 HTTP 发信网关。
  *
- * 端口约定：
+ * 端口约定（实测 smtp.qiye.aliyun.com：465 用明文连过去 6 秒收不到一个字节，
+ * 换 TLS 连过去立刻回 220 —— 465 只有隐式 TLS，别拿 STARTTLS 去试，白等一场后报「连接失败」）：
  *   465        → 连接即 TLS（secureTransport: 'on'）
  *   587 / 2525 → 明文连接后 STARTTLS 升级
  *   25         → Cloudflare 一律封死，不要尝试
+ * 所以 465 一律走隐式 TLS；smtpSecure 只用来给「非 465 端口但服务端只收隐式 TLS」的自建环境留口子。
  */
 
 export interface SmtpOptions {
@@ -95,12 +97,28 @@ function buildMessage(o: SmtpOptions): string {
     `To: <${o.to}>`,
     cc.length > 1 ? `Cc: ${cc.slice(1).map((x) => `<${x}>`).join(', ')}` : null,
     `Subject: ${encodeHeader(o.subject)}`,
+    // Date 与 Message-ID 是 RFC 5322 必需的两项。以前没发：收件方反垃圾（QQ / 163 / Gmail）
+    // 缺了 Message-ID 就没法做去重与串会话，容易被判成垃圾；缺 Date 的邮件在有些客户端排在最后。
+    `Date: ${rfc2822Date(new Date())}`,
+    `Message-ID: ${messageId(o.from)}`,
     o.replyTo ? `Reply-To: <${o.replyTo}>` : null,
     'MIME-Version: 1.0',
     'Content-Type: text/html; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
   ].filter(Boolean);
   return headers.join(EOL) + EOL + EOL + encodeBody(o.html);
+}
+
+/** toUTCString 出来的就是 RFC 2822 那种「Wed, 07 Oct 2026 12:00:00 GMT」 */
+function rfc2822Date(d: Date): string {
+  return d.toUTCString();
+}
+
+/** 主机名取发件地址的域名，左边是「时间戳.随机」—— 同一封信重投时 Message-ID 不变才算得上一封 */
+function messageId(from: string): string {
+  const host = from.split('@')[1] ?? 'localhost';
+  const rand = (crypto.randomUUID?.() ?? String(Math.random()).slice(2)).replace(/-/g, '');
+  return `<${Date.now().toString(36)}.${rand}@${host}>`;
 }
 
 /** 信封收件人：主收 + 抄送，去掉重复与空串（抄送自己时不该多收一封） */

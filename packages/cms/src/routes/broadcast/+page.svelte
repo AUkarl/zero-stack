@@ -8,9 +8,13 @@
   interface Log {
     id: string;
     to: string;
+    /** 抄送地址，逗号分隔；通知邮件抄送站长那一份会在这里显出来 */
+    cc: string | null;
     subject: string;
     status: string;
     error: string | null;
+    /** 发信服务器原文回执（SMTP 各步应答 + 最后那条 250，内含 queued as 的队列号） */
+    detail: string | null;
     postId: string | null;
     createdAt: number;
     sentAt: number | null;
@@ -345,6 +349,12 @@
 
 <section class="card logs">
   <h3>发信记录</h3>
+  <p class="muted small">
+    「已发送」只代表发信服务器收下了这封信（SMTP 回 250），不代表投进了对方收件箱。
+    「说明」那列悬停能看发信服务器的原文回执，里面的 <code>queued as XXX</code> 是服务商的队列号，
+    拿它去邮箱服务商的收发日志查，才能确定某一封信到底有没有出去、有没有被判垃圾。
+    一行「排队中」长期不动，说明队列消费者没跑起来（跟发信配置无关）。
+  </p>
   {#if logs.length === 0}
     <p class="muted small">还没有发信记录。</p>
   {:else}
@@ -362,14 +372,17 @@
         <tbody>
           {#each logs as l (l.id)}
             <tr>
-              <td>{l.to}</td>
+              <td>
+                {l.to}
+                {#if l.cc}<div class="muted small">抄送 {l.cc}</div>{/if}
+              </td>
               <td class="clip">{l.subject}</td>
               <td>
                 <span class="badge {l.status === 'sent' ? 'good' : l.status === 'failed' ? 'bad' : 'pending'}">
                   {l.status === 'sent' ? '已发送' : l.status === 'failed' ? '失败' : '排队中'}
                 </span>
               </td>
-              <td class="clip">{l.error || (l.postId ? `文章 ${l.postId}` : '—')}</td>
+              <td class="clip" title={l.detail ?? ''}>{l.error || l.detail || (l.postId ? `文章 ${l.postId}` : '—')}</td>
               <td title={fmtDate(l.createdAt)}>{timeAgo(l.createdAt)}</td>
             </tr>
           {/each}

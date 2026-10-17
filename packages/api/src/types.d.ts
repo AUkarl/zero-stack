@@ -60,6 +60,10 @@ interface EmailJob {
   subject: string;
   html: string;
   from?: string;
+  /** email_logs 里入队时就写好的那一行：消费者更新它，不再新插一行 */
+  logId?: string;
+  html: string;
+  from?: string;
   /** 关联的文章标识，用于群发去重 */
   postId?: string;
   /** 确认 / 找回密码 / 新文章群发 / 即时通知 */
