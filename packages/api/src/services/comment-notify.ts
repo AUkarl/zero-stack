@@ -210,9 +210,6 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
       );
       await queueEmail(env, {
         to: r.to,
-        // 发给用户的那几封各抄站长一份：他能在自己邮箱里直接看到「用户收到的那封长什么样」，
-        // 出问题时不用猜到底是没发、发了别的内容，还是发出去了没送达。
-        cc: adminEmail && r.to !== adminEmail.toLowerCase() ? [adminEmail] : undefined,
         subject: r.subject,
         html,
         from: fromMail || undefined,
@@ -242,7 +239,6 @@ export interface NotifySelfTestRow {
   /** 这一封在链路里扮演谁 */
   label: string;
   to: string;
-  cc: string[];
   subject: string;
   sent: boolean;
   error: string | null;
@@ -282,15 +278,15 @@ export async function notifySelfTest(env: Env, to: string): Promise<NotifySelfTe
     '这是一封由后台「通知链路自检」发出的样例信，用来确认新评论提醒的通道、模板与收件人。' +
     `发信时间是 ${new Date().toISOString()}。收到它就说明这条链路是通的。`;
 
-  const send = async (label: string, recipient: string, cc: string[], subject: string, nickname: string, where: string): Promise<NotifySelfTestRow> => {
+  const send = async (label: string, recipient: string, subject: string, nickname: string, where: string): Promise<NotifySelfTestRow> => {
     const html = await renderEmail(
       env,
       'comment',
       { author: '测试用户', where, content: sample, url: `${base}/`, title: '通知链路自检', siteName },
       { title: subject, nickname, rawKeys: ['content'] },
     );
-    const res = await sendEmail(env, { to: recipient, cc: cc.length ? cc : undefined, subject, html, from: fromMail || undefined, kind: 'notice' });
-    return { label, to: recipient, cc, subject, sent: res.success, error: res.error ?? null, detail: res.detail ?? null, logId: res.logId ?? null };
+    const res = await sendEmail(env, { to: recipient, subject, html, from: fromMail || undefined, kind: 'notice' });
+    return { label, to: recipient, subject, sent: res.success, error: res.error ?? null, detail: res.detail ?? null, logId: res.logId ?? null };
   };
 
   // 第 1 封：站长期待收到的「新评论待处理」
@@ -300,18 +296,16 @@ export async function notifySelfTest(env: Env, to: string): Promise<NotifySelfTe
     await send(
       '站长那一封（commentNotifyAdmin）',
       toAdmin,
-      [],
       `【${siteName}】新评论待处理`,
       ownerName || '站长',
       '文章「通知链路自检」',
     ),
   );
-  // 第 2 封：用户那一封（回复提醒），并抄送站长一份
+  // 第 2 封：用户那封（回复提醒）
   rows.push(
     await send(
-      '用户那一封（commentNotifyReply）+ 抄送站长',
+      '用户那一封（commentNotifyReply）',
       to,
-      adminEmail && adminEmail.toLowerCase() !== to.toLowerCase() ? [adminEmail] : [],
       `【${siteName}】测试用户 回复了你的评论`,
       to,
       '文章「通知链路自检」的评论下',

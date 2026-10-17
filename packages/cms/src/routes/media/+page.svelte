@@ -1,5 +1,6 @@
 <script lang="ts">
   import { del, get, getApiBase, patch } from '#lib/api';
+  import { compressNote, prepareImage } from '#lib/image-compress';
 
   interface MediaItem {
     key: string;
@@ -117,11 +118,15 @@
     }
   }
 
-  async function upload(file: File) {
+  async function upload(source: File) {
     uploading = true;
     error = '';
-    progress = `上传中：${file.name}`;
+    progress = `正在压缩：${source.name}`;
     try {
+      const prepared = await prepareImage(source);
+      const file = prepared.file;
+      const note = compressNote(prepared);
+      progress = `上传中：${file.name}${note ? `（${note}）` : ''}`;
       const fd = new FormData();
       fd.append('file', file);
       if (selectedId) fd.append('bucket', selectedId);
@@ -129,7 +134,7 @@
       const res = await fetch(getApiBase() + '/api/admin/media' + qs, { method: 'POST', credentials: 'include', body: fd });
       const d = await res.json().catch(() => null);
       if (!res.ok) throw new Error(d?.message || '上传失败');
-      progress = `已上传：${d.data.url}`;
+      progress = `已上传：${d.data.url}${note ? `（${note}）` : ''}`;
       setTimeout(() => (progress = ''), 3500);
       await load();
     } catch (e) {
@@ -313,7 +318,10 @@
 >
   <p>拖拽文件到此处，或点击选择（支持多张，单文件 ≤ 20MB）</p>
   <input bind:this={input} type="file" multiple hidden onchange={onPick} />
-  <p class="muted small">上传会带上选中的存储桶 id；配了公开域名则复制 CDN 链接，否则为后台代理链接。</p>
+  <p class="muted small">
+    上传会带上选中的存储桶 id；配了公开域名则复制 CDN 链接，否则为后台代理链接。
+    位图（JPEG / PNG / AVIF…）会在浏览器里先转成 WebP 再上传，只存 WebP 那一份，像素尺寸不变；GIF 与 SVG 原样上传。
+  </p>
 </div>
 
 {#if uploading}<p class="muted">{progress}</p>{/if}

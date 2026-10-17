@@ -62,7 +62,9 @@ Hugo 主题之外的**全套动态后端**：评论、点赞 / 收藏、邮件�
   `visits` `visitor_keys`（访问统计）、`site_config`（后台设置的配置键）、
   `job_runs`（定时任务记录）、`invite_codes`（邀请码）、
   `post_drafts` `author_requests`（投稿与作者认证）、`audit_logs`（操作审计）。
-- **R2**：后台上传的媒体对象，多桶配置，可挂自定义域名直链。
+- **R2**：后台上传的媒体对象，多桶配置，可挂自定义域名直链。`pnpm setup` 建两个桶 —— 私有的 `zero-media`（只有 Worker 读得到）与公开的 `zero-media-public`；
+  公开桶填了 Zone ID（域名的 DNS 就在当前账户）就自动绑好自定义域名并把这条桶追加进 `mediaBuckets`，
+  没填或绑不上就只打印该做的事，绝不把还没生效的域名写进配置。两个桶都已存在时只跳过，不动里面的文件。
 - **KV**：`CACHE` 存只读热点（文章列表等），`SESSION` 存会话与滑动限流计数。
 - **Queue**：`zero-email` 异步出站邮件，最多重试 3 次。
 - **Git**：文章与时刻 Markdown、作者表 `data/authors.yaml`、友链数据 `data/links.yaml`、
@@ -170,7 +172,7 @@ ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh     # 追加后台接口
 ## 用向导一次搞定
 
 ```bash
-pnpm setup                     # 交互式：登录检查 → 建 / 复用 D1、R2、KV、Queue → 渲染 wrangler.jsonc
+pnpm setup                     # 交互式：登录检查 → 建 / 复用 D1、私有+公开两个 R2、KV、Queue → 绑公开桶域名 → 渲染 wrangler.jsonc
                                #           前台 / 后台 / API 三个地址默认取现有配置，直接回车就是不改
                                #           → 写 secrets → 应用远程迁移 → 部署 Worker 与后台
 pnpm setup -- --no-deploy      # 只准备资源与配置，不部署

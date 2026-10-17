@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get, getApiBase } from '#lib/api';
+  import { compressNote, prepareImage } from '#lib/image-compress';
 
   interface MediaObj {
     key: string;
@@ -149,14 +150,20 @@
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
-    uploadFile(file);
+    void uploadFile(file);
   }
 
-  /** 本地上传：走 FormData（bucket 字段指定桶），用 XHR 拿上传进度反馈中文百分比 */
-  function uploadFile(file: File) {
+  /**
+   * 本地上传：先按需要在浏览器里转成 WebP（见 #lib/image-compress），再走 FormData
+   * （bucket 字段指定桶），用 XHR 拿上传进度反馈中文百分比。
+   */
+  async function uploadFile(source: File) {
     uploading = true;
     uploadPct = 0;
     error = '';
+    uploadMsg = source.type.startsWith('image/') && source.type !== 'image/gif' && source.type !== 'image/svg+xml' ? `正在压缩 ${source.name}…` : `正在上传 ${source.name}…`;
+    const prepared = await prepareImage(source);
+    const file = prepared.file;
     uploadMsg = `正在上传 ${file.name}…`;
     const fd = new FormData();
     fd.append('file', file);
@@ -186,7 +193,8 @@
         // 按当前桶拼地址：能拼公开域名就拼公开域名，拼不出才退回 Worker 代理。
         // 直接写代理地址等于把图锁在登录后，访客拿到的是 401。
         const url = urlOf({ key: stored.key ?? '', url: stored.url });
-        uploadMsg = `上传成功（${file.name}）`;
+        const note = compressNote(prepared);
+        uploadMsg = note ? `上传成功（${file.name}，${note}）` : `上传成功（${file.name}）`;
         choose(url);
         void loadObjects(true);
       } else {

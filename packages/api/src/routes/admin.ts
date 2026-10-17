@@ -813,37 +813,27 @@ app.post('/broadcast', async (c) => {
   const admin = requireAdmin(c);
   const parsed = broadcastSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) fail(400, '主题与正文必填');
-  const db = createDb(c.env);
-  const list = await db
-    .select({ email: subscribers.email, token: subscribers.token })
-    .from(subscribers)
-    .where(eq(subscribers.status, 'confirmed'));
-
-  /* 退订链接指向接口自己（Pages 上的站点域名没有 /api 代理），没记过就退回站点地址 */
-  const base = await apiBase(c.env);
-  let queued = 0;
-  for (const s of list) {
-    // 退订只能凭邮件里的 token 链接，所以每封都要带上这一行
-    const footer = s.token
-      ? `<p style="color:#999;font-size:12px;margin-top:24px;">不再想收到本站邮件？<a href="${base}/api/subscribe/unsub?token=${encodeURIComponent(s.token)}">点这里退订</a>。</p>`
-      : '';
-    const res = await queueEmail(c.env, {
-      to: s.email,
-      subject: parsed.data.subject,
-      html: parsed.data.html + footer,
-      kind: 'broadcast',
-      postId: parsed.data.postId,
-    });
-    if (res.success) queued++;
-  }
+  /*
+   * 与「发布后群发」走同一条路：先建任务、再交给 runBroadcastJob 执行。
+   * 以前这里自己 in-request 循环 queueEmail，把后台写的裸 HTML 直接发出去 ——
+   * 于是这封信没有外壳（站点名 / Logo / 称呼 / 落款全没有），收件人只看到正文和一行退订；
+   * 订阅者一多还会撞请求上限。runBroadcastJob 里统一套外壳、按批回写进度、先过额度闸门。
+   */
+  const jobId = await createBroadcastJob(c.env, {
+    subject: parsed.data.subject,
+    html: parsed.data.html,
+    postId: parsed.data.postId ?? null,
+    createdBy: admin.id ?? null,
+  });
+  const run = await runBroadcastJob(c.env, jobId);
   await writeAudit(c.env, {
     actor: admin,
     action: 'broadcast',
     target: parsed.data.subject,
-    detail: { recipients: list.length, queued, postId: parsed.data.postId ?? null },
+    detail: { jobId, recipients: run.recipients, sent: run.sent, failed: run.failed, error: run.error ?? null },
     ip: clientIp(c),
   });
-  return ok({ recipients: list.length, queued });
+  return ok({ recipients: run.recipients, queued: run.sent, failed: run.failed, jobId, status: run.status, error: run.error ?? null });
 });
 
 /** 手动跑一次「新文章推送」；reset=true 重新记录基线，不补发历史 */
@@ -893,7 +883,7 @@ app.post('/email/test', async (c) => {
 /**
  * POST /api/admin/email/notify-test { to? }
  * 新评论提醒链路自检：按 notifyNewComment 用的同一套配置与模板各发一封
- * （站长那封 + 用户那封，后者抄送站长），回里带实际算出的收件人和 SMTP 原文回执。
+ * （站长那封 + 用户那封），回里带实际算出的收件人和 SMTP 原文回执。
  * 收件人不填就发给站长自己（adminNotifyEmail → emailFrom → 账号邮箱）。
  */
 app.post('/email/notify-test', async (c) => {
@@ -913,7 +903,7 @@ app.post('/email/notify-test', async (c) => {
     actor: admin,
     action: 'config',
     target: 'email:notify-test',
-    detail: { to, rows: result.rows.map((r) => ({ to: r.to, cc: r.cc, sent: r.sent, error: r.error })) },
+    detail: { to, rows: result.rows.map((r) => ({ to: r.to, sent: r.sent, error: r.error })) },
     ip: clientIp(c),
   });
   return ok(result);

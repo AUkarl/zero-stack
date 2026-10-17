@@ -353,16 +353,20 @@ app.get('*', async (c) => {
   const isAdmin = user?.role === 'admin';
   const owners = ownersFromRequest(c);
 
-  const rows = await db
-    .select()
-    .from(comments)
-    .where(eq(comments.postSlug, slug))
-    .orderBy(asc(comments.createdAt))
-    .limit(SCAN_LIMIT);
+  /* 评论行与这篇的赞数互不依赖（赞数只按 post_slug 圈范围），并发发出去：
+     D1 一次网络往返就是 100~200ms 量级，串起来是评论区「转圈」的大头。 */
+  const [rows, likeStats] = await Promise.all([
+    db
+      .select()
+      .from(comments)
+      .where(eq(comments.postSlug, slug))
+      .orderBy(asc(comments.createdAt))
+      .limit(SCAN_LIMIT),
+    commentLikeStatsForSlug(env, c, slug, user),
+  ]);
+  const { counts, liked } = likeStats;
 
   const visible = rows.filter((r) => visibleTo(r, user, isAdmin, owners));
-
-  const { counts, liked } = await commentLikeStatsForSlug(env, c, slug, user);
 
   const childCount = new Map<string, number>();
   const byParent = new Map<string, CommentRow[]>();

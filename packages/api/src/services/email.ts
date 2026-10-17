@@ -16,8 +16,6 @@ export interface EmailResult {
 
 interface SendInput {
   to: string;
-  /** 抄送一份（后台用来核对「用户收到的那封长什么样」） */
-  cc?: string[];
   subject: string;
   html: string;
   from?: string;
@@ -106,7 +104,6 @@ async function openEmailLog(env: Env, input: SendInput): Promise<string | null> 
       .values({
         id,
         to: input.to,
-        cc: input.cc?.length ? input.cc.join(', ') : null,
         subject: input.subject,
         status: 'queued',
         postId: input.postId ?? null,
@@ -188,7 +185,6 @@ export async function sendBySmtp(env: Env, input: SendInput): Promise<EmailResul
     from,
     fromName: fromName ?? undefined,
     to: input.to,
-    cc: input.cc,
     subject: input.subject,
     html: input.html,
     replyTo: from ?? undefined,
@@ -209,7 +205,6 @@ async function sendViaResend(env: Env, input: SendInput): Promise<EmailResult> {
       body: JSON.stringify({
         from: fromName ? `${fromName} <${from}>` : from,
         to: [input.to],
-        ...(input.cc?.length ? { cc: input.cc } : {}),
         subject: input.subject,
         html: input.html,
       }),
@@ -230,18 +225,15 @@ async function sendViaCloudflare(env: Env, input: SendInput): Promise<EmailResul
   if (!accountId || !token || !from) return { success: false, error: 'Cloudflare Email Sending 未配置完整' };
 
   const boundary = '----=_ZeroMailBoundary';
-  /* 这个接口只认 to 字段（可重复），所以抄送按多一个 to 投出去 */
   const mime = [
     '--' + boundary,
     'Content-Disposition: form-data; name="from"',
     '',
     from,
-    ...[input.to, ...(input.cc ?? [])].flatMap((one) => [
-      '--' + boundary,
-      'Content-Disposition: form-data; name="to"',
-      '',
-      one,
-    ]),
+    '--' + boundary,
+    'Content-Disposition: form-data; name="to"',
+    '',
+    input.to,
     '--' + boundary,
     'Content-Disposition: form-data; name="subject"',
     '',

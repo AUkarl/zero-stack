@@ -101,6 +101,17 @@ function importExampleSite(siteDir: string): number {
   return n;
 }
 
+/**
+ * 边缘 404 中间件的模板：scripts/site-template/functions/_middleware.ts
+ * 里面只有 __ZERO_API_BASE__ 一个占位，生成仓库时换成填好的接口地址。
+ * 单独放成一个文件而不是写在代码里：能直接读、直接改，也不用处理模板字符串里的正则转义。
+ */
+function switchGuard(apiBase: string): string {
+  const file = resolve(ROOT, 'scripts/site-template/functions/_middleware.ts');
+  if (!existsSync(file)) die(`找不到边缘 404 中间件模板：${file}`);
+  return readFileSync(file, 'utf-8').replaceAll('__ZERO_API_BASE__', apiBase);
+}
+
 /** 命令行给的值优先，且不再追问 —— 便于在 CI 或无 TTY 环境下使用 */
 const PRESET: Partial<Answers> = {
   siteName: flag('site-name'),
@@ -344,6 +355,12 @@ async function main(): Promise<void> {
   // 而前端登录成功后普通用户正是跳这里
   write(rel('content/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
   write(rel('static/images/.gitkeep'), '');
+  /**
+   * 边缘 404 中间件：后台把某个功能关掉时，那个页面直接 404 且带 noindex（旧链接与搜索引擎都拦掉）。
+   * 只有配了后端才有意义（开关在 /api/config 里），纯静态站不生成这个文件。
+   */
+  const apiBase = (a.apiBaseURL ?? '').trim().replace(/\/+$/, '');
+  if (apiBase) write(rel('functions/_middleware.ts'), switchGuard(apiBase));
   write(rel('.gitignore'), `.hugo_build.lock
 public/
 resources/

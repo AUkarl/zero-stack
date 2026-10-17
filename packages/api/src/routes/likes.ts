@@ -48,14 +48,17 @@ export async function commentLikeStatsForSlug(
   const db = createDb(env);
   const inPost = sql`${commentLikes.commentId} IN (SELECT ${comments.id} FROM ${comments} WHERE ${comments.postSlug} = ${slug})`;
 
-  const agg = await db
-    .select({ commentId: commentLikes.commentId, n: sql<number>`count(*)` })
-    .from(commentLikes)
-    .where(inPost)
-    .groupBy(commentLikes.commentId);
+  /* 总赞数与「我点过的」是两条独立的查询，并发跑：这条接口每篇评论区都要用，
+     串起来等于白等一次 D1 往返 */
+  const [agg, mine] = await Promise.all([
+    db
+      .select({ commentId: commentLikes.commentId, n: sql<number>`count(*)` })
+      .from(commentLikes)
+      .where(inPost)
+      .groupBy(commentLikes.commentId),
+    commentLikesOfActor(db, env, c, user, inPost),
+  ]);
   for (const r of agg) counts.set(r.commentId, Number(r.n));
-
-  const mine = await commentLikesOfActor(db, env, c, user, inPost);
   for (const r of mine) liked.add(r.commentId);
   return { counts, liked };
 }

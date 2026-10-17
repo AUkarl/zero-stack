@@ -7,6 +7,11 @@
 interface Env {
   DB: D1Database;
   R2: R2Bucket;
+  /**
+   * 公开桶（绑了自定义域名后图片走直链）。可选：老部署的 wrangler.jsonc 里没这条绑定，
+   * 媒体库按 mediaBuckets 里的 binding 名取桶，取不到才退回 R2。
+   */
+  R2_PUBLIC?: R2Bucket;
   /** 只读缓存：站点配置、友链列表等 */
   CACHE: KVNamespace;
   /** 会话与限流计数 */
@@ -55,8 +60,6 @@ interface Env {
 /** 邮件出站队列的消息体 */
 interface EmailJob {
   to: string;
-  /** 抄送地址，队列消费者会原样转给发送层 */
-  cc?: string[];
   subject: string;
   html: string;
   from?: string;

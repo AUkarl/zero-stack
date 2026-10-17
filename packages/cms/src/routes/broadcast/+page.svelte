@@ -8,8 +8,6 @@
   interface Log {
     id: string;
     to: string;
-    /** 抄送地址，逗号分隔；通知邮件抄送站长那一份会在这里显出来 */
-    cc: string | null;
     subject: string;
     status: string;
     error: string | null;
@@ -372,10 +370,7 @@
         <tbody>
           {#each logs as l (l.id)}
             <tr>
-              <td>
-                {l.to}
-                {#if l.cc}<div class="muted small">抄送 {l.cc}</div>{/if}
-              </td>
+              <td>{l.to}</td>
               <td class="clip">{l.subject}</td>
               <td>
                 <span class="badge {l.status === 'sent' ? 'good' : l.status === 'failed' ? 'bad' : 'pending'}">

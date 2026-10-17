@@ -361,13 +361,12 @@
 
   /**
    * 通知链路自检：后端按 notifyNewComment 真正用的那套配置各发一封
-   * （站长那封 + 用户那封，后者抄送站长），把算出来的收件人和 SMTP 原文回执摊开。
+   * （站长那封 + 用户那封），把算出来的收件人和 SMTP 原文回执摊开。
    * 「库里写着已发送、邮箱里却没有」只能这样分开看：是没发、发给谁，还是发出去没送达。
    */
   interface NotifyTestRow {
     label: string;
     to: string;
-    cc: string[];
     subject: string;
     sent: boolean;
     error: string | null;
@@ -639,7 +638,7 @@
   {/if}
   <div class="row testrow">
     <button class="sm" onclick={() => void runNotifyTest()} disabled={notifyBusy}>
-      {notifyBusy ? '两封发送中…' : '通知链路自检（站长那封 + 用户那封，用户那封抄送你）'}
+      {notifyBusy ? '两封发送中…' : '通知链路自检（站长那封 + 用户那封各一封）'}
     </button>
     <span class="muted small">收件人不填就发给你自己；这一步走的是新评论提醒真正用的那套收件人算法与模板。</span>
   </div>
@@ -656,7 +655,7 @@
       </p>
       {#each notifyResult.rows as r (r.label)}
         <p class="small testresult {r.sent ? 'ok' : 'err'}">
-          {r.label}：{r.sent ? '已送出' : '失败'} → {r.to}{r.cc.length ? ` （抄送 ${r.cc.join('、')}）` : ''}｜主题「{r.subject}」
+          {r.label}：{r.sent ? '已送出' : '失败'} → {r.to}｜主题「{r.subject}」
         </p>
         {#if r.error}<p class="small err">原因：{r.error}</p>{/if}
         {#if r.detail}<p class="small muted">服务器原文：{r.detail}</p>{/if}

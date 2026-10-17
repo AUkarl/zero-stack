@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -148,8 +149,183 @@ export function hasWranglerConfig(): boolean {
   return existsSync(resolve(API_DIR, 'wrangler.jsonc'));
 }
 
-/* --------------------------- Cloudflare Pages 项目 --------------------------- */
+/* --------------------------- R2：私有桶 + 公开桶 --------------------------- */
 
+/**
+ * 上传用的两个桶：
+ *   zero-media         私有，只有 Worker 读得到（走 /api/media/<桶>/<键> 代读）
+ *   zero-media-public  公开，绑上一个自定义域名后图片就是直链 —— 不占 Worker 的请求数与
+ *                      CPU 时间，RSS、阅读器、外链都能直接取，加载最快
+ * 这里只建「缺的那个」，已存在的桶和桶里的文件一个都不动。
+ */
+export const R2_PUBLIC_DEFAULT = 'zero-media-public';
+export const R2_PUBLIC_BINDING = 'R2_PUBLIC';
+
+/** wrangler 调用可以整体换成假的，好在没登录时也能自测这套判定 */
+export type WranglerRun = (args: string) => string | null;
+
+/**
+ * 常见「二级后缀」：遇到这些要往后多取一段，否则 blog.demo.co.uk 会算出 co.uk，
+ * 给的默认域名直接是错的（只是建议值，改起来一下回车，但别一上来就误导）。
+ */
+const TWO_LEVEL = new Set([
+  'co.uk',
+  'org.uk',
+  'ac.uk',
+  'gov.uk',
+  'me.uk',
+  'com.cn',
+  'net.cn',
+  'org.cn',
+  'gov.cn',
+  'edu.cn',
+  'com.hk',
+  'com.tw',
+  'com.au',
+  'net.au',
+  'co.jp',
+  'ne.jp',
+  'or.jp',
+  'co.kr',
+  'com.br',
+  'com.sg',
+  'com.my',
+  'co.in',
+  'com.mx',
+  'co.za',
+  'com.ru',
+]);
+
+/** https://blog.example.com/x → example.com；认不出裸域就回空串（改问用户） */
+export function apexOf(url: string): string {
+  const host = (url ?? '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .split('/')[0]
+    .split(':')[0];
+  if (!host || host === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return '';
+  const parts = host.split('.');
+  if (parts.length <= 2) return host;
+  const last2 = parts.slice(-2).join('.').toLowerCase();
+  return TWO_LEVEL.has(last2) ? parts.slice(-3).join('.') : parts.slice(-2).join('.');
+}
+
+/** 建桶：同名就跳过。返回是否新建，绝不删除或清空已有桶 */
+export function ensureBucket(name: string, exec: WranglerRun = wranglerTry): { name: string; created: boolean } {
+  if (!/^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(name)) {
+    throw new Error(`R2 桶名不合规则：${name}（只能用小写字母、数字、点、下划线、连字符，长度 3~63，首尾必须是字母或数字）`);
+  }
+  const listed = exec('r2 bucket list');
+  if (listed && listed.split('\n').some((line) => line.includes(name))) {
+    info(`R2 ${name} 已存在，跳过创建（桶里的文件一个不动）`);
+    return { name, created: false };
+  }
+  if (exec(`r2 bucket create ${name}`) === null) {
+    die(`R2 ${name} 创建失败。手动执行看具体报错：npx wrangler r2 bucket create ${name}`);
+  }
+  good(`R2 ${name} 已创建`);
+  return { name, created: true };
+}
+
+export interface DomainBind {
+  /** 域名最终是否可用（已绑上或本来就绑着） */
+  ok: boolean;
+  /** 这次有没有真发过绑定命令 */
+  attempted: boolean;
+  hostname: string;
+  detail: string;
+}
+
+/**
+ * 给公开桶绑自定义域名。
+ *
+ * `wrangler r2 bucket domain add` 一定要 zone-id，而只有「这个域名的 DNS 托管在当前 Cloudflare
+ * 账户」时才有 zone-id —— 这正好就是「同账户自动绑、不同账户手工填」的判定：
+ * 填了且绑成功 → 全自动；没填或绑不上 → 把要做什么原样打出来，不假装成功。
+ */
+export function bindBucketDomain(bucket: string, hostname: string, zoneId: string, exec: WranglerRun = wranglerTry): DomainBind {
+  const host = hostname.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  if (!host) return { ok: false, attempted: false, hostname: '', detail: '没填域名，公开桶先用内部地址，之后可以在控制台绑域名' };
+  const zone = zoneId.trim();
+  if (!zone) {
+    return {
+      ok: false,
+      attempted: false,
+      hostname: host,
+      detail: `没填 Zone ID（域名的 DNS 不在这个 Cloudflare 账户时就是这样）。请自己到控制台「R2 → ${bucket} → 设置 → 自定义域名」里绑 ${host}，绑完去 DNS 那边把 CNAME 验证过`,
+    };
+  }
+  const listed = exec(`r2 bucket domain list ${bucket}`);
+  if (listed && listed.includes(host)) return { ok: true, attempted: false, hostname: host, detail: '这个域名已经绑在桶上，不重复绑' };
+
+  const out = exec(`r2 bucket domain add ${bucket} --domain ${host} --zone-id ${zone} --force`);
+  if (out === null) {
+    return {
+      ok: false,
+      attempted: true,
+      hostname: host,
+      detail: `wrangler 没能绑上（多半是这个 zone 不在当前账户、或令牌没有 Zone 权限）。请手工到「R2 → ${bucket} → 设置 → 自定义域名」里加 ${host}，然后在 DNS 里确认那条记录`,
+    };
+  }
+  return { ok: true, attempted: true, hostname: host, detail: '已自动绑定' };
+}
+
+/**
+ * 后台「媒体库 → 存储桶」那份 mediaBuckets（site_config 里的 JSON 数组）：
+ * 把公开桶追加进去，已有条目一个不改（站长自己加的 S3 桶也原样留着），按 binding 去重。
+ */
+export function mergePublicBucketEntry(
+  existing: string,
+  entry: Record<string, unknown>,
+): { json: string; changed: boolean } {
+  let list: unknown[] = [];
+  const raw = (existing ?? '').trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) list = parsed;
+    } catch {
+      /* 原来那份坏了就按空的来：这里跟着抛错的话，整体会死在一步合并配置上，
+         而桶其实已经建好了 —— 宁可重写一份好的 */
+    }
+  }
+  const binding = String(entry.binding ?? '');
+  const has = list.some((x) => !!x && typeof x === 'object' && String((x as Record<string, unknown>).binding ?? '') === binding);
+  if (has) return { json: JSON.stringify(list), changed: false };
+  return { json: JSON.stringify([...list, entry]), changed: true };
+}
+
+/**
+ * 写进 D1 的 site_config。走 --file 而不是 --command：JSON 里全是双引号，
+ * 拼在命令行上要穿过 cmd.exe 这一层，转义出错的报错长得很像「SQL 语法错误」，很难查。
+ */
+export function upsertConfigValue(
+  dbName: string,
+  key: string,
+  value: string,
+  valueType: string,
+  runCmd: (args: string) => string | null = wranglerTry,
+): boolean {
+  const file = resolve(tmpdir(), `zero-media-buckets-${process.pid}.sql`);
+  const sqlText = [
+    'begin;',
+    `insert into site_config (key, value, value_type, updated_at) values ('${key}', '${value.replace(/'/g, "''")}', '${valueType}', strftime('%s','now'))`,
+    `on conflict (key) do update set value = '${value.replace(/'/g, "''")}', value_type = '${valueType}', updated_at = strftime('%s','now');`,
+    'commit;',
+  ].join('\n');
+  try {
+    writeFileSync(file, sqlText, 'utf-8');
+    return runCmd(`d1 execute ${dbName} --remote --file ${quote(file)}`) !== null;
+  } finally {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      /* 临时 SQL 删不掉不影响部署结果 */
+    }
+  }
+}
+
+/* --------------------------- Cloudflare Pages 项目 --------------------------- */
 /** 表格输出（`│ zero-cms │ …`）拆成单元格：边框字符不是空白，不能用 \b 切词 */
 function tableCells(raw: string): string[] {
   return raw

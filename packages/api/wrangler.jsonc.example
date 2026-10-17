@@ -12,6 +12,9 @@
       "migrations_dir": "./migrations"
     }
   ],
+  // pnpm setup 会把公开桶追加到下面这个数组里（binding=R2_PUBLIC，桶名按向导填的来）。
+  // 别在这里手写第二条：脚本是按数组里第一条的桶名那一行做拼接的，
+  // 自己加一条就会拼出两份 r2_buckets，wrangler 读不懂这份配置。
   "r2_buckets": [
     {
       "binding": "R2",

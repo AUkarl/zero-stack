@@ -15,7 +15,6 @@ export async function handleEmailBatch(batch: MessageBatch<EmailJob>, env: Env):
     // 设置里选了 Resend / Cloudflare Email 时这条队列才不会绕过用户选的通道硬发 SMTP
     const result = await sendEmail(env, {
       to: job.to,
-      cc: job.cc,
       subject: job.subject,
       html: job.html,
       from: job.from,

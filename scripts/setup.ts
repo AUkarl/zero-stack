@@ -12,18 +12,25 @@ import {
   PAGES_PROJECT,
   QUEUE_NAME,
   R2_NAME,
+  R2_PUBLIC_BINDING,
+  R2_PUBLIC_DEFAULT,
   WORKER_NAME,
+  apexOf,
+  bindBucketDomain,
   die,
+  ensureBucket,
   ensurePagesProject,
   extractId,
   good,
   info,
+  mergePublicBucketEntry,
   parseJson,
   run,
   readSavedApiBase,
   saveApiBase,
   step,
   assertShortMessages,
+  upsertConfigValue,
   warn,
   whoamiDetail,
   wrangler,
@@ -38,6 +45,10 @@ interface Answers {
   siteUrl: string;
   cmsUrl: string;
   apiUrl?: string;
+  /** 公开桶：名字 + 要绑的域名 + 该域名的 Zone ID（同账户才填得出来） */
+  publicBucket: string;
+  publicDomain: string;
+  publicZoneId?: string;
   emailProvider: EmailProvider;
   smtpHost?: string;
   smtpPort?: string;
@@ -153,8 +164,61 @@ function createResources(): ResourceIds {
   return { dbId, cacheId, sessionId };
 }
 
-/** 已配置过的仓库重复运行 setup 时，直接沿用旧 id，避免再次占用同名资源 */
-function readExistingIds(): ResourceIds | null {
+/* ---------------- 公开桶：建桶 + 绑域名 + 登记进后台 ---------------- */
+
+interface PublicBucketPlan {
+  name: string;
+  /** 要绑（或已绑）的域名，没填就空串 */
+  hostname: string;
+  /** 域名确实可用时的直链前缀，进 mediaBuckets 的 baseUrl */
+  baseUrl: string;
+  bound: boolean;
+  note: string;
+}
+
+/**
+ * 域名绑上才算「公开桶可用」：没绑成却把 baseUrl 写进配置，图片地址会全部指向一个
+ * 还不存在的域名，表现是后台上传成功、前台一片裂图 —— 比不配还难查。
+ * 所以没绑成（或本来就没填域名）时只把 JSON 打出来，等域名绑好再往后台粘。
+ */
+function preparePublicBucket(a: Answers): PublicBucketPlan {
+  const name = (a.publicBucket ?? '').trim() || R2_PUBLIC_DEFAULT;
+  ensureBucket(name);
+  const bind = bindBucketDomain(name, a.publicDomain ?? '', a.publicZoneId ?? '');
+  if (bind.ok) good(`${name} → ${bind.hostname ? `https://${bind.hostname}` : '（无域名）'}：${bind.detail}`);
+  else warn(`${name}：${bind.detail}`);
+  return { name, hostname: bind.hostname, baseUrl: bind.ok && bind.hostname ? `https://${bind.hostname}` : '', bound: bind.ok, note: bind.detail };
+}
+
+/** 读 D1 里现成的那条配置（这里是 mediaBuckets），没有就空串 */
+function readRemoteConfig(key: string): string {
+  const raw = wranglerTry(`d1 execute ${D1_NAME} --remote --command "select value from site_config where key='${key}'" --json`, { cwd: API_DIR });
+  const parsed = raw ? parseJson<Array<{ results?: { value?: string }[] }>>(raw) : null;
+  return parsed?.[0]?.results?.[0]?.value ?? '';
+}
+
+function seedPublicBucketConfig(pub: PublicBucketPlan): void {
+  if (!pub.bound || !pub.baseUrl) {
+    const entry = { id: 'public', label: '公开桶（直链）', kind: 'r2', binding: R2_PUBLIC_BINDING, baseUrl: pub.baseUrl };
+    const merged = mergePublicBucketEntry(readRemoteConfig('mediaBuckets'), entry);
+    info('公开桶域名还没绑好，暂不写进后台配置（写了图片会指向一个还不存在的域名）。');
+    info(`域名生效之后，在后台「媒体库 → 存储桶」加一条，或把这份 JSON 覆盖到 site_config 的 mediaBuckets：\n  ${merged.json}`);
+    return;
+  }
+  const entry = { id: 'public', label: '公开桶（直链）', kind: 'r2', binding: R2_PUBLIC_BINDING, baseUrl: pub.baseUrl };
+  const merged = mergePublicBucketEntry(readRemoteConfig('mediaBuckets'), entry);
+  if (!merged.changed) {
+    good('后台「媒体库 → 存储桶」里已经有 R2_PUBLIC 这条，不重复写');
+    return;
+  }
+  if (upsertConfigValue(D1_NAME, 'mediaBuckets', merged.json, 'json')) {
+    good(`公开桶已登记进后台（${pub.baseUrl}）：上传时选它，图片地址就是直链`);
+  } else {
+    warn(`桶建好了，但没能自动写进 D1。域名生效后在后台「媒体库 → 存储桶」手工加一条：\n  ${merged.json}`);
+  }
+}
+
+/** 已配置过的仓库重复运行 setup 时，直接沿用旧 id，避免再次占用同名资源 */function readExistingIds(): ResourceIds | null {
   const file = resolve(API_DIR, 'wrangler.jsonc');
   if (!existsSync(file)) return null;
   const raw = readFileSync(file, 'utf-8');
@@ -198,6 +262,7 @@ function readExistingUrls(): { siteUrl: string; cmsUrl: string; apiUrl: string; 
 /* --------------------------- 配置与密钥 --------------------------- */
 
 function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
+  const publicBucketName = (a.publicBucket ?? '').trim() || R2_PUBLIC_DEFAULT;
   const example = readFileSync(resolve(API_DIR, 'wrangler.jsonc.example'), 'utf-8');
   /** JSON.stringify(undefined) 返回 undefined 本身，拼进模板就成了配置里的裸字面量 undefined，
       整份文件不再是合法 JSONC，之后 wrangler 在这个目录里连 whoami 都跑不动 */
@@ -224,6 +289,13 @@ function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
   cfg = sub(cfg, '<从 wrangler d1 create 获取>', ids.dbId);
   cfg = sub(cfg, '<CACHE KV ID>', ids.cacheId);
   cfg = sub(cfg, '<SESSION KV ID>', ids.sessionId);
+  /** 公开桶作为第二个绑定加进去：media 那边按 binding 名找桶（services/media.ts 的 r2Bucket），
+      绑定名固定 R2_PUBLIC，后台「媒体库 → 存储桶」那条配置也按这个名字认它 */
+  cfg = sub(
+    cfg,
+    '"bucket_name": "zero-media"',
+    `"bucket_name": "zero-media"\n    },\n    {\n      "binding": "${R2_PUBLIC_BINDING}",\n      "bucket_name": ${JSON.stringify(publicBucketName)}`,
+  );
   cfg = sub(cfg, '"SITE_NAME": "Zero Site"', vars.join(',\n    '));
   cfg = sub(
     cfg,
@@ -368,6 +440,27 @@ const QUESTIONS: PromptObject[] = [
     initial: () => prev.apiUrl,
   },
   {
+    type: always('text', '上传用的公开桶：私有桶 zero-media 只有 Worker 读得到，公开桶绑上域名后图片是直链，\n      不占 Worker 请求数，RSS 与外链也能直接取。已存在就跳过，桶里的文件一个不动'),
+    name: 'publicBucket',
+    message: '公开桶名',
+    initial: () => R2_PUBLIC_DEFAULT,
+  },
+  {
+    type: always('text', '指向公开桶的完整域名。DNS 托管在当前 Cloudflare 账户时，下一问填 Zone ID 就自动绑好；\n      不在同一账户就留空 Zone ID，向导结束时按这里给的地址自己去控制台绑并验证'),
+    name: 'publicDomain',
+    message: '公开桶域名',
+    initial: (_prev: unknown, all: Partial<Answers>) => {
+      const apex = apexOf(all.siteUrl ?? '');
+      return apex ? `${R2_PUBLIC_DEFAULT}.${apex}` : '';
+    },
+  },
+  {
+    type: always('text', 'Cloudflare 控制台「该域名的 Zone 主页」右侧的 Zone ID；域名不在当前账户时留空'),
+    name: 'publicZoneId',
+    message: 'Zone ID',
+    initial: '',
+  },
+  {
     type: always('select', '这一步只把凭据写进 wrangler secret，之后随时能在后台「设置 → 发信方式」改'),
     name: 'emailProvider',
     message: '邮件通道',
@@ -426,6 +519,11 @@ function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, api
   console.log(`  3. pnpm create:site 生成私密内容仓库，然后在「设置 → 内容仓库」填 owner / repo / token`);
   console.log(`  4. 主题侧 hugo.toml 设置 params.apiBaseURL = ${apiUrl ?? 'https://<worker>.workers.dev'}（前台与后台都走这一个地址，CORS 已放行 ${a.siteUrl}）`);
   console.log('  5. 迁移旧评论：pnpm migrate:waline（详见 docs/DEPLOYMENT.md）');
+  console.log(
+    `  6. 图片公开桶：${a.publicBucket || R2_PUBLIC_DEFAULT}${
+      a.publicDomain ? ` → https://${a.publicDomain}` : '（没填域名，图片继续走 Worker 代理读）'
+    }；上传时在后台「媒体库」里选它，文章里的图片就是直链地址`,
+  );
 }
 
 /** 少写协议头的地址只会让浏览器报 Failed to fetch，而那时候人只会去查后端 */
@@ -466,6 +564,8 @@ async function main(): Promise<void> {
 
   step('准备 Cloudflare 资源');
   const ids = existing && reuse ? existing : createResources();
+  /** 公开桶是「增量」：老的 zero-media 与里面已有文件一律不动，只补一个桶并按需要绑域名 */
+  const pub = preparePublicBucket(a);
 
   writeWranglerConfig(a, ids);
 
@@ -478,6 +578,12 @@ async function main(): Promise<void> {
   step('应用数据库迁移');
   wrangler(`d1 migrations apply ${D1_NAME} --remote`, { cwd: API_DIR });
   good('D1 表结构已同步');
+
+  step('登记公开桶');
+  seedPublicBucketConfig(pub);
+  if (pub.hostname && !pub.bound) {
+    warn(`最后一步还没完：把 ${pub.hostname} 绑到 ${pub.name} 并验证 DNS（控制台 R2 → ${pub.name} → 设置 → 自定义域名），\n      绑好后域名才真的能取图`);
+  }
 
   const workerUrl = deployWorker();
   /** 密钥必须排在 worker 部署之后：首次运行时 worker 还不存在，先写就全以 Worker not found 失败 */

@@ -263,8 +263,6 @@ export const emailLogs = sqliteTable(
   {
     id: text('id').primaryKey(),
     to: text('to').notNull(),
-    /** 抄送地址，逗号分隔。通知类邮件抄送站长一份，这里留痕，收件箱能看出「站长收到的那份是不是同一封」 */
-    cc: text('cc'),
     subject: text('subject').notNull(),
     /** 'queued' | 'sent' | 'failed' */
     status: text('status').notNull().default('queued'),

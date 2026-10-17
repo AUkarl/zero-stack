@@ -83,7 +83,8 @@ pnpm setup -- --no-deploy
 | 类型 | 名称 | Worker 绑定 |
 |---|---|---|
 | D1 数据库 | `zero-db` | `DB` |
-| R2 桶 | `zero-media` | `R2` |
+| R2 桶（私有） | `zero-media` | `R2` |
+| R2 桶（公开） | `zero-media-public` | `R2_PUBLIC` |
 | KV（缓存） | `CACHE` | `CACHE` |
 | KV（会话/限流） | `SESSION` | `SESSION` |
 | Queue（邮件出站） | `zero-email` | `EMAIL_QUEUE` |
@@ -97,6 +98,29 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 占位符 `<从 wrangler d1 create 获取>`、`<CACHE KV ID>`、`<SESSION KV ID>` 会被真实 id 替换；
 `SITE_NAME` 会替换为 `SITE_URL` + `SITE_NAME` 两项，`ALLOWED_ORIGINS` 用向导输入的两个地址填充。
 选择启用 Git 写回时再追加 `GITHUB_OWNER` / `GITHUB_REPO` / `GITHUB_BRANCH`。
+
+`r2_buckets` 里除了私有的 `R2`，还会追加公开桶 `R2_PUBLIC`（桶名取向导里「公开桶名」那一答）。
+公开的 `wrangler.jsonc.example` 里只写第一条 —— 第二条是脚本按第一条那行拼接进去的，
+自己在模板里补一条会拼出两份 `r2_buckets`，wrangler 就读不懂生成的配置了。
+
+#### 2.3 两个桶各自负责什么
+
+| | 私有桶 `zero-media` | 公开桶 `zero-media-public` |
+|---|---|---|
+| 谁来读 | 只有 Worker（`/api/media/<桶>/<键>` 代读） | 任何人（绑了域名就是直链） |
+| 图片地址 | 占 Worker 的请求数与 10ms CPU 额度 | 不占 Worker，RSS / 阅读器 / 外链都能直接取 |
+| 怎么启用 | 开箱就是默认桶 | 绑好域名后在后台「媒体库 → 存储桶」选它上传 |
+
+向导为此多问三样：**公开桶名**（默认 `zero-media-public`）、**公开桶域名**（默认 `zero-media-public.<站点裸域>`）、
+**Zone ID**。判定规则：
+
+- 填了 Zone ID（域名的 DNS 就托管在当前 Cloudflare 账户）→ 直接跑 `wrangler r2 bucket domain add` 自动绑好，
+  并把 `{"id":"public","binding":"R2_PUBLIC","baseUrl":"https://<域名>"}` 追加进 D1 的 `mediaBuckets`
+  （只追加这一条，站长自己加的 S3 桶等原样保留；重复运行不会写第二份）；
+- 没填 Zone ID，或自动绑定被 Cloudflare 拒绝 → **不写这条配置**，只把该做的操作和完整 JSON 打印出来。
+  域名还没生效就先把 `baseUrl` 写进配置，图片地址会指向一个还不存在的域名，
+  表现为「后台上传成功、前台一片裂图」，比不配更难查；
+- 桶已存在就跳过创建，绝不删除、不动桶里已有的文件。
 
 > `packages/api/wrangler.jsonc` 已在 `.gitignore` 中，仓库只保留 `.example`。
 
@@ -178,6 +202,15 @@ VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
 
 ## 5. 部署后自检
 
+> 这一轮新增的三项，自检时各看一眼：
+> 1. **公开桶**：`npx wrangler r2 bucket list` 里两个桶都在；绑了域名的话
+>    `curl -I https://<公开桶域名>/上传的键` 应该 200 且 `content-type` 是图片类型；
+> 2. **RSS**：`<站点>/index.xml` 里 `<content:encoded>` 是整篇正文（不再只有一句摘要），
+>    `<img>` 的 src 是 https 绝对地址，封面在 `<enclosure>` / `<media:thumbnail>` 里，
+>    正文里的视频/音频播放器整块不出现；
+> 3. **边缘 404**：后台关掉「时刻」后 1 分钟内 `curl -I https://<站点>/moments/` 应该是 404 且带
+>    `x-robots-tag: noindex, nofollow`；打开后回到 200。未受控的路径（`/posts/...`）不受影响。
+
 | 检查 | 方法 |
 |---|---|
 | 运行时与绑定 | `curl https://<worker-url>/api/health`，`ok: true` 且 `broken` 为空 |
@@ -212,6 +245,14 @@ pnpm create:site
 
 子模块拉下来之后，生成器会把**主题自带的演示站 `exampleSite` 整份灌进新仓库**（`content/zh/**` 抹平成 `content/**`）：四篇示例文章、`data/` 里的页脚（含 ICP 占位）、关于、工坊、友链、作者示例，以及示例正文引用的那几张图 —— 新站开箱就是一座完整的站，不想要直接删文件。子模块没拉下来时只留最小骨架并给出提示。
 
+- 配了 `--api=`（或向导填了 API 地址）时，仓库里会多一个 `functions/_middleware.ts`：
+  后台把某个功能关掉，那个页面在**边缘**直接返回 404 并带上 `x-robots-tag: noindex, nofollow`。
+  主题原来只在浏览器里按 `/api/config` 把入口 hidden 掉，旧地址照样打得开、搜索引擎照旧收录，
+  「站内不显示 + 不收录 + 关掉就是 404」只有在这一层做得到。它只管 `/links/ /moments/ /subscribe/ /account/`
+  四条（各自对应的开关键在文件里的 `GATED` 表内，加一行就能多管一个页面；工坊 `/tools/` 目前没有后台开关，
+  要先在设置里加开关才有意义），开关状态在边缘缓存 60 秒 —— 后台改完最迟一分钟后生效，不用重建站点；
+  读不到配置时一律按「默认开」放行，绝不会因为接口抖动把整站变 404。模板在
+  `zero-stack/scripts/site-template/functions/_middleware.ts`，生成时只替换 `__ZERO_API_BASE__` 一个占位。
 - 脚本只在本地生成与提交，**不会替你推送远端**，推送指令会打印出来由你自己执行；
 - 内容仓库必须保持 **Private**：里面有未发布的草稿与个人信息；
 - 子模块 `themes/zero` 指向你的 zero-theme 仓库；若自动 `git submodule add` 失败（未登录 / 仓库不存在），

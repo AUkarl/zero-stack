@@ -22,8 +22,6 @@ export interface SmtpOptions {
   from: string;
   fromName?: string;
   to: string;
-  /** 抄送：抬头写 Cc，信封上也各投一次。为空时跟原来完全一样 */
-  cc?: string[];
   subject: string;
   html: string;
   replyTo?: string;
@@ -91,11 +89,9 @@ function dotStuff(text: string): string {
 
 function buildMessage(o: SmtpOptions): string {
   const from = o.fromName ? `${encodeHeader(o.fromName)} <${o.from}>` : `<${o.from}>`;
-  const cc = envelopeOf(o);
   const headers = [
     `From: ${from}`,
     `To: <${o.to}>`,
-    cc.length > 1 ? `Cc: ${cc.slice(1).map((x) => `<${x}>`).join(', ')}` : null,
     `Subject: ${encodeHeader(o.subject)}`,
     // Date 与 Message-ID 是 RFC 5322 必需的两项。以前没发：收件方反垃圾（QQ / 163 / Gmail）
     // 缺了 Message-ID 就没法做去重与串会话，容易被判成垃圾；缺 Date 的邮件在有些客户端排在最后。
@@ -119,16 +115,6 @@ function messageId(from: string): string {
   const host = from.split('@')[1] ?? 'localhost';
   const rand = (crypto.randomUUID?.() ?? String(Math.random()).slice(2)).replace(/-/g, '');
   return `<${Date.now().toString(36)}.${rand}@${host}>`;
-}
-
-/** 信封收件人：主收 + 抄送，去掉重复与空串（抄送自己时不该多收一封） */
-function envelopeOf(o: SmtpOptions): string[] {
-  const out: string[] = [];
-  for (const x of [o.to, ...(o.cc ?? [])]) {
-    const e = (x ?? '').trim().toLowerCase();
-    if (e && !out.includes(e)) out.push(e);
-  }
-  return out;
 }
 
 export interface SmtpResult {
@@ -192,13 +178,11 @@ export async function sendViaSmtp(o: SmtpOptions): Promise<SmtpResult> {
     if (!fromReply.startsWith('250')) return { success: false, error: `发件人被拒绝：${fromReply}` };
 
     const rcptLines: string[] = [];
-    for (const one of envelopeOf(o)) {
-      await write(data, `RCPT TO:<${one}>${EOL}`);
-      const toReply = await readReply(data);
-      rcptLines.push(toReply.trim());
-      if (!toReply.startsWith('250') && !toReply.startsWith('251')) {
-        return { success: false, error: `收件人被拒绝：${toReply}`, detail: rcptLines.join(' | ') };
-      }
+    await write(data, `RCPT TO:<${o.to}>${EOL}`);
+    const toReply = await readReply(data);
+    rcptLines.push(toReply.trim());
+    if (!toReply.startsWith('250') && !toReply.startsWith('251')) {
+      return { success: false, error: `收件人被拒绝：${toReply}`, detail: rcptLines.join(' | ') };
     }
 
     await write(data, `DATA${EOL}`);
