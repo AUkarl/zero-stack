@@ -214,7 +214,25 @@ jobs:
       - name: Build
         run: hugo --minify
 
-      - uses: cloudflare/wrangler-action@v3
+      # 没配 Secrets 就只做构建、不发布：否则这一步天天以「Missing CLOUDFLARE_API_TOKEN」失败，
+      # 每次 push 都给你发一封 GitHub 失败邮件。Pages 直连 Git 的站点本来就不需要这条通道 ——
+      # push 自己就是构建触发器，这里只是给「不想连 Pages Git 集成、想用 Actions 推」的人留的口。
+      - name: Detect Cloudflare credentials
+        id: cf
+        env:
+          CF_API_TOKEN: \${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: \${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          if [ -n "\$CF_API_TOKEN" ] && [ -n "\$CF_ACCOUNT_ID" ]; then
+            echo "enabled=true" >> "\$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "\$GITHUB_OUTPUT"
+            echo "::notice::未配置 CF_API_TOKEN / CF_ACCOUNT_ID，跳过发布（只构建）。站点若已用 Cloudflare Pages 的 Git 集成，本来就不需要这一步。"
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        if: steps.cf.outputs.enabled == 'true'
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: \${{ secrets.CF_API_TOKEN }}
           accountId: \${{ secrets.CF_ACCOUNT_ID }}
