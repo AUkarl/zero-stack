@@ -142,11 +142,19 @@
       const m = makeMeta();
       for (const k of SECTION_KEYS) {
         const raw = values[k];
-        const v = raw === null || raw === undefined ? clone(BLANK[k]) : payloadOf(k, normalizeSection(k, raw));
-        (next as Record<SectionKey, unknown>)[k] = v;
+        /**
+         * 状态里存的必须是「表单形状」，不是提交形状。
+         * 原先这里直接存 payloadOf(...) 的结果：其余八段的表单键和提交键同名所以没露馅，
+         * 而 SEO 那一段落盘是 snake_case（要和 params.toml 的 [seo] 逐键对齐），
+         * 于是 pendingOf 再跑一次 payloadOf(表单) 时 f.defaultDescription 是 undefined，
+         * 一句 undefined.trim() 把整页打死 —— 站点只要存过 data/seo.json，前端管理就打开是 500。
+         * 脏比较用的 loadedJson 仍按提交形状算，两边才是同一把尺子。
+         */
+        const form = raw === null || raw === undefined ? clone(BLANK[k]) : normalizeSection(k, raw);
+        (next as Record<SectionKey, unknown>)[k] = form;
         m[k] = {
           loaded: raw !== null && raw !== undefined,
-          loadedJson: raw === null || raw === undefined ? '' : JSON.stringify(v),
+          loadedJson: raw === null || raw === undefined ? '' : JSON.stringify(payloadOf(k, form)),
           initialized: false,
           removed: false,
         };

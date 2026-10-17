@@ -15,7 +15,8 @@
    */
   const path = $derived(page.url.pathname);
   const status = $derived(page.status);
-  const message = $derived(page.error?.message ?? '');
+  /** page.error 的类型是 App.ErrorMessage，默认就是 unknown 形状，取 message 得先收窄 */
+  const message = $derived(String((page.error as { message?: string } | null)?.message ?? ''));
   const is404 = $derived(status === 404);
 </script>
 
