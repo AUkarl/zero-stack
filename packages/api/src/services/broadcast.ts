@@ -15,7 +15,8 @@
 import { and, asc, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { broadcastJobs, subscribers } from '../db/schema';
-import { apiBase } from './config';
+import { apiBase, getConfig } from './config';
+import { postWebPath } from './frontmatter';
 import { mailQuotaCheck, queueEmail, renderEmail } from './email';
 import { newId } from '../lib/crypto';
 
@@ -39,6 +40,38 @@ async function unsubscribeFooter(env: Env, token: string): Promise<string> {
   const base = await apiBase(env);
   const href = `${base}/api/subscribe/unsub?token=${encodeURIComponent(token)}`;
   return `<p style="color:#999;font-size:12px;margin-top:24px;">不再想收到本站邮件？<a href="${href}">点这里退订</a>。</p>`;
+}
+
+/** 站点前台地址：邮件里的文章链接只能用它拼成绝对地址 */
+async function siteBaseUrl(env: Env): Promise<string> {
+  const raw = ((await getConfig(env, 'siteUrl')) ?? env.SITE_URL ?? '').trim();
+  return raw.replace(/\/+$/, '');
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch] ?? ch);
+}
+
+/**
+ * 关联文章在邮件里可点开的地址。
+ * 传进来的可能是仓库路径（content/posts/x.mdx，后台下拉给的就是这个），也可能已经是
+ * /posts/slug/，一律先归一到站内路径再拼上域名 —— 只给路径的话，邮件客户端点进去是
+ * 「本地文件」或「客户端自己的域名」，文章根本打不开。
+ */
+export async function postEmailUrl(env: Env, pathOrUrl: string): Promise<string> {
+  const raw = String(pathOrUrl ?? '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const webPath = postWebPath(raw);
+  const base = await siteBaseUrl(env);
+  return base ? `${base}${webPath}` : webPath;
+}
+
+/** 正文里还没有这篇文章的地址时补一段「阅读全文」；已经带了就不重复加 */
+export function appendPostLink(html: string, url: string): string {
+  const link = String(url ?? '').trim();
+  if (!link || html.includes(link)) return html;
+  return `${html}<p style="margin:18px 0 0 0;"><a href="${escapeAttr(link)}">阅读全文</a></p>`;
 }
 
 /**
@@ -96,6 +129,9 @@ async function executeJob(env: Env, job: typeof broadcastJobs.$inferSelect): Pro
   let runError: string | null = null;
 
   try {
+    /* 关联文章的地址一次算好：后台群发选了文章时正文里只有文字，链接靠这里补；
+       「发布后自动群发」那封已把地址写进正文，appendPostLink 认得出来就不再补第二份。 */
+    const bodyWithLink = appendPostLink(job.html, await postEmailUrl(env, job.postPath ?? ''));
     const total = await db
       .select({ n: sql<number>`count(*)` })
       .from(subscribers)
@@ -125,7 +161,7 @@ async function executeJob(env: Env, job: typeof broadcastJobs.$inferSelect): Pro
         const html = await renderEmail(
           env,
           'notice',
-          { content: job.html + footer },
+          { content: bodyWithLink + footer },
           { template: '{content}', rawKeys: ['content'] },
         );
         const res = await queueEmail(env, {

@@ -45,7 +45,7 @@ import {
   type ParsedMarkdown,
   type RepoEntry,
 } from '../services/frontmatter';
-import { createBroadcastJob, runBroadcastJob } from '../services/broadcast';
+import { createBroadcastJob, postEmailUrl, runBroadcastJob } from '../services/broadcast';
 import {
   createFriend,
   deleteFriend,
@@ -421,16 +421,18 @@ async function notifyPostSubscribers(env: Env, adminId: string, path: string, pa
 
   const site = (await getConfig(env, 'siteName')) || '';
   const title = String(parsed.front.title ?? path);
-  const link = postWebPath(path);
+  /* 必须给绝对地址：只写 /posts/xxx/ 的话，邮件客户端会拿「自己的」域名甚至本地路径去解析，
+     收件人点「阅读全文」打不开文章。站点域名没配时退化成相对路径，也比拼一个假域名好。 */
+  const link = await postEmailUrl(env, postWebPath(path));
   const summary = excerpt(String(parsed.front.summary ?? parsed.front.description ?? ''), 200);
   const html =
     `<h2>${escapeHtml(title)}</h2>` +
     (summary ? `<p>${escapeHtml(summary)}</p>` : '') +
-    `<p><a href="${link}">阅读全文</a></p>`;
+    `<p><a href="${escapeHtml(link)}">阅读全文</a></p>`;
   const jobId = await createBroadcastJob(env, {
     subject: `${site ? site + '：' : ''}${title}`,
     html,
-    postPath: link,
+    postPath: postWebPath(path),
     createdBy: adminId,
   });
   const run = await runBroadcastJob(env, jobId);
@@ -805,8 +807,10 @@ app.delete('/media/*', async (c) => {
 const broadcastSchema = z.object({
   subject: z.string().min(1).max(200),
   html: z.string().min(1).max(200_000),
-  /** 只发给已确认订阅者 */
-  postId: z.string().max(64).optional(),
+  /** 只发给已确认订阅者。后台下拉里文章的 id 就是仓库路径，上限与 POST /broadcast/jobs 对齐 */
+  postId: z.string().max(300).optional(),
+  /** 关联文章的仓库路径：靠它才能在信里补出「阅读全文」的绝对链接 */
+  postPath: z.string().max(300).optional().nullable(),
 });
 
 app.post('/broadcast', async (c) => {
@@ -823,6 +827,7 @@ app.post('/broadcast', async (c) => {
     subject: parsed.data.subject,
     html: parsed.data.html,
     postId: parsed.data.postId ?? null,
+    postPath: parsed.data.postPath ?? null,
     createdBy: admin.id ?? null,
   });
   const run = await runBroadcastJob(c.env, jobId);
