@@ -279,6 +279,20 @@ pnpm create:site -- --site-name=Demo --github-user=demo --repo=zero-site \
   --theme-repo=https://github.com/demo/zero-theme.git --git=n
 ```
 
+要脚本替你把仓库也建好并推上去，再加 `--publish`，并在环境变量里给令牌：
+
+```bash
+GITHUB_TOKEN=<classic PAT，勾 repo 作用域> pnpm create:site -- … --publish
+```
+
+- 默认**不推**：不加 `--publish` 或没给 `GITHUB_TOKEN` 就照旧只打印命令。`GITHUB_TOKEN` 只在环境变量里走，
+  不写进生成的任何文件，也不写进 `.git/config`（origin 存的是干净地址），推送凭据走 git 的 `http.extraheader`。
+- 建仓只建 **Private**。同名仓库已存在时先读它的可见性：是 Private 就复用并往里推，
+  是 Public 就直接停手 —— 脚本不替人改可见性，私人内容推上去就收不回。
+- 令牌不够（403）、凭据不对（401）、或这台机器连不上 `api.github.com`（证书链/网络）都会停下来说明原因，
+  并把「网页建好后手动推」的完整命令打出来；本地提交此时已经做好，不会白生成。
+- Fine-grained 令牌建不了仓库（GitHub 的限制），要么用 classic PAT，要么网页建好仓库后手动推。
+
 zero-site 需要配置的 GitHub Secrets：`CF_API_TOKEN`（Pages 编辑权限）、`CF_ACCOUNT_ID`。
 
 ### 6.1 主题怎么进内容仓库（三选一，按你的部署方式挑）

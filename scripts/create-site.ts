@@ -1,17 +1,20 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import prompts, { type PromptObject } from 'prompts';
 import { ROOT, assertShortMessages, die, good, info, step, warn } from './_util.js';
 
 /**
  * 生成私密内容仓库 zero-site：pnpm create:site
- * 只做本地目录生成与本地提交，绝不会替你推送远端。
+ * 默认只做本地目录生成与本地提交。加 `--publish` 并在环境变量里给 GITHUB_TOKEN，
+ * 才会在 GitHub 上建 **Private** 仓库、挂 origin 并推 main（不显式加就一条都不会推）。
  *
  * 可全部用参数跳过交互：
  *   pnpm create:site -- --site-name=Demo --github-user=demo --repo=zero-site \
  *     --api=https://demo.workers.dev --site-url=https://demo.pages.dev \
  *     --theme-repo=https://github.com/demo/zero-theme.git --git=n
+ *   GITHUB_TOKEN=... pnpm create:site -- ... --publish
  */
 
 interface Answers {
@@ -34,9 +37,21 @@ async function ask(questions: PromptObject[]): Promise<Answers> {
   return a as Answers;
 }
 
-function git(cwd: string, ...cmd: string[]): string {
-  const line = cmd.map((a) => (/^[\w./:=@-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)).join(' ');
-  const r = spawnSync(`git ${line}`, { cwd, shell: true, encoding: 'utf-8' });
+function git(cwd: string, ...cmd: (string | { env?: Record<string, string> })[]): string {
+  const env: Record<string, string> = {};
+  const args: string[] = [];
+  for (const part of cmd) {
+    if (typeof part === 'object') Object.assign(env, part.env ?? {});
+    else args.push(part);
+  }
+  const line = args.map((a) => (/^[\w./:=@-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)).join(' ');
+  const r = spawnSync(`git ${line}`, {
+    cwd,
+    shell: true,
+    encoding: 'utf-8',
+    env: Object.keys(env).length ? { ...process.env, ...env } : process.env,
+  });
+  /* 报错原文里不带 token：token 只在 env 里走，命令行与这条消息都看不到它 */
   if (r.status !== 0) throw new Error(`git ${line} 失败：${(r.stderr ?? '').trim()}`);
   return (r.stdout ?? '').trim();
 }
@@ -316,8 +331,106 @@ function sectionIndex(dir: string, title: string): string {
   return `---\ntitle: "${title}"\ntype: "${dir}"\nlayout: "list"\n---\n`;
 }
 
+export interface PublishDeps {
+  /** 测试里指到假 API；默认打真的 GitHub */
+  apiBase?: string;
+  /** 测试里指到本地 bare 仓库的父目录（file:///…/someone），默认 https://github.com */
+  remoteBase?: string;
+  fetchImpl?: typeof fetch;
+}
+
+function oneLine(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '').replace(/\s+/g, ' ').trim().slice(0, 220);
+}
+
+/**
+ * 建 Private 仓库 → 挂 origin → 推 main。只在 --publish + GITHUB_TOKEN 时走到这里。
+ *
+ * 三道保险：
+ * - 同名仓库已存在时，先确认它确实是 Private 才复用；是 Public 就直接停手 —— 脚本不该替人改可见性，
+ *   而 Private 仓库推上去的东西，事后仍能整仓库删掉；
+ * - token 只走 `GIT_CONFIG_*` 环境变量，不进命令行、不进 .git/config（origin 存的是干净地址），
+ *   所以它既不会留在 shell 历史里，也不会跟着仓库被人 copy 走；
+ * - GIT_TERMINAL_PROMPT=0：凭据不对时 git 会当场失败，而不是挂在一个没人看见的用户名提示上等输入。
+ */
+export async function publishSiteRepo(siteDir: string, a: Answers, token: string, deps: PublishDeps = {}): Promise<string> {
+  const api = (deps.apiBase ?? 'https://api.github.com').replace(/\/+$/, '');
+  const web = (deps.remoteBase ?? 'https://github.com').replace(/\/+$/, '');
+  const f = deps.fetchImpl ?? fetch;
+  const auth = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'zero-stack-create-site' };
+  /** 外面套一层：网络不通/被代理拦下时 fetch 抛的是 TypeError，光看那句谁都以为令牌错了 */
+  const gh = async (path: string, init: RequestInit): Promise<Response> => {
+    try {
+      return await f(api + path, { ...init, headers: { ...auth, ...(init.headers ?? {}) } });
+    } catch (e) {
+      die(
+        `连不上 GitHub API（${api}）：${oneLine(e instanceof Error ? `${e.message} ${(e as { cause?: { code?: string } }).cause?.code ?? ''}` : String(e))}\n` +
+          '  这是传输层的问题（证书/网络），不是令牌不对：没建仓也没推送，本地提交仍在 ' + resolve(siteDir) + '。\n' +
+          '  git 自己通常能走通（这台机器就是），所以最省事的一条路是在网页上建好 Private 仓库，然后：\n' +
+          `    cd ${resolve(siteDir)} && git remote add origin https://github.com/${a.githubUser}/${a.repoName}.git && git push -u origin main\n` +
+          '  换了能直连 api.github.com 的网络后，重跑同样的 --publish 命令即可由脚本代做。',
+      );
+      throw e;
+    }
+  };
+
+  const res = await gh('/user/repos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: a.repoName, private: true, auto_init: false, has_issues: false, has_wiki: false, has_downloads: false }),
+  });
+  if (res.status !== 201) {
+    const text = await res.text().catch(() => '');
+    const exists = res.status === 422 && /exist/i.test(text);
+    if (!exists) {
+      die(
+        `建仓失败（HTTP ${res.status}）：${oneLine(text)}\n` +
+          '  令牌要能建仓库：classic PAT 勾 repo 作用域；Fine-grained 令牌建不了仓库，请在网页上先建好再去掉 --publish。\n' +
+          '  不想让脚本代办就把这条命令记下来，之后手动推：cd ' +
+            resolve(siteDir) + ' && git remote add origin ' + `${web}/${a.githubUser}/${a.repoName}.git && git push -u origin main`,
+      );
+    }
+    const probe = await gh(`/repos/${a.githubUser}/${a.repoName}`, {});
+    const meta = (await probe.json().catch(() => null)) as { private?: boolean } | null;
+    if (!probe.ok) die(`同名仓库已存在，但读不到它的可见性（HTTP ${probe.status}）。为安全起见先不推：确认 ${a.githubUser}/${a.repoName} 是 Private 再重跑。`);
+    if (meta?.private !== true) die(`${a.githubUser}/${a.repoName} 已经存在，而且是 Public。这个脚本不会替你改可见性 —— 换仓库名，或在网页上改回 Private 后重跑。`);
+    info(`${a.githubUser}/${a.repoName} 已存在且是 Private，直接往里推`);
+  } else {
+    good(`已在 GitHub 建好 Private 仓库：${a.githubUser}/${a.repoName}`);
+  }
+
+  const remote = `${web}/${a.githubUser}/${a.repoName}.git`;
+  try {
+    git(siteDir, 'remote', 'add', 'origin', remote);
+  } catch {
+    git(siteDir, 'remote', 'set-url', 'origin', remote);
+  }
+  const basic = Buffer.from(`x-access-token:${token}`, 'utf-8').toString('base64');
+  git(siteDir, 'push', '-u', 'origin', 'main', {
+    env: {
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.extraheader',
+      GIT_CONFIG_VALUE_0: `Basic ${basic}`,
+    },
+  });
+  return `https://github.com/${a.githubUser}/${a.repoName}`;
+}
+
 async function main(): Promise<void> {
   console.log('\n🏗️  生成 zero-site（私密内容仓库）\n');
+  /** 建仓+推送要显式开：--publish 与 GITHUB_TOKEN 缺一个就照旧只打印指引（先验，免得生成到一半才说不能推） */
+  const publish = process.argv.includes('--publish');
+  const ghToken = (process.env.GITHUB_TOKEN ?? '').trim();
+  if (publish && !ghToken) {
+    die(
+      '--publish 需要环境变量 GITHUB_TOKEN（classic PAT，勾 repo 作用域）。\n' +
+        '  PowerShell: $env:GITHUB_TOKEN="<你的令牌>" ; pnpm create:site -- ... --publish\n' +
+        '  Git Bash:   GITHUB_TOKEN="<你的令牌>" pnpm create:site -- ... --publish\n' +
+        '  令牌只用于这一次建仓与推送，既不写进生成的文件，也不写进 .git/config。\n' +
+        '  不想给就别加 --publish：脚本照常生成并本地提交，结尾把建仓与推送的命令完整打印出来。',
+    );
+  }
   const a = { ...PRESET, ...(await ask(QUESTIONS)) } as Answers;
   if (!a.githubUser || !a.repoName || !a.siteUrl || !a.apiBaseURL) die('所有必填项都需要填写');
   /** 末尾斜杠必须去掉：主题拼的是 `${apiBaseURL}/api/...`，带斜杠就成了 //api，
@@ -468,44 +581,78 @@ hugo server -D
     warn('没读到 themes/zero/config/_default/params.toml（子模块未初始化？）：已先生成只含后端地址的最小一份，拉下主题后按上面的注释换成全量模板');
   }
 
-  if (a.initGit) {
+  /** 要推就先把这次没做的 git 步骤补齐：推一个「还没 init / 没子模块」的空壳比不推更难查 */
+  if (publish && !a.initGit) {
+    git(siteDir, 'init', '-b', 'main');
+    good('补做 git init -b main');
+  }
+  if (publish && submodulePending) {
+    const placeholder = resolve(siteDir, 'themes/zero/.gitkeep');
+    if (existsSync(placeholder)) rmSync(resolve(siteDir, 'themes/zero'), { recursive: true, force: true });
+    try {
+      git(siteDir, 'submodule', 'add', a.themeRepo, 'themes/zero');
+      submodulePending = false;
+      good('补做子模块添加：themes/zero');
+    } catch (e) {
+      warn(`子模块还是没加成（${e instanceof Error ? e.message.split('\n')[0] : String(e)}）。主题空着推上去，Pages 构建必然失败，先按这条补：cd ${siteDir} && ${submodule} && git add . && git commit -m "chore: 主题子模块" && git push`);
+    }
+  }
+
+  if (a.initGit || publish) {
     git(siteDir, 'add', '.');
     git(siteDir, '-c', 'user.name=zero', '-c', 'user.email=zero@local', 'commit', '-m', 'feat: initial zero-site');
-    good('本地提交完成（未推送）');
+    good('本地提交完成' + (publish ? '，准备推送' : '（未推送）'));
+  }
+
+  let pushed: string | null = null;
+  if (publish) {
+    step('建 Private 仓库并推送');
+    pushed = await publishSiteRepo(siteDir, a, ghToken);
+    good(`已推送到 ${pushed}（Private）`);
   }
 
   /**
-   * 结尾只报「你还得做什么」，不代办：建仓库要 repo 权限的 GitHub token，
-   * 这脚本手上没有（它只问了用户名和仓库名）；更要紧的是可见性只能由你选 ——
-   * 私人内容一旦被推成 Public，历史删不干净。
+   * 结尾只报「你还得做什么」。没加 --publish 时代办不了建仓：脚本手上没有 token，
+   * 而可见性只能由你选 —— 私人内容一旦被推成 Public 就收不回。
+   * 加了 --publish 就照打印的做，并把已经做完的那几步从清单里去掉，不留「再填一遍」的尾巴。
    */
-  console.log('\n📤 接下来由你做的五步（脚本不替你建仓库、也不替你推送）');
-  console.log(`  1. 建仓库：到 https://github.com/new`);
-  console.log(`     账户 ${a.githubUser} · 仓库名 ${a.repoName} · 可见性选 Private：里面有草稿与个人信息，建成 Public 就再也收不回`);
-  console.log('     ⚠ 不要勾「Add a README / .gitignore / license」：远端有初始提交的话，第一次 push 会因两边历史无关而失败');
-  console.log(`  2. 挂远端并推上去：`);
-  console.log(`     cd ${siteDir}`);
-  console.log(`     git remote add origin https://github.com/${a.githubUser}/${a.repoName}.git`);
-  console.log('     git push -u origin main');
-  if (!a.initGit) {
-    console.log('     （这次没做 git 初始化，先补：git init -b main && git add . && git commit -m "feat: initial zero-site"）');
+  let n = 0;
+  const todo = (text: string) => console.log(`  ${++n}. ${text}`);
+  const note = (text: string) => console.log(`     ${text}`);
+  console.log(pushed ? '\n📤 建仓与推送已代做，剩下这些还要你做' : '\n📤 接下来由你做的几步（脚本不替你建仓库、也不替你推送）');
+  if (pushed) {
+    todo(`仓库已建好并推上：${pushed} —— 可见性 Private，origin 已挂好（.git/config 里存的地址不含令牌）`);
+  } else {
+    todo('建仓库：到 https://github.com/new');
+    note(`账户 ${a.githubUser} · 仓库名 ${a.repoName} · 可见性选 Private：里面有草稿与个人信息，建成 Public 就再也收不回`);
+    note('⚠ 不要勾「Add a README / .gitignore / license」：远端有初始提交的话，第一次 push 会因两边历史无关而失败');
+    todo('挂远端并推上去');
+    note(`cd ${siteDir}`);
+    note(`git remote add origin https://github.com/${a.githubUser}/${a.repoName}.git`);
+    note('git push -u origin main');
+    note('想让它自己办：GITHUB_TOKEN=<classic PAT，勾 repo> pnpm create:site -- … --publish');
+    if (!a.initGit) note('（这次没做 git 初始化，先补：git init -b main && git add . && git commit -m "feat: initial zero-site"）');
   }
   if (submodulePending) {
-    console.log(`     （子模块这次没加成，先补：${submodule}，再 git submodule update --init --recursive）`);
+    note(`（子模块还没加成，补：${submodule}，再 git submodule update --init --recursive）`);
   }
   if (!submodulePending && imported === 0) {
-    console.log('     （示例内容这次没进来：先 git submodule update --init --recursive，再重跑一次 pnpm create:site 覆盖生成）');
+    note('（示例内容这次没进来：先 git submodule update --init --recursive，再重跑一次 pnpm create:site 覆盖生成）');
   }
-  console.log('  3. 给 Actions 两个 secret：仓库 Settings → Secrets and variables → Actions → New repository secret');
-  console.log('     CF_API_TOKEN（要有 Pages 编辑权限的 API Token）、CF_ACCOUNT_ID（Cloudflare 控制台首页右侧那串）');
-  console.log(`  4. 推 main 会触发首次构建；Pages 项目 ${a.repoName} 由 workflow 自动创建，自定义域名到 Cloudflare Pages → 该项目 → Custom domains 里绑`);
-  console.log(`     本机先看一眼效果：cd ${siteDir} && git submodule update --init --recursive && hugo server -D`);
-  console.log('  5. 让后台写得进这座仓库：');
-  console.log(`     · zero-stack 的 packages/api/wrangler.jsonc 里 ALLOWED_ORIGINS 加上 ${a.siteUrl}，然后 pnpm deploy:api（不加就是后台一请求就被 CORS 拒掉）`);
-  console.log(`     · 后台「设置 → 内容仓库」填 owner=${a.githubUser} / repo=${a.repoName}，并存一个有 contents:write 的 token（密钥只进 worker secret，不进仓库）`);
-  console.log(`     · 主题侧的接口地址已经写在生成好的 config/_default/params.toml 里（apiBaseURL = ${a.apiBaseURL}），不用再改`);
+  todo('给 Actions 两个 secret：仓库 Settings → Secrets and variables → Actions → New repository secret');
+  note('CF_API_TOKEN（要有 Pages 编辑权限的 API Token）、CF_ACCOUNT_ID（Cloudflare 控制台首页右侧那串）');
+  todo(`推 main 会触发首次构建；Pages 项目 ${a.repoName} 由 workflow 自动创建，自定义域名到 Cloudflare Pages → 该项目 → Custom domains 里绑`);
+  note(`本机先看一眼效果：cd ${siteDir} && git submodule update --init --recursive && hugo server -D`);
+  todo('让后台写得进这座仓库');
+  note(`· zero-stack 的 packages/api/wrangler.jsonc 里 ALLOWED_ORIGINS 加上 ${a.siteUrl}，然后 pnpm deploy:api（不加就是后台一请求就被 CORS 拒掉）`);
+  note(`· 后台「设置 → 内容仓库」填 owner=${a.githubUser} / repo=${a.repoName}，并存一个有 contents:write 的 token（密钥只进 worker secret，不进仓库）`);
+  note(`· 主题侧的接口地址已经写在生成好的 config/_default/params.toml 里（apiBaseURL = ${a.apiBaseURL}），不用再改`);
 }
 
-main().catch((e: unknown) => {
-  die(e instanceof Error ? e.message : String(e));
-});
+/** 只有直接被执行时才跑生成流程；被 import（比如建仓那步的验证脚本）时不能顺带把站生成一遍 */
+const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (invokedDirectly) {
+  main().catch((e: unknown) => {
+    die(e instanceof Error ? e.message : String(e));
+  });
+}
