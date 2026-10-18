@@ -468,6 +468,8 @@ export interface ImportOutcome {
   layout: { postsDir: { from: string; to: string }; momentsDir: { from: string; to: string }; dataDir: { from: string; to: string } };
   sections: SectionOutcome[];
   build: { triggered: boolean; error?: string } | null;
+  /** 分批写入时回给后台的续跑坐标：这一区还有 from 之后的文件没写 */
+  resume: { section: SectionId; from: number; total: number } | null;
 }
 
 const TABLES_BY_SECTION: Record<string, Record<string, any>> = {
@@ -483,9 +485,28 @@ export interface ImportBackupOptions {
   dryRun?: boolean;
   /** 本站已有同名文件时是否覆盖（只对文件类分区有意义） */
   overwrite?: boolean;
+  /**
+   * 分批写入：一个 Worker 请求里逐文件调 GitHub Contents API，二十几篇就会中途断掉
+   * （请求超限但没有任何错误冒出来，界面还报成功）。所以后台改成一次只推一批，
+   * fileStart 是本区文件数组的起点，fileCount 是这批最多写几个。
+   */
+  fileStart?: number;
+  fileCount?: number;
   actor?: { id?: string | null; name?: string | null } | null;
   ip?: string;
 }
+
+/** params.toml 里后端地址那一行，取值与替换都用它 */
+const API_LINE_RE = /^apiBaseURL\s*=\s*"([^"]*)"/m;
+
+/** 只有像样的 http 地址才值得保留（空值说明本站本来就当纯静态跑） */
+function siteApiBase(content: string): string {
+  const value = (API_LINE_RE.exec(content)?.[1] ?? '').trim();
+  return /^https?:\/\//i.test(value) ? value : '';
+}
+
+/** 正文里残留的源站本机地址（导入到线上就是访客打不开的链接） */
+const LOCAL_ADDR_RE = /https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?/;
 
 export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOptions = {}): Promise<ImportOutcome> {
   const payload = normalizePayload(raw);
@@ -509,6 +530,7 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
     },
     sections: [],
     build: null,
+    resume: null,
   };
 
   // 恢复仓库文件的分区才需要仓库坐标
@@ -631,8 +653,15 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
     /* 仓库文件类分区 */
     const files = section.files ?? [];
     if (files.length && target) {
+      const start = Math.max(0, Math.min(opts.fileStart ?? 0, files.length));
+      const batch = opts.fileCount && opts.fileCount > 0 ? files.slice(start, start + opts.fileCount) : files.slice(start);
       const fr: SectionFileResult = { total: files.length, write: 0, skip: 0, unchanged: 0, conflicts: [] };
-      for (const f of files) {
+      /** 备份来自别的站点时 params.toml 里的后端地址是源站的，写过去等于把新站打死 */
+      const keptApi: string[] = [];
+      /** 正文/数据里残留的 127.0.0.1 这类地址，改写不了正文，只能逐条点名 */
+      const localAddr: string[] = [];
+      for (const f of batch) {
+        let content = f.content;
         let current: { content: string } | null = null;
         try {
           current = await readFileFrom(target, f.path);
@@ -640,8 +669,18 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
           fr.conflicts.push(`${f.path}（读取失败：${briefError(e)}）`);
           continue;
         }
+        if (/(^|\/)params\.toml$/.test(f.path) && current) {
+          const mine = siteApiBase(current.content);
+          const theirs = siteApiBase(content);
+          if (mine && theirs && mine !== theirs) {
+            content = content.replace(API_LINE_RE, `apiBaseURL = "${mine}"`);
+            keptApi.push(`${f.path}：保留本站的 ${mine}（备份里那份是 ${theirs}）`);
+          }
+        }
+        const local = LOCAL_ADDR_RE.exec(content)?.[0];
+        if (local) localAddr.push(`${f.path} → ${local}`);
         if (current) {
-          if (current.content === f.content) {
+          if (current.content === content) {
             fr.unchanged++;
             continue;
           }
@@ -654,7 +693,7 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
         fr.write++;
         if (!dryRun) {
           try {
-            const res = await writeViaTarget(target, f.path, f.content, `zero-backup: 恢复${labelOf(section.id)}`, {
+            const res = await writeViaTarget(target, f.path, content, `zero-backup: 恢复${labelOf(section.id)}`, {
               actor: opts.actor,
               ip: opts.ip,
               action: 'backup',
@@ -671,13 +710,22 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
       } else if (!overwrite && fr.skip) {
         result.notes.push(`${fr.skip} 个文件本站已有同名且内容不同，没勾「覆盖同名」时保持不动`);
       }
+      for (const k of keptApi.slice(0, 3)) result.notes.push(k);
+      if (localAddr.length) {
+        result.notes.push(
+          `${localAddr.length} 个文件里还有源站的本机地址，访客打不开这类链接，请到后台逐个改：${localAddr.slice(0, 3).join('、')}${localAddr.length > 3 ? ' …' : ''}`,
+        );
+      }
+      /** 这一区还剩文件没写：把续跑坐标交回后台，由它接着发下一批（一次请求写二十几个文件会中途断） */
+      if (start + batch.length < files.length) outcome.resume = { section: section.id, from: start + batch.length, total: files.length };
       result.files = fr;
     }
 
     outcome.sections.push(result);
   }
 
-  if (!dryRun && wroteFiles) {
+  /* 分批时只在某个区真正写完的那一次触发重建，别每批都点一次构建 */
+  if (!dryRun && wroteFiles && !outcome.resume) {
     const build = await triggerPagesBuild(env);
     outcome.build = build;
   }

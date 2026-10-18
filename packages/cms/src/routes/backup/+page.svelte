@@ -66,6 +66,8 @@
     layout: { postsDir: { from: string; to: string }; momentsDir: { from: string; to: string }; dataDir: { from: string; to: string } };
     sections: OutcomeSection[];
     build: { triggered: boolean; error?: string } | null;
+    /** 后端让分批续跑的坐标：这一区还有 from 之后的文件没推 */
+    resume?: { section: string; from: number; total: number } | null;
   }
   interface CatalogItem {
     id: string;
@@ -92,6 +94,8 @@
   let busy = $state('');
   let error = $state('');
   let notice = $state('');
+  /** 分批提交时的进度，只有真写在跑才非空 */
+  let importProgress = $state('');
   let lastExport = $state<ArchiveResult | null>(null);
   /** 最近一次「导出到本地」带回来的隐患：空备份必须当场看得见，不能等导入才发现 */
   let exportWarn = $state<string[]>([]);
@@ -388,6 +392,49 @@
   }
 
   /** 恢复分两步：先按勾选的分区演习，看清影响面再真写 */
+  /**
+   * 一次请求只推这么多个文件。后端在 Worker 里逐个调 GitHub Contents API，
+   * 二十几篇塞一个请求会中途断掉而且不报错（2026-10-18 实测：计划 21 篇、实写 8 篇，errors 空、界面报成功）。
+   */
+  const FILE_BATCH = 5;
+
+  /** 分批的响应要并成一张表给界面用：同一个区的计数累加，冲突与说明去重 */
+  function mergeSections(acc: OutcomeSection[], incoming: OutcomeSection[]): OutcomeSection[] {
+    for (const s of incoming) {
+      const at = acc.findIndex((x) => x.id === s.id);
+      if (at < 0) {
+        acc.push(structuredClone(s));
+        continue;
+      }
+      const cur = acc[at];
+      if (s.files) {
+        cur.files ??= { total: 0, write: 0, skip: 0, unchanged: 0, conflicts: [] };
+        cur.files.total = Math.max(cur.files.total, s.files.total);
+        cur.files.write += s.files.write;
+        cur.files.skip += s.files.skip;
+        cur.files.unchanged += s.files.unchanged;
+        for (const c of s.files.conflicts) if (!cur.files.conflicts.includes(c)) cur.files.conflicts.push(c);
+      }
+      if (s.settings) {
+        cur.settings ??= { write: 0, changed: [] };
+        cur.settings.write += s.settings.write;
+        for (const ch of s.settings.changed) if (!cur.settings.changed.some((o) => o.key === ch.key)) cur.settings.changed.push(ch);
+      }
+      for (const t of s.tables ?? []) {
+        cur.tables ??= [];
+        const mine = cur.tables.find((o) => o.name === t.name);
+        if (!mine) cur.tables.push({ ...t });
+        else {
+          mine.inserted += t.inserted;
+          mine.skipped += t.skipped;
+        }
+      }
+      for (const n of s.notes ?? []) if (!cur.notes.includes(n)) cur.notes.push(n);
+      for (const e of s.errors ?? []) if (!cur.errors.includes(e)) cur.errors.push(e);
+    }
+    return acc;
+  }
+
   async function runImport(dryRun: boolean) {
     if (!picked) return;
     if (!chosen.size) {
@@ -415,22 +462,53 @@
       }
     }
     try {
-      const d = await post<{ data: Outcome }>('/api/admin/backup/import', {
-        payload: picked.payload,
-        sections: [...chosen],
-        dryRun,
-        overwrite,
-      });
-      outcome = d.data;
-      if (!dryRun) {
-        const rows = d.data.sections.reduce((n, s) => n + (s.tables?.reduce((m, t) => m + t.inserted, 0) ?? 0), 0);
-        const files = d.data.sections.reduce((n, s) => n + (s.files?.write ?? 0), 0);
-        notice = `恢复完成：数据表新增 ${rows} 行、仓库写入 ${files} 个文件${d.data.build?.triggered ? '，已触发站点重建' : ''}`;
+      if (dryRun) {
+        const d = await post<{ data: Outcome }>('/api/admin/backup/import', {
+          payload: picked.payload,
+          sections: [...chosen],
+          dryRun,
+          overwrite,
+        });
+        outcome = d.data;
+      } else {
+        /* 真写时按区、按批发多次请求：一个请求写二十几个文件会在 Worker 里断掉且不报错 */
+        const order = (picked.payload.sections ?? []).map((s) => s.id).filter((id) => chosen.has(id));
+        const merged: OutcomeSection[] = [];
+        let head: Outcome | null = null;
+        let build: Outcome['build'] = null;
+        for (const id of order) {
+          let start = 0;
+          for (;;) {
+            const d = await post<{ data: Outcome }>('/api/admin/backup/import', {
+              payload: picked.payload,
+              sections: [id],
+              dryRun: false,
+              overwrite,
+              fileStart: start,
+              fileCount: FILE_BATCH,
+            });
+            head ??= d.data;
+            mergeSections(merged, d.data.sections);
+            if (d.data.build?.triggered) build = d.data.build;
+            const r = d.data.resume;
+            if (!r || r.section !== id || r.from <= start) break;
+            const done = merged.find((m) => m.id === id)?.files?.write ?? 0;
+            importProgress = `${labelOf(id)}：已提交 ${done} / ${r.total} 个文件`;
+            start = r.from;
+          }
+        }
+        outcome = head ? { ...head, sections: merged, build } : null;
+        const rows = merged.reduce((n, s) => n + (s.tables?.reduce((m, t) => m + t.inserted, 0) ?? 0), 0);
+        const files = merged.reduce((n, s) => n + (s.files?.write ?? 0), 0);
+        /** 计划数减去写/跳/未变的余额，就是这次没能落进仓库的文件 */
+        const left = merged.reduce((n, s) => n + Math.max(0, (s.files?.total ?? 0) - (s.files?.write ?? 0) - (s.files?.skip ?? 0) - (s.files?.unchanged ?? 0)), 0);
+        notice = `恢复完成：数据表新增 ${rows} 行、仓库写入 ${files} 个文件${build?.triggered ? '，已触发站点重建' : ''}${left ? `；有 ${left} 个文件没写成，原因列在下面各区` : ''}`;
       }
     } catch (e) {
       error = e instanceof Error ? e.message : '导入失败';
     } finally {
       busy = '';
+      importProgress = '';
     }
   }
 
@@ -768,6 +846,7 @@
         </button>
         <button class="ghost" onclick={() => { picked = null; outcome = null; chosen = new Set(); }}>取消</button>
       </div>
+      {#if importProgress}<p class="small ok">{importProgress}（每 {FILE_BATCH} 个文件提交一次，别关页面）</p>{/if}
       {#if !outcome?.dryRun && chosen.size}<p class="muted small">先看一次演习，才允许真写。</p>{/if}
     </div>
   {/if}

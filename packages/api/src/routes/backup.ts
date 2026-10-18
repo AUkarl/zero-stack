@@ -123,9 +123,11 @@ app.delete('/file', async (c) => {
 
 /**
  * POST /api/admin/backup/import
- * body: { payload, sections?: string[], dryRun?: boolean, overwrite?: boolean }
+ * body: { payload, sections?: string[], dryRun?: boolean, overwrite?: boolean, fileStart?: number, fileCount?: number }
  * 不带 sections 表示整份恢复；带就是只恢复勾选的那几区。
  * dryRun 默认为 true：先看每区会写多少、哪些文件同名冲突，再决定推。
+ * fileStart / fileCount 是文件区的分批写入游标，响应里的 resume 非空就代表这一区还有剩下的没推，
+ * 后台接着发下一批 —— 一个请求写二十几个文件会中途断掉且不报错。
  */
 app.post('/import', async (c) => {
   const admin = requireAdmin(c);
@@ -134,14 +136,27 @@ app.post('/import', async (c) => {
     sections?: string[];
     dryRun?: boolean;
     overwrite?: boolean;
+    fileStart?: number;
+    fileCount?: number;
   } | null;
   if (!body?.payload) fail(400, '请在请求体里带上 payload（备份文件解析后的对象）');
   const dryRun = body.dryRun !== false;
   const sections = (body.sections ?? []).filter((s): s is SectionId => typeof s === 'string');
+  const fileStart = Number.isFinite(body.fileStart) ? Math.max(0, Math.floor(body.fileStart as number)) : 0;
+  /** 一批最多写多少个文件：Worker 单次请求要逐个调 GitHub，二十几个就顶不住，默认 5 个 */
+  const fileCount = Number.isFinite(body.fileCount) ? Math.min(20, Math.max(1, Math.floor(body.fileCount as number))) : 5;
 
   let outcome: ImportOutcome;
   try {
-    outcome = await importBackup(c.env, body.payload, { sections, dryRun, overwrite: body.overwrite === true, actor: admin, ip: clientIp(c) });
+    outcome = await importBackup(c.env, body.payload, {
+      sections,
+      dryRun,
+      overwrite: body.overwrite === true,
+      fileStart: dryRun ? 0 : fileStart,
+      fileCount: dryRun ? undefined : fileCount,
+      actor: admin,
+      ip: clientIp(c),
+    });
   } catch (e) {
     fail(400, errorMessage(e));
   }
@@ -155,6 +170,8 @@ app.post('/import', async (c) => {
       overwrite: outcome.overwrite,
       errors: outcome.sections.flatMap((s) => s.errors),
       build: outcome.build,
+      /** 分批写入时每批一行流水，出问题能看出断在第几个文件 */
+      resume: outcome.resume,
     },
     ip: clientIp(c),
   });
