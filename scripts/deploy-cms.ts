@@ -8,24 +8,39 @@ import {
   ensurePagesProject,
   good,
   info,
+  pickProdUrl,
   readSavedApiBase,
+  readSavedCmsUrl,
   run,
   saveApiBase,
+  saveCmsUrl,
   step,
   warn,
   wrangler,
 } from './_util.js';
 
 /**
- * 构建并部署 zero-cms 后台：pnpm deploy:cms [--no-build] [--project <名称>] [--api <worker 地址>]
+ * 构建并部署 zero-cms 后台：pnpm deploy:cms [--no-build] [--project <名称>] [--api <worker 地址>] [--domain <后台域名>]
  *   --no-build          复用已有的 .svelte-kit/cloudflare 产物（内置的 API 地址也就是上一次的）
  *   --project <名称>    自定义 Pages 项目名（默认 zero-cms）
  *   --api <地址>        要内置进产物的 API 地址；不填就问一次，答案记在 packages/cms/.zero-api-base
+ *   --domain <域名>     你在控制台给这个 Pages 项目绑的自定义域名；填了会探一次再报生产地址。
+ *                       也可以用环境变量 CMS_URL，或上次记下的 packages/cms/.zero-cms-url
  */
 const args = process.argv.slice(2);
 const noBuild = args.includes('--no-build');
 const project = args.includes('--project') ? args[args.indexOf('--project') + 1] : PAGES_PROJECT;
 if (!project || project.startsWith('--')) die('--project 后面需要跟 Pages 项目名');
+
+/** 后台域名：命令行 > 环境变量 > 上次记下的。这里绝不猜 —— 猜错会把一个不相干的域名当生产地址报出去 */
+function resolveDomain(): string {
+  if (args.includes('--domain')) {
+    const v = (args[args.indexOf('--domain') + 1] ?? '').trim();
+    if (!v || v.startsWith('--')) die('--domain 后面需要跟你在控制台绑好的域名，例如 https://admin.example.com');
+    return v;
+  }
+  return (process.env.CMS_URL ?? '').trim() || readSavedCmsUrl();
+}
 
 const output = resolve(CMS_DIR, '.svelte-kit/cloudflare');
 
@@ -72,6 +87,7 @@ async function resolveApiBase(): Promise<string> {
 
 async function main(): Promise<void> {
   const apiBase = await resolveApiBase();
+  const domain = resolveDomain();
   if (!apiBase) warn('未内置 API 地址：后台打开后要在登录页手填 worker 域名，否则接口全部 404');
 
   if (!noBuild) {
@@ -89,9 +105,12 @@ async function main(): Promise<void> {
   const out = wrangler(`pages deploy .svelte-kit/cloudflare --project-name=${project}`, { cwd: CMS_DIR, capture: true });
   console.log(out);
 
-  const url = out.match(/https:\/\/[a-z0-9.-]*pages\.dev/i)?.[0];
-  good(`后台已部署${url ? '：' + url : ''}`);
-  info(`访问请用生产地址${url ? '（预览地址每次部署都变，别拿它当白名单）' : ''}。`);
+  const pages = out.match(/https:\/\/[a-z0-9.-]*pages\.dev/i)?.[0] ?? '';
+  const prod = await pickProdUrl({ domain, pages, project });
+  if (domain) saveCmsUrl(domain);
+  good(`后台访问地址：${prod.url || '（没拿到）'}`);
+  info(prod.note);
+  if (pages && prod.url !== pages) info(`本次部署号：${pages}（每次部署都变，只用来核对这次推上去的是哪一版）`);
   info(
     apiBase
       ? `已内置 API 地址 ${apiBase}，打开就能登录；登录页手填的地址优先于内置值。`

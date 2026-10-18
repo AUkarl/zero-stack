@@ -167,6 +167,8 @@ pnpm deploy:cms          # 构建 zero-cms 并部署到 Pages（会问一次 API
 pnpm deploy:cms -- --no-build     # 复用已有产物
 pnpm deploy:cms -- --project my-cms
 pnpm deploy:cms -- --api https://zero-api.xxx.workers.dev   # 不问，直接内置这个地址
+pnpm deploy:cms -- --domain https://admin.example.com       # 你在控制台给这个 Pages 项目绑的域名
+
 ```
 
 `deploy:cms` 会先确认 Pages 项目存在，没有就自己建（`pages project create <名称> --production-branch main`）。
@@ -179,6 +181,12 @@ cd packages/cms
 npx wrangler pages project create zero-cms --production-branch main
 npx wrangler pages deploy .svelte-kit/cloudflare --project-name=zero-cms
 ```
+
+收尾打印的是**访问地址**，不是部署号：给了 `--domain`（或环境变量 `CMS_URL`、上次记下的
+`packages/cms/.zero-cms-url`，与 `.zero-api-base` 一样只存本机）就先探一次那个域名 —— 探通就报它；
+探不通照实说原因（DNS 里没有这条记录，或 Pages 项目还没接住它）并指出在控制台哪里绑，
+那行每次部署都会变的 `https://<哈希>.<项目>.pages.dev` 只当「本次部署号」列在最后。
+wrangler 自己只回部署号，照抄它当生产地址或 CORS 白名单是坑。`pnpm setup` 结束时那两行汇总走同一套判定。
 
 后台取 API 地址的优先级：
 

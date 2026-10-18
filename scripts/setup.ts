@@ -25,9 +25,12 @@ import {
   info,
   mergePublicBucketEntry,
   parseJson,
+  pickProdUrl,
+  probeUrl,
   run,
   readSavedApiBase,
   saveApiBase,
+  saveCmsUrl,
   step,
   assertShortMessages,
   upsertConfigValue,
@@ -506,10 +509,22 @@ const QUESTIONS: PromptObject[] = [
 
 assertShortMessages(QUESTIONS);
 
-function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string): void {
+async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string): Promise<void> {
   console.log('\n\x1b[32m✅ 部署完成\x1b[0m\n');
-  console.log(`  API  ：${apiUrl ?? '见上方 wrangler deploy 输出'}${apiUrl ? apiUrlNote : ''}`);
-  console.log(`  后台 ：${pagesUrl ?? a.cmsUrl}`);
+  /** 站主填的自定义域名要探一次才算数：控制台没绑、DNS 没生效时浏览器是 530，
+      而按输出直接打印出来看着就像已经可用了（后台与前台都会连不上，很难往这上面想）。 */
+  let apiNote = apiUrl ? apiUrlNote : '';
+  if (apiUrl) {
+    const p = await probeUrl(`${apiUrl.replace(/\/+$/, '')}/api/config`);
+    apiNote = p.ok
+      ? `${apiUrlNote}，已探通（${p.detail}）`
+      : `${apiUrlNote}，但还没探通（${p.detail}）：到控制台 Workers & Pages → ${WORKER_NAME} → 域名 里确认它真绑上了`;
+  }
+  const prod = await pickProdUrl({ domain: a.cmsUrl ?? '', pages: pagesUrl ?? '', project: PAGES_PROJECT });
+  if (a.cmsUrl) saveCmsUrl(a.cmsUrl);
+  console.log(`  API  ：${apiUrl ?? '见上方 wrangler deploy 输出'}${apiNote}`);
+  console.log(`  后台 ：${prod.url || '（没拿到）'}`);
+  console.log(`        ${prod.note}`);
   console.log('\n后续步骤：');
   console.log(`  1. 打开后台：库里还没有账号时，登录页会自己变成「建为站长并登录」表单，填邮箱 + 两遍密码即可（第一个账号自动是 admin，跳过邮箱验证）${apiUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
   console.log('  2. 后台「设置」补齐 siteUrl、emailFrom、smtpHost、smtpUser 等配置项');
@@ -594,7 +609,7 @@ async function main(): Promise<void> {
   /** 绑了自定义域名就用它编进后台产物：*.workers.dev 在很多网络根本连不通 */
   const finalApiUrl = apiUrl || workerUrl;
   const pagesUrl = deployCms(finalApiUrl);
-  summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）');
+  await summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）');
 }
 
 main().catch((e: unknown) => {

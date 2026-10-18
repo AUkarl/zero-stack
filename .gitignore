@@ -28,3 +28,4 @@ Thumbs.db
 
 # deploy:cms 记下的上次 API 地址（各人不同，不入库）
 packages/cms/.zero-api-base
+packages/cms/.zero-cms-url

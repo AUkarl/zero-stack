@@ -450,3 +450,82 @@ export function saveApiBase(url: string): void {
     warn(`没能记住 API 地址（${API_BASE_FILE} 写不进去），下次部署要重新填`);
   }
 }
+
+/** 上次部署后台时的生产域名，同样只存本机：控制台绑的自定义域名不会写进任何配置文件 */
+const CMS_URL_FILE = resolve(CMS_DIR, '.zero-cms-url');
+
+export function readSavedCmsUrl(): string {
+  try {
+    return readFileSync(CMS_URL_FILE, 'utf-8').trim();
+  } catch {
+    return '';
+  }
+}
+
+export function saveCmsUrl(url: string): void {
+  const value = url.trim();
+  if (!value) return;
+  try {
+    writeFileSync(CMS_URL_FILE, value + '\n');
+  } catch {
+    warn(`没能记住后台域名（${CMS_URL_FILE} 写不进去），下次部署要重新填`);
+  }
+}
+
+function withScheme(u: string): string {
+  const s = u.trim().replace(/\/+$/, '');
+  if (!s) return '';
+  return /^https?:\/\//i.test(s) ? s : `https://${s}`;
+}
+
+/**
+ * 探一次地址通不通。绑自定义域名这件事是「控制台里点了 + DNS 生效了」才算成，
+ * 光看部署输出看不出来：Pages 项目没接住这个域名时浏览器给的是 530，
+ * 而部署脚本照样一片绿色。所以要真发一个请求，并把状态码原话报出来。
+ */
+export async function probeUrl(url: string, ms = 8000): Promise<{ ok: boolean; detail: string }> {
+  const target = withScheme(url);
+  if (!target) return { ok: false, detail: '没填地址' };
+  const attempt = async (method: 'HEAD' | 'GET'): Promise<{ ok: boolean; detail: string }> => {
+    try {
+      const res = await fetch(target, { method, redirect: 'follow', signal: AbortSignal.timeout(ms) });
+      // 3xx 也算通：Pages 会把 / 走到带斜杠的那一条
+      return { ok: res.status < 400, detail: `HTTP ${res.status}` };
+    } catch (e) {
+      const err = e as { name?: string; cause?: { code?: string }; message?: string };
+      return { ok: false, detail: err?.cause?.code || err?.name || err?.message || '请求失败' };
+    }
+  };
+  const head = await attempt('HEAD');
+  // 少数前置代理不接 HEAD（回 405/501），再用 GET 确认一次，别把通的域名说成不通
+  if (!head.ok && /HTTP (405|501)/.test(head.detail)) return attempt('GET');
+  return head;
+}
+
+/**
+ * 部署结束后该把哪个地址交给站主。
+ *
+ * wrangler 只会回一条 `https://<哈希>.<项目>.pages.dev`，那个地址每次部署都变，
+ * 拿它当生产地址（或当 CORS 白名单）是坑；站主自己的自定义域名脚本又无从知道。
+ * 这里按「填过就探一次」定：探到了报域名，探不到就照实说没通、并给出绑定入口，
+ * 顺手把会变的部署号留在最后一行。
+ */
+export async function pickProdUrl(input: { domain?: string; pages?: string; project?: string }): Promise<{ url: string; note: string; verified: boolean }> {
+  const domain = withScheme(input.domain ?? '');
+  const pages = (input.pages ?? '').trim().replace(/\/+$/, '');
+  const projectName = (input.project ?? '').trim();
+  if (domain) {
+    const p = await probeUrl(domain);
+    if (p.ok) return { url: domain, note: `自定义域名已探通（${p.detail}）`, verified: true };
+    return {
+      url: pages || domain,
+      note: `自定义域名 ${domain} 还没探通（${p.detail}）。到 Cloudflare 控制台「Workers & Pages → Pages 项目${projectName ? `「${projectName}」` : ''} → 设置 → 自定义域名」里把它绑上（域名的 DNS 要在同一个账户里），绑好再跑一次本脚本即可确认。`,
+      verified: false,
+    };
+  }
+  return {
+    url: pages,
+    note: pages ? '这条是本次部署地址（每次部署都变，别拿它当访问入口或 CORS 白名单）。想用自己的域名：控制台绑好后再用 --domain 传进来。' : '没拿到地址：看上面的 wrangler 输出。',
+    verified: false,
+  };
+}
