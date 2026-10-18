@@ -26,7 +26,7 @@ zero-stack 是「Hono Worker（zero-api）+ SvelteKit 后台（zero-cms）+ 评�
 | 9 | 放行前台域名 | 把第 8 步的域名加进 `packages/api/wrangler.jsonc` 的 `ALLOWED_ORIGINS`，然后 `cd packages/api && npx wrangler deploy` | `curl -X OPTIONS <API>/api/comments -H "Origin: https://你的前台域名" -i` 响应里有 `Access-Control-Allow-Origin` |
 | 10 | 打通后台写仓库 | Worker secret `GITHUB_TOKEN`（Fine-grained PAT：勾上这个仓库 + Contents 读写），后台「设置 → 内容仓库」填 owner/repo/branch | 后台「前端管理」改一项能保存，且 GitHub 上出现对应提交 |
 | 11 | 迁移旧评论（可选） | `pnpm migrate:waline`，见 [第 7 节](#7-迁移旧评论数据) | 后台「评论」里旧评论条数对得上 |
-| 12 | 备份 | 后台「备份」→「存档到 R2」（全站备份），另外可 `cd packages/api && npx wrangler d1 export zero-db --remote --file=backup.sql` 存一份裸库 | 存档列表里有今天那份，体积非 0 |
+| 12 | 备份 | 后台「备份」→「存档到 R2」（全站备份），另外可 `cd packages/api && npx wrangler d1 export zero-db --remote --output=backup.sql` 存一份裸库（这一条只有 `--output`，写成 `--file` 会直接报参数错误） | 存档列表里有今天那份，体积非 0 |
 
 第 3、4、9、10 步是新手最容易卡住的地方，各自的报错与自查见第 10 节。
 
@@ -611,7 +611,7 @@ pnpm check   # 本地跑同一套校验
 - [ ] 前台页面验证评论、点赞、订阅、时刻、友链与统计埋点
 - [ ] 停用 Waline / Twikoo 的旧部署与 CDN 引用
 - [ ] 需要监控时把 `/api/health` 加进 Uptime 检查
-- [ ] 备份：后台「备份」→「存档到 R2」出一份全站备份（内容与配置都在里面），再 `npx wrangler d1 export zero-db --remote --file=backup.sql` 存一份裸库
+- [ ] 备份：后台「备份」→「存档到 R2」出一份全站备份（内容与配置都在里面），再 `npx wrangler d1 export zero-db --remote --output=backup.sql` 存一份裸库
 
 ---
 
