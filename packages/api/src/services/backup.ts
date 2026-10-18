@@ -158,8 +158,8 @@ export async function exportBackup(
   const sections: BackupSection[] = [];
 
   const dataDir = (await getConfig(env, 'githubDataDir'))?.trim() || 'data';
-  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/posts';
-  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/moments';
+  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
+  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
   const linksFile = (await getConfig(env, 'githubLinksFile'))?.trim() || `${dataDir}/links.yaml`;
   const authorsFile = (await getConfig(env, 'githubAuthorsFile'))?.trim() || `${dataDir}/authors.yaml`;
   const origin: BackupPayload['origin'] = {
@@ -494,8 +494,8 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
   const overwrite = opts.overwrite === true;
   const wanted = new Set<SectionId>((opts.sections?.length ? opts.sections : SECTION_IDS).filter((s) => SECTION_IDS.includes(s)));
 
-  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/posts';
-  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/moments';
+  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
+  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
   const dataDir = (await getConfig(env, 'githubDataDir'))?.trim() || 'data';
 
   const outcome: ImportOutcome = {
@@ -741,7 +741,7 @@ function normalizePayload(raw: unknown): BackupPayload {
   if (!Array.isArray(p.sections)) throw new Error('备份文件缺少 sections 字段，不是全站备份');
   if (p.version && p.version > BACKUP_VERSION) throw new Error(`备份版本 ${p.version} 高于当前支持的 ${BACKUP_VERSION}`);
   const sections = (p.sections as BackupSection[]).filter((s) => s && typeof s.id === 'string');
-  const origin = p.origin ?? { owner: '', repo: '', branch: 'main', siteUrl: '', dataDir: 'data', postsDir: 'content/posts', momentsDir: 'content/moments', linksFile: 'data/links.yaml', authorsFile: 'data/authors.yaml' };
+  const origin = p.origin ?? { owner: '', repo: '', branch: 'main', siteUrl: '', dataDir: 'data', postsDir: 'content/zh/posts', momentsDir: 'content/zh/moments', linksFile: 'data/links.yaml', authorsFile: 'data/authors.yaml' };
   return {
     version: p.version ?? 0,
     createdAt: p.createdAt ?? 0,

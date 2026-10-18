@@ -91,22 +91,15 @@ function copyTree(from: string, to: string): number {
  * 页脚（ICP 占位与社交图标）/ 关于 / 工坊 / 友链 / 作者的示例数据，
  * 以及示例正文引用的那几张图。新站直接拿它当内容，用户不想要再自己删。
  *
- * 它按 content/zh/** 组织（单语言站点），生成的仓库是扁平的 content/**，
- * 所以复制时要把 zh 这一层抹平 —— 留着 Hugo 会把 zh 当成一个叫 zh 的分区，
- * 站里同时出现 /posts/ 和 /zh/posts/ 两套页面。
+ * 它按 content/zh/** 组织，生成的仓库也是这个结构，整份原样复制即可 ——
+ * 那层 zh 不能抹平：hugo.toml 里 [languages.zh] contentDir = "content/zh" 认的就是这个路径，
+ * 抹平了 Hugo 就找不到内容目录，后台发出去的文章（写在 content/zh/ 下）不会出现在站上。
  */
 function importExampleSite(siteDir: string): number {
   const es = resolve(siteDir, 'themes/zero/exampleSite');
   const content = resolve(es, 'content');
   if (!existsSync(content)) return 0;
-  let n = 0;
-  const zh = resolve(content, 'zh');
-  if (existsSync(zh)) n += copyTree(zh, resolve(siteDir, 'content'));
-  for (const ent of readdirSync(content, { withFileTypes: true })) {
-    if (!ent.isFile()) continue;
-    writeFileSync(resolve(siteDir, 'content', ent.name), readFileSync(resolve(content, ent.name)));
-    n++;
-  }
+  let n = copyTree(content, resolve(siteDir, 'content'));
   for (const sub of ['data', 'static'] as const) {
     const from = resolve(es, sub);
     if (!existsSync(from)) continue;
@@ -173,7 +166,19 @@ locale = "zh-CN"
 title = "${a.siteName}"
 theme = "zero"
 defaultContentLanguage = "zh"
+defaultContentLanguageInSubdir = false
 hasCJKLanguage = true
+
+# 内容目录：站点只有中文，但内容一律放在 content/zh/ 下面（后台写文章与时刻也是这个路径）。
+# 这一段声明就是让 Hugo 把 content/zh/posts 映射成 /posts/ 的关键 ——
+# 不写它，content/zh/ 会被当成一个叫「zh」的栏目，所有地址前面凭空多出一层 /zh/，
+# 首页与归档里就看不到后台发出来的文章；将来真要加第二种语言时，
+# 只需要再补一个 [languages.en] 并把 defaultContentLanguageInSubdir 改开。
+[languages]
+  [languages.zh]
+    label = "中文"
+    contentDir = "content/zh"
+    weight = 1
 
 # 分类法：主题的 layouts/taxonomy/author.html 与文章页署名都要 author 这一项，
 # 而 Hugo 不会读主题里的 [taxonomies] —— 只能在站点这份配置声明。
@@ -187,7 +192,7 @@ hasCJKLanguage = true
   # tag = "tags"
 
 # 文章列表页 /posts/ 不生成：导航里已经有「归档」承担列表职责。
-# 想恢复就删掉 content/posts/_index.md 里那三行 build。
+# 想恢复就删掉 content/zh/posts/_index.md 里那三行 build。
 
 # 时刻与文章的时间由后台自由填写，将来日期也要立刻上线。
 # Hugo 0.146+ 只认 [build].future，写在顶层的 enableFuture 会被静默忽略。
@@ -314,7 +319,7 @@ comments: true
 `;
 
 /**
- * 主题的每个页面都靠 `layouts/<分区>/list.html` 渲染，少了 `content/<分区>/_index.md`
+ * 主题的每个页面都靠 `layouts/<分区>/list.html` 渲染，少了 `content/zh/<分区>/_index.md`
  * 那条路由就是 404（导航里的 主页 / 关于 / 归档 / 工坊 / 订阅 / 账号 都是这种页）。
  * 正文一律留空：这些页显示的内容来自 data/*.json 与后台「前端管理」，Markdown 只是占位。
  */
@@ -558,23 +563,25 @@ async function main(): Promise<void> {
   }
 
   step('创建目录与示例内容');
-  const dirs = ['content/posts', 'content/moments', 'content/links', 'static/images', 'data', '.github/workflows'];
-  for (const [dir] of SECTIONS) dirs.push(`content/${dir}`);
+  /** 内容一律在 content/zh/ 下：hugo.toml 里 [languages.zh] contentDir 认的就是这一层，
+      后台 githubPostsDir / githubMomentsDir 的默认值也按它写 */
+  const dirs = ['content/zh/posts', 'content/zh/moments', 'content/zh/links', 'static/images', 'data', '.github/workflows'];
+  for (const [dir] of SECTIONS) dirs.push(`content/zh/${dir}`);
   for (const d of dirs) mkdirSync(resolve(siteDir, d), { recursive: true });
   info(siteDir);
 
   const rel = (p: string) => resolve(siteDir, p);
   write(rel('hugo.toml'), hugoToml(a));
-  write(rel('content/posts/hello-world.md'), SAMPLE_POST);
-  write(rel('content/moments/first-moment.md'), SAMPLE_MOMENT);
+  write(rel('content/zh/posts/hello-world.md'), SAMPLE_POST);
+  write(rel('content/zh/moments/first-moment.md'), SAMPLE_MOMENT);
   write(rel('data/links.yaml'), LINKS_DATA);
-  write(rel('content/links/_index.md'), LINKS_INDEX);
+  write(rel('content/zh/links/_index.md'), LINKS_INDEX);
   // 落地页（主题的 layouts/index.html）：空 front matter 即可，进去按回车到 /home/
-  write(rel('content/_index.md'), '---\n---\n');
-  for (const [dir, title] of SECTIONS) write(rel(`content/${dir}/_index.md`), sectionIndex(dir, title));
+  write(rel('content/zh/_index.md'), '---\n---\n');
+  for (const [dir, title] of SECTIONS) write(rel(`content/zh/${dir}/_index.md`), sectionIndex(dir, title));
   // 个人中心：主题在 layouts/account/me/list.html 渲染它，少了这份内容页 /account/me/ 就是 404，
   // 而前端登录成功后普通用户正是跳这里
-  write(rel('content/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
+  write(rel('content/zh/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
   write(rel('static/images/.gitkeep'), '');
   /**
    * 边缘 404 中间件：后台把某个功能关掉时，那个页面直接 404 且带 noindex（旧链接与搜索引擎都拦掉）。
@@ -661,7 +668,7 @@ hugo server -D
   const imported = importExampleSite(siteDir);
   if (imported > 0) {
     /** 演示站自带 posts / moments 的样例，生成器那两份占位就撤掉，免得混成五篇 */
-    for (const leftover of ['content/posts/hello-world.md', 'content/moments/first-moment.md']) {
+    for (const leftover of ['content/zh/posts/hello-world.md', 'content/zh/moments/first-moment.md']) {
       const p = resolve(siteDir, leftover);
       if (existsSync(p)) rmSync(p);
     }
@@ -674,7 +681,7 @@ hugo server -D
       所以给 posts 自己写一份 _index.md 并让它不渲染：/posts/ 变 404，
       而每篇文章、首页列表、归档页都不受影响。 */
   write(
-    rel('content/posts/_index.md'),
+    rel('content/zh/posts/_index.md'),
     '---\ntitle: "文章"\ntype: "posts"\nlayout: "list"\nbuild: { render: never }\n---\n',
   );
 

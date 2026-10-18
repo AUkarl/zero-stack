@@ -330,10 +330,13 @@ setx GOPRIVATE "github.com/AUkarl/*"
 
 ### 6.2 后台「设置 → 内容仓库」的路径要按你的目录布局填
 
-后台写文件的路径全部来自这几项配置（缺省值按多语言布局写，扁平布局必须改，
-否则文章会落到 Hugo 认不到的目录里 —— 表现为"后台说发布成功了，前台却没有"）：
+后台写文件的路径全部来自这几项配置。**`pnpm create:site` 生成的站点是 `content/zh/` 这一种布局**
+（`hugo.toml` 里带 `[languages.zh] contentDir = "content/zh"` 与 `defaultContentLanguageInSubdir = false`），
+下面左列就是它的缺省值，新站一个字都不用改。要是把站点改成了扁平布局，必须同时把这几项改掉，
+否则文章会落到 Hugo 认不到的目录里 —— 表现为「后台说发布成功了，前台却没有」；
+反过来，站点声明了 `contentDir = "content/zh"` 而配置还写着 `content/posts`，也是同一类错配。
 
-| 配置项 | 后台里的名字 | 多语言布局（`[languages.zh] contentDir = "content/zh"`） | 单语言扁平布局（内容直接在 `content/`） |
+| 配置项 | 后台里的名字 | `content/zh/` 布局（生成器默认） | 单语言扁平布局（内容直接在 `content/`） |
 |---|---|---|---|
 | `githubContentDir` | 内容目录 | `content` | `content` |
 | `githubPostsDir` | 文章目录 | `content/zh/posts` | `content/posts` |
@@ -344,7 +347,9 @@ setx GOPRIVATE "github.com/AUkarl/*"
 
 改完不用重新部署 Worker（这些值存在 D1，约 60 秒缓存刷新）；只有 `wrangler.jsonc` 里的 vars 与代码改动才需要 `pnpm deploy:api`。
 
-> `pnpm create:site` 生成的是扁平布局，所以向导跑完后要把「文章目录 / 时刻目录」改成 `content/posts`、`content/moments`。
+> 文章地址由 Hugo 按 `contentDir` 折算：`content/zh/posts/foo.md` 发布成 `/posts/foo/`，**地址里不会多出一层 `/zh/`**。
+> 少了 `contentDir` 那段声明，`content/zh/` 会被当成一个叫 `zh` 的分区，页面全跑到 `/zh/posts/…` 底下，
+> 首页与归档就看不到后台发出来的文章（后台「在站点上查看」与删除文章时的缓存清理都按 `/posts/…` 算，会一起对不上）。
 
 ### 6.3 主题更新怎么自动进站点（两层，缺一层就"改了没反应"）
 

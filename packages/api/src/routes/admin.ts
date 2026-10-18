@@ -1637,8 +1637,8 @@ app.get('/stats', async (c) => {
  */
 app.get('/stats/content', async (c) => {
   requireAdmin(c);
-  const postsDir = (await getConfig(c.env, 'githubPostsDir'))?.trim() || 'content/posts';
-  const momentsDir = (await getConfig(c.env, 'githubMomentsDir'))?.trim() || 'content/moments';
+  const postsDir = (await getConfig(c.env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
+  const momentsDir = (await getConfig(c.env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
   try {
     const target = await repoTarget(c.env);
     const [posts, moments] = await Promise.all([
