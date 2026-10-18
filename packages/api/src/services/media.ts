@@ -278,6 +278,20 @@ export async function getMediaObject(
   return { data: obj.data, contentType: obj.contentType };
 }
 
+/**
+ * 这个键在桶里有没有。**用 list 而不是 get**：恢复图片时同名要先让路，
+ * 为判断存在就把一张原图整份读回来，白烧流量也把 Worker 的 CPU 时间耗光。
+ */
+export async function mediaObjectExists(env: Env, bucket: MediaBucket, key: string): Promise<boolean> {
+  const full = fullKey(bucket, key);
+  if (bucket.kind === 'r2') {
+    const listed = await r2Bucket(env, bucket).list({ prefix: full, limit: 5 });
+    return (listed.objects ?? []).some((o) => o.key === full);
+  }
+  const listed = await s3ListObjects(s3TargetOf(bucket), { prefix: full, maxKeys: 5 });
+  return listed.objects.some((o) => o.key === full);
+}
+
 export async function deleteMediaObject(env: Env, bucket: MediaBucket, key: string): Promise<{ key: string }> {
   const full = fullKey(bucket, key);
   if (bucket.kind === 'r2') await r2Bucket(env, bucket).delete(full);

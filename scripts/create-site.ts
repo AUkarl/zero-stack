@@ -143,8 +143,9 @@ const QUESTIONS: PromptObject[] = [
     name: 'themeRepo',
     message: 'zero-theme 仓库地址',
     /** prompts 给回调的第一个参数是上一题的答案值，已答集合在第二个：
-        写成 p.githubUser 时 p 是上一题（站点域名）的字符串，取不到用户名 */
-    initial: (_p: unknown, all: Partial<Answers>) => `https://github.com/${all.githubUser || 'username'}/zero-theme.git`,
+        写成 p.githubUser 时 p 是上一题（站点域名）的字符串，取不到用户名。
+        用户名也可能来自命令行（那时 prompts 根本没答这一题），所以再看 PRESET。 */
+    initial: (_p: unknown, all: Partial<Answers>) => `https://github.com/${all.githubUser || PRESET.githubUser || 'username'}/zero-theme.git`,
   },
   { type: skipped('initGit'), name: 'initGit', message: '本地 git init 并提交？', initial: true },
 ];
@@ -328,6 +329,8 @@ async function main(): Promise<void> {
   }
 
   const siteDir = resolve(ROOT, '..', a.repoName);
+  /** 结尾的清单要按「哪些步骤其实没成」来印命令，不能让站主回头翻上面的日志 */
+  let submodulePending = false;
   if (existsSync(siteDir) && readdirSync(siteDir).length > 0) {
     die(
       `${siteDir} 已存在且非空，请换一个仓库名或先手动清理。\n` +
@@ -411,10 +414,12 @@ hugo server -D
       good('子模块已加入 themes/zero');
     } else {
       info(`待执行：${submodule}`);
+      submodulePending = true;
     }
   } catch (e) {
     warn(`子模块自动添加失败（多为未登录/仓库不存在/网络受限）：${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
     info(`请稍后手动执行：${submodule}`);
+    submodulePending = true;
     mkdirSync(resolve(siteDir, 'themes/zero'), { recursive: true });
     write(resolve(siteDir, 'themes/zero/.gitkeep'), '');
   }
@@ -469,14 +474,36 @@ hugo server -D
     good('本地提交完成（未推送）');
   }
 
-  console.log('\n📤 推送指引（请你自己确认后再执行）');
-  console.log(`  1. 在 GitHub 新建仓库：${a.repoName}，可见性必须选 Private`);
-  console.log(`  2. cd ${a.repoName}`);
+  /**
+   * 结尾只报「你还得做什么」，不代办：建仓库要 repo 权限的 GitHub token，
+   * 这脚本手上没有（它只问了用户名和仓库名）；更要紧的是可见性只能由你选 ——
+   * 私人内容一旦被推成 Public，历史删不干净。
+   */
+  console.log('\n📤 接下来由你做的五步（脚本不替你建仓库、也不替你推送）');
+  console.log(`  1. 建仓库：到 https://github.com/new`);
+  console.log(`     账户 ${a.githubUser} · 仓库名 ${a.repoName} · 可见性选 Private：里面有草稿与个人信息，建成 Public 就再也收不回`);
+  console.log('     ⚠ 不要勾「Add a README / .gitignore / license」：远端有初始提交的话，第一次 push 会因两边历史无关而失败');
+  console.log(`  2. 挂远端并推上去：`);
+  console.log(`     cd ${siteDir}`);
   console.log(`     git remote add origin https://github.com/${a.githubUser}/${a.repoName}.git`);
   console.log('     git push -u origin main');
-  console.log('  3. 仓库 Settings → Secrets and variables → Actions 里添加 CF_API_TOKEN、CF_ACCOUNT_ID');
-  console.log(`  4. Pages 项目名 ${a.repoName} 首次由 Actions 自动创建；自定义域名在 Cloudflare Pages 里绑定`);
-  console.log('\n下一步：把站点地址加入 zero-api 的 ALLOWED_ORIGINS（packages/api/wrangler.jsonc），然后 pnpm deploy:api');
+  if (!a.initGit) {
+    console.log('     （这次没做 git 初始化，先补：git init -b main && git add . && git commit -m "feat: initial zero-site"）');
+  }
+  if (submodulePending) {
+    console.log(`     （子模块这次没加成，先补：${submodule}，再 git submodule update --init --recursive）`);
+  }
+  if (!submodulePending && imported === 0) {
+    console.log('     （示例内容这次没进来：先 git submodule update --init --recursive，再重跑一次 pnpm create:site 覆盖生成）');
+  }
+  console.log('  3. 给 Actions 两个 secret：仓库 Settings → Secrets and variables → Actions → New repository secret');
+  console.log('     CF_API_TOKEN（要有 Pages 编辑权限的 API Token）、CF_ACCOUNT_ID（Cloudflare 控制台首页右侧那串）');
+  console.log(`  4. 推 main 会触发首次构建；Pages 项目 ${a.repoName} 由 workflow 自动创建，自定义域名到 Cloudflare Pages → 该项目 → Custom domains 里绑`);
+  console.log(`     本机先看一眼效果：cd ${siteDir} && git submodule update --init --recursive && hugo server -D`);
+  console.log('  5. 让后台写得进这座仓库：');
+  console.log(`     · zero-stack 的 packages/api/wrangler.jsonc 里 ALLOWED_ORIGINS 加上 ${a.siteUrl}，然后 pnpm deploy:api（不加就是后台一请求就被 CORS 拒掉）`);
+  console.log(`     · 后台「设置 → 内容仓库」填 owner=${a.githubUser} / repo=${a.repoName}，并存一个有 contents:write 的 token（密钥只进 worker secret，不进仓库）`);
+  console.log(`     · 主题侧的接口地址已经写在生成好的 config/_default/params.toml 里（apiBaseURL = ${a.apiBaseURL}），不用再改`);
 }
 
 main().catch((e: unknown) => {

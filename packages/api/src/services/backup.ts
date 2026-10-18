@@ -38,6 +38,7 @@ import {
 import { SECRET_KEYS, getConfig, invalidateConfigCache } from './config';
 import { readFileFrom, resolveRepoTarget, walkFiles, writeViaTarget, type RepoTarget } from './repo';
 import { triggerPagesBuild } from './git';
+import { listBuckets, listMediaObjects } from './media';
 
 export const BACKUP_VERSION = 2;
 
@@ -65,7 +66,7 @@ export const SECTION_CATALOG: { id: SectionId; label: string; what: string }[] =
   { id: 'comments', label: '评论', what: '评论正文、层级关系与评论者身份' },
   { id: 'likes', label: '点赞与收藏', what: '文章/时刻的 like、star 记录与评论点赞' },
   { id: 'users', label: '用户账号', what: '普通用户（含密码哈希）与仓库 authors.yaml；管理员账号不导出' },
-  { id: 'media', label: '媒体清单', what: 'R2 图片的 key、体积与被引用位置；图片本体不进备份文件' },
+  { id: 'media', label: '媒体清单', what: 'R2 图片的 key、体积与被引用位置；图片本体在这一节核对，导与搬用后台「图片（媒体本体）」那个图片包' },
 ];
 
 export const SECTION_IDS = SECTION_CATALOG.map((s) => s.id);
@@ -107,6 +108,8 @@ export interface BackupFile {
 
 export interface MediaObject {
   key: string;
+  /** 在哪个桶里；老备份没这个字段，核对时按「任一桶里有同名」算 */
+  bucket?: string;
   size: number;
   uploaded: string | null;
   /** 哪些文章/时刻正文里提到了这个 key */
@@ -314,22 +317,24 @@ export async function exportBackup(
     notes: ['管理员账号不导出：到新站后台自己注册第一个账号', ...userNotes],
   });
 
-  /* --- 媒体清单：只列 key，图片本体不进文件 --- */
+  /* --- 媒体清单：列每个桶的 uploads/，图片本体走后台那个图片包 --- */
   const media: MediaObject[] = [];
   const mediaNotes: string[] = [];
-  try {
-    let cursor: string | undefined;
-    do {
-      const listed = await env.R2.list({ prefix: 'uploads/', cursor, limit: 1000 });
-      for (const o of listed.objects) {
-        media.push({ key: o.key, size: o.size, uploaded: o.uploaded?.toISOString() ?? null, usedBy: [] });
-        if (media.length >= MEDIA_CAP) break;
-      }
-      cursor = listed.truncated && media.length < MEDIA_CAP ? listed.cursor : undefined;
-    } while (cursor);
-    if (media.length >= MEDIA_CAP) mediaNotes.push(`对象数达到上限 ${MEDIA_CAP}，清单不完整`);
-  } catch (e) {
-    mediaNotes.push(`列 R2 失败：${briefError(e)}`);
+  for (const b of await listBuckets(env)) {
+    try {
+      let cursor: string | undefined;
+      do {
+        const listed = await listMediaObjects(env, b, { prefix: 'uploads/', limit: 1000, cursor });
+        for (const o of listed.objects) {
+          media.push({ key: o.key, bucket: b.id, size: o.size, uploaded: o.lastModified, usedBy: [] });
+          if (media.length >= MEDIA_CAP) break;
+        }
+        cursor = listed.truncated && media.length < MEDIA_CAP ? (listed.cursor ?? undefined) : undefined;
+      } while (cursor);
+      if (media.length >= MEDIA_CAP) mediaNotes.push(`对象数达到上限 ${MEDIA_CAP}，清单不完整`);
+    } catch (e) {
+      mediaNotes.push(`列 ${b.id} 失败：${briefError(e)}`);
+    }
   }
   // 反查引用：把文章/时刻正文里出现的 key 找出来，新站复制图片时知道哪些真的在用
   const textBlob = [...postFiles, ...momentFiles, ...themeFiles].map((f) => ({ path: f.path, hay: f.content }));
@@ -342,7 +347,7 @@ export async function exportBackup(
     counts: { 对象: media.length, 被引用: media.filter((m) => m.usedBy.length).length },
     objects: media,
     notes: [
-      '图片本体不在备份文件里：Worker 单次请求有体积上限，媒体要按清单用 r2 cp / 控制台复制，或直接让新桶同名',
+      '图片本体不在备份文件里：在后台「图片（媒体本体）」那节点「导出图片包」另存一份，到新站同一节逐张写入（按原键，本站已有同名的会跳过）',
       ...mediaNotes,
     ],
   });
@@ -556,24 +561,40 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
       continue;
     }
 
-    /* 媒体清单：不写任何东西，只对比本站 R2 有没有同名的对象 */
+    /* 媒体清单：不写任何东西，只对比本站各个桶里有没有同名对象 */
     if (section.id === 'media') {
       const objects = section.objects ?? [];
       let present = 0;
       try {
-        const mine = new Set<string>();
-        let cursor: string | undefined;
-        do {
-          const listed = await env.R2.list({ prefix: 'uploads/', cursor, limit: 1000 });
-          for (const o of listed.objects) mine.add(o.key);
-          cursor = listed.truncated ? listed.cursor : undefined;
-        } while (cursor && mine.size < MEDIA_CAP);
-        present = objects.filter((o) => mine.has(o.key)).length;
+        const keyed = new Set<string>();
+        const bare = new Set<string>();
+        for (const b of await listBuckets(env)) {
+          let cursor: string | undefined;
+          let n = 0;
+          do {
+            const listed = await listMediaObjects(env, b, { prefix: 'uploads/', limit: 1000, cursor });
+            for (const o of listed.objects) {
+              keyed.add(`${b.id}/${o.key}`);
+              bare.add(o.key);
+            }
+            n += listed.objects.length;
+            cursor = listed.truncated && n < MEDIA_CAP ? (listed.cursor ?? undefined) : undefined;
+          } while (cursor);
+        }
+        /* 老备份没有桶信息（bucket 字段是后加的），退化成「任一桶里有同名就算有」 */
+        present = objects.filter((o) => (o.bucket ? keyed.has(`${o.bucket}/${o.key}`) : bare.has(o.key))).length;
       } catch (e) {
         result.errors.push(briefError(e));
       }
-      result.media = { total: objects.length, present, absent: objects.length - present };
-      result.notes.push(dryRun ? '演习：这一区永远不写数据，只告诉你缺多少张图' : `图片本体没跟着备份文件走：还差 ${objects.length - present} 张，按清单用 r2 cp 复制或让文章改指新桶`);
+      const absent = objects.length - present;
+      result.media = { total: objects.length, present, absent };
+      result.notes.push(
+        dryRun
+          ? `演习：这一区永远不写数据，只告诉你缺多少张图（缺的在后台「图片（媒体本体）」导入图片包补齐）`
+          : absent
+            ? `还缺 ${absent} 张：本站桶里没有同名对象。到「图片（媒体本体）」那一节导入原站的图片包`
+            : '图片清单与本站桶里的对象对得上，一张不缺',
+      );
       outcome.sections.push(result);
       continue;
     }

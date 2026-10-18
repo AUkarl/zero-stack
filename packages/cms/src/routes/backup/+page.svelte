@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { del, get, post } from '#lib/api';
+  import { del, get, getApiBase, post } from '#lib/api';
   import { fmtDate } from '#lib/api';
 
   /**
@@ -98,6 +98,39 @@
   let overwrite = $state(false);
   let outcome = $state<Outcome | null>(null);
 
+  /* ---------------- 图片包：本体也走后台，迁站不用碰命令行 ---------------- */
+
+  interface PackItem {
+    key: string;
+    bucket: string;
+    contentType: string;
+    size: number;
+    /** base64：一张一张传，绕开 Worker 单次请求的体积上限 */
+    bytes: string;
+  }
+  interface MediaPack {
+    kind: 'zero-media-pack';
+    version: number;
+    generatedAt: string;
+    items: PackItem[];
+  }
+  interface PackResult {
+    written: number;
+    skipped: string[];
+    failed: string[];
+  }
+  interface MediaListOut {
+    data: { objects: { key: string; size: number }[]; truncated: boolean; cursor: string | null };
+  }
+
+  let packBusy = $state('');
+  let packProgress = $state('');
+  let packOut = $state<PackResult | null>(null);
+  /** 清单里列出了、取的时候却没了的对象 */
+  let packWarn = $state<string[]>([]);
+  /** 选好的图片包，还没写 */
+  let pending = $state<MediaPack | null>(null);
+
   async function load() {
     loading = true;
     try {
@@ -186,6 +219,129 @@
     } finally {
       busy = '';
     }
+  }
+
+  /** 走后台代理取原图：私有桶没有直链，只有 Worker 读得到 */
+  async function fetchObjectBytes(bucketId: string, key: string): Promise<{ buf: ArrayBuffer; type: string } | null> {
+    const path = `/api/admin/media/${key.split('/').map(encodeURIComponent).join('/')}`;
+    const res = await fetch(`${getApiBase()}${path}?bucket=${encodeURIComponent(bucketId)}`, { credentials: 'include' });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`取回 ${key} 失败（${res.status}）`);
+    return { buf: await res.arrayBuffer(), type: res.headers.get('Content-Type') ?? 'application/octet-stream' };
+  }
+
+  function toBase64(buf: ArrayBuffer): string {
+    const bytes = new Uint8Array(buf);
+    let s = '';
+    /** 一次把几百万个字节展开成 fromCharCode 的参数会打爆调用栈，每 32KB 切一段 */
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+
+  function fromBase64(b64: string): Uint8Array {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  /** 一份包最多带多少个对象：再多就该分批导，浏览器整份握在内存里会先卡死 */
+  const PACK_MAX = 2000;
+
+  async function exportPack() {
+    packBusy = 'export';
+    packOut = null;
+    packWarn = [];
+    error = '';
+    try {
+      const buckets = await get<{ data: { id: string }[] }>('/api/admin/media/buckets');
+      const items: PackItem[] = [];
+      let seen = 0;
+      for (const b of buckets.data) {
+        let next: string | null = null;
+        do {
+          const qs = new URLSearchParams({ bucket: b.id, prefix: 'uploads/', limit: '1000' });
+          if (next) qs.set('cursor', next);
+          const r = await get<MediaListOut>('/api/admin/media/list?' + qs.toString());
+          for (const o of r.data.objects) {
+            if (items.length >= PACK_MAX) throw new Error(`对象超过 ${PACK_MAX} 个：一份包装不下，请在「媒体库」按目录分批导出`);
+            const got = await fetchObjectBytes(b.id, o.key);
+            seen++;
+            if (!got) {
+              packWarn.push(`${o.key}（桶里列出来了，取的时候却没了）`);
+              continue;
+            }
+            items.push({ key: o.key, bucket: b.id, contentType: got.type, size: o.size, bytes: toBase64(got.buf) });
+            packProgress = `已取 ${seen} 个对象，包内 ${items.length} 张`;
+          }
+          next = r.data.truncated ? r.data.cursor : null;
+        } while (next);
+      }
+      const pack: MediaPack = { kind: 'zero-media-pack', version: 1, generatedAt: new Date().toISOString(), items };
+      saveAs(`zero-media-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(pack));
+      notice = `图片包已导出：${items.length} 张${packWarn.length ? `，有 ${packWarn.length} 个对象没取到` : ''}`;
+    } catch (e) {
+      error = e instanceof Error ? e.message : '图片包导出失败';
+    } finally {
+      packBusy = '';
+      packProgress = '';
+    }
+  }
+
+  async function pickPackFile(file: File | undefined) {
+    if (!file) return;
+    error = '';
+    packOut = null;
+    pending = null;
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<MediaPack>;
+      if (parsed?.kind !== 'zero-media-pack' || !Array.isArray(parsed.items)) throw new Error('这不是图片包：文件里没有 zero-media-pack 标记或 items 列表');
+      const usable = parsed.items.filter((it) => typeof it?.key === 'string' && typeof it?.bytes === 'string');
+      if (!usable.length) throw new Error('包里的条目都缺 key 或图片数据，一张可用的都没有');
+      pending = { ...(parsed as MediaPack), items: usable };
+      const mb = usable.reduce((n, it) => n + (Number(it.size) || 0), 0) / 1024 / 1024;
+      notice = `图片包已载入：${usable.length} 张 · 约 ${mb.toFixed(1)} MB${usable.length < parsed.items.length ? `（另有 ${parsed.items.length - usable.length} 条读不出，会跳过）` : ''}。本站已有同名的直接跳过，不会盖掉。`;
+    } catch (e) {
+      error = e instanceof Error ? e.message : '图片包解析失败';
+      pending = null;
+    }
+  }
+
+  /** 一张一个请求：单次请求只搬一张图，Worker 的体积上限就卡不住整站图片 */
+  async function importPack() {
+    if (!pending) return;
+    packBusy = 'import';
+    error = '';
+    packOut = null;
+    const list = pending.items;
+    const skipped: string[] = [];
+    const failed: string[] = [];
+    let written = 0;
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i]!;
+      packProgress = `第 ${i + 1} / ${list.length} 张：${it.key}`;
+      try {
+        const fd = new FormData();
+        fd.set('file', new File([fromBase64(it.bytes)], it.key.split('/').pop() || 'file', { type: it.contentType || 'application/octet-stream' }));
+        fd.set('key', it.key);
+        fd.set('bucket', it.bucket);
+        const res = await fetch(`${getApiBase()}/api/admin/media/import`, { method: 'POST', credentials: 'include', body: fd });
+        const body = (await res.json().catch(() => null)) as { data?: { skipped?: boolean }; message?: string } | null;
+        if (!res.ok) {
+          failed.push(`${it.key}：${body?.message || `请求失败 (${res.status})`}`);
+          continue;
+        }
+        if (body?.data?.skipped) skipped.push(it.key);
+        else written++;
+      } catch (e) {
+        failed.push(`${it.key}：${e instanceof Error ? e.message : '网络失败'}`);
+      }
+    }
+    packOut = { written, skipped, failed };
+    pending = null;
+    packBusy = '';
+    packProgress = '';
+    notice = `图片写完：新存 ${written} 张 · 同名跳过 ${skipped.length} 张 · 失败 ${failed.length} 张`;
   }
 
   async function pickFile(file: File | undefined) {
@@ -400,7 +556,7 @@
   <p class="muted small">
     不进备份：邮件发送日志、群发任务、邀请码使用记录、访问统计明细、审计流水、登录会话与第三方绑定。
     密钥（SMTP 密码、各家 API Key）永不进文件；绑定本站域名与仓库坐标的配置项也不会写回新站，
-    只在文件里列出旧值给你人工对照。图片本体同样不在文件里（Worker 单次请求有体积上限），媒体分区给的是清单和被哪篇文章引用。
+    只在文件里列出旧值给你人工对照。图片本体不在文件里，用下面「图片（媒体本体）」那一节单独导一个图片包过去。
   </p>
 
   <div class="row actions">
@@ -454,6 +610,74 @@
         </tbody>
       </table>
     </div>
+  {/if}
+</section>
+
+<section class="card">
+  <h3>图片（媒体本体）</h3>
+  <p class="muted small">
+    上面那份全站备份里只有图片<strong>清单</strong>，图片本体在这一节搬：导出一个「图片包」，
+    到新站的同一节导入。一张一个请求走后台代理，单次请求的体积上限卡不住整站图片；
+    写回用的是<strong>原对象键</strong>，所以文章与主题里已有的图片地址不会变。
+    本站已经有同名的就跳过 —— 恢复不该把新站这段时间刚传的图打回旧版。
+  </p>
+  <div class="row actions">
+    <button onclick={() => void exportPack()} disabled={packBusy !== '' || busy !== ''}>
+      {packBusy === 'export' ? '打包中…' : '导出图片包'}
+    </button>
+  </div>
+  {#if packWarn.length}
+    <details>
+      <summary class="muted small">有 {packWarn.length} 个对象没取到</summary>
+      <ul class="tight">
+        {#each packWarn as w (w)}
+          <li class="small mono">{w}</li>
+        {/each}
+      </ul>
+    </details>
+  {/if}
+
+  <input type="file" accept="application/json,.json" onchange={(e) => void pickPackFile(e.currentTarget.files?.[0])} />
+  {#if pending}
+    <div class="row actions">
+      <button class="danger" onclick={() => void importPack()} disabled={packBusy !== '' || busy !== ''}>
+        {packBusy === 'import' ? '写入中…' : `逐张写入（共 ${pending.items.length} 张，同名跳过）`}
+      </button>
+      <button class="ghost" onclick={() => { pending = null; packOut = null; }} disabled={packBusy !== ''}>取消</button>
+    </div>
+  {:else if packBusy !== 'import'}
+    <p class="muted small">还没选文件：挑一份上面「导出图片包」存下来的 .json。</p>
+  {/if}
+  {#if packProgress}
+    <p class="muted small">{packProgress}</p>
+  {/if}
+  {#if packOut}
+    <div class="counts">
+      <span class="pill">新写入 {packOut.written}</span>
+      <span class="pill">同名跳过 {packOut.skipped.length}</span>
+      <span class="pill" class:bad={packOut.failed.length > 0}>失败 {packOut.failed.length}</span>
+    </div>
+    {#if packOut.skipped.length}
+      <details>
+        <summary class="muted small">跳过的 {packOut.skipped.length} 张（本站已有同名对象，没覆盖）</summary>
+        <ul class="tight">
+          {#each packOut.skipped as k (k)}
+            <li class="small mono">{k}</li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
+    {#if packOut.failed.length}
+      <details>
+        <summary class="muted small">失败的 {packOut.failed.length} 张</summary>
+        <ul class="tight">
+          {#each packOut.failed as f (f)}
+            <li class="small mono">{f}</li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
+    <p class="muted small">回上面「媒体清单」再跑一次恢复演习，缺的数量就会对上。</p>
   {/if}
 </section>
 

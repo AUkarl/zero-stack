@@ -32,7 +32,7 @@ import { requireAdmin } from '../middleware/auth';
 import { deleteFile, listDir, readFile, writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild } from '../services/git';
 import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
-import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, deleteMediaObject, objectPath, type MediaBucket } from '../services/media';
+import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, type MediaBucket } from '../services/media';
 import {
   buildMarkdown,
   contentWebPath,
@@ -708,6 +708,15 @@ async function bucketFrom(env: Env, url: string, form?: FormData | null): Promis
   return resolveBucket(env, wanted);
 }
 
+/**
+ * 恢复用的键必须是桶里正常那种对象名：不以 / 开头、没有 `..`、没有空段与控制字符。
+ * 备份文件是站主手上的一个 JSON，路径穿越这类校验只能在这里做，不能信它。
+ */
+function isImportableKey(key: string): boolean {
+  if (!key || key.length > 600 || key.startsWith('/') || key.includes('\\')) return false;
+  return key.split('/').every((s) => s !== '' && s !== '.' && s !== '..' && !/[\u0000-\u001f\u007f]/.test(s));
+}
+
 /** POST /api/admin/media —— FormData 的 bucket 字段或 ?bucket= 决定落到哪个桶 */
 app.post('/media', async (c) => {
   const admin = requireAdmin(c);
@@ -740,6 +749,49 @@ app.post('/media', async (c) => {
     ip: clientIp(c),
   });
   return ok({ key: stored.key, url, bucket: bucket.id, size: stored.size });
+});
+
+/**
+ * POST /api/admin/media/import —— 按备份里的**原 key** 写回一张图（FormData：file / key / bucket）。
+ *
+ * 上面那个上传口只会造新 key（uploads/日期/uuid），可文章 Markdown 里引用的正是当年那个键；
+ * 恢复图片必须原样落回，否则媒体清单的「缺 N 张」永远补不完。
+ * 本站已有同名对象就跳过、不覆盖：恢复不该把新站这段时间刚传的图打回旧版。
+ */
+app.post('/media/import', async (c) => {
+  const admin = requireAdmin(c);
+  const form = await c.req.formData().catch(() => null);
+  const file = form?.get('file');
+  const key = String(form?.get('key') ?? '').trim();
+  if (!(file instanceof File)) fail(400, '未收到文件');
+  if (file.size > 20 * 1024 * 1024) fail(400, '单个文件不得超过 20MB');
+  if (!isImportableKey(key)) fail(400, `对象键不合法：${key || '（空）'}`);
+
+  const bucket = await bucketFrom(c.env, c.req.url, form);
+  if (await mediaObjectExists(c.env, bucket, key)) {
+    await writeAudit(c.env, {
+      actor: admin,
+      action: 'media',
+      target: key,
+      detail: { event: 'import-skip', bucket: bucket.id },
+      ip: clientIp(c),
+    });
+    return ok({ key, bucket: bucket.id, skipped: true, reason: '本站已有同名对象，没覆盖' });
+  }
+
+  const stored = await putMediaObject(c.env, bucket, {
+    key,
+    data: file.stream(),
+    contentType: file.type || 'application/octet-stream',
+  });
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'media',
+    target: stored.key,
+    detail: { event: 'import', bucket: bucket.id, size: file.size },
+    ip: clientIp(c),
+  });
+  return ok({ key: stored.key, url: stored.url, bucket: bucket.id, size: stored.size, skipped: false });
 });
 
 /** GET /api/admin/media/list?prefix=&bucket=&limit=&cursor= */
