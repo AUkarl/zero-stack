@@ -52,13 +52,25 @@ export async function listBuckets(env: Env): Promise<MediaBucket[]> {
   const raw = await getConfigJson<unknown>(env, 'mediaBuckets', []);
   const list = Array.isArray(raw) ? raw : [];
   const parsed = list.map((item) => normalizeBucket(item)).filter((b): b is MediaBucket => b !== null);
-  if (parsed.length) return dedupe(parsed);
+  if (parsed.length) return dedupe(env.R2 ? withBoundR2(parsed) : parsed);
   const configured = await getConfig(env, 'mediaBuckets');
   if (configured && configured.trim() && !Array.isArray(raw)) {
     // JSON 写坏了：留给后台一个可用桶，同时把问题暴露出去
     return [DEFAULT_BUCKET];
   }
   return [DEFAULT_BUCKET];
+}
+
+/**
+ * Worker 绑了 R2，媒体页就必须能选到它。
+ *
+ * 以前 mediaBuckets 一填（例如只登记了公开桶），配置里的列表就把默认桶整个顶掉，
+ * 结果是「原图想放回私有桶」在后台根本点不到 —— 而私有桶是这个 Worker 唯一确定可读的桶。
+ * 所以列表里没有 r2/R2 这条时，把默认桶补在最前面（同 id 不会重复出现）。
+ */
+function withBoundR2(list: MediaBucket[]): MediaBucket[] {
+  if (list.some((b) => b.kind === 'r2' && (b.binding ?? 'R2') === DEFAULT_BUCKET.binding)) return list;
+  return [DEFAULT_BUCKET, ...list];
 }
 
 function normalizeBucket(item: unknown): MediaBucket | null {

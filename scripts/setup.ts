@@ -180,9 +180,10 @@ interface PublicBucketPlan {
 }
 
 /**
- * 域名绑上才算「公开桶可用」：没绑成却把 baseUrl 写进配置，图片地址会全部指向一个
- * 还不存在的域名，表现是后台上传成功、前台一片裂图 —— 比不配还难查。
- * 所以没绑成（或本来就没填域名）时只把 JSON 打出来，等域名绑好再往后台粘。
+ * 域名真绑上才有直链：没绑成就把 baseUrl 写进配置，图片地址会全部指向一个还不存在的
+ * 域名，表现是后台上传成功、前台一片裂图 —— 比不配还难查。
+ * 但「域名没绑」不该连累桶本身登记进后台：没直链时图片走 Worker 读取（站内路径）照样能用，
+ * 站主之后把域名绑上、回这个桶填一次直链前缀就升级成直链。
  */
 function preparePublicBucket(a: Answers): PublicBucketPlan {
   const name = (a.publicBucket ?? '').trim() || R2_PUBLIC_DEFAULT;
@@ -200,25 +201,68 @@ function readRemoteConfig(key: string): string {
   return parsed?.[0]?.results?.[0]?.value ?? '';
 }
 
+/** 后台那两个默认桶：私有桶是这个 Worker 唯一确定可读的桶，公开桶负责直链 */
+const PRIVATE_BUCKET_ENTRY = { id: 'r2', label: '私有桶（走后台读取）', kind: 'r2', binding: 'R2', baseUrl: '' };
+const PUBLIC_BUCKET_ENTRY = (baseUrl: string): Record<string, unknown> => ({ id: 'public', label: '公开桶（直链）', kind: 'r2', binding: R2_PUBLIC_BINDING, baseUrl });
+
+/**
+ * 把两个桶都登记进后台的 mediaBuckets（已有的条目一个不改，站长自己加的 S3 桶原样留着）。
+ *
+ * 以前只登记公开桶、且域名没绑成就一条都不写：前者让默认桶从列表里消失
+ * （配置一有值就不再兜底），后者让后台只看到一个桶 —— 站主要「要紧的放私有、
+ * 不重要的放公开」，两个都得先出现在上传下拉里。
+ */
 function seedPublicBucketConfig(pub: PublicBucketPlan): void {
-  if (!pub.bound || !pub.baseUrl) {
-    const entry = { id: 'public', label: '公开桶（直链）', kind: 'r2', binding: R2_PUBLIC_BINDING, baseUrl: pub.baseUrl };
-    const merged = mergePublicBucketEntry(readRemoteConfig('mediaBuckets'), entry);
-    info('公开桶域名还没绑好，暂不写进后台配置（写了图片会指向一个还不存在的域名）。');
-    info(`域名生效之后，在后台「媒体库 → 存储桶」加一条，或把这份 JSON 覆盖到 site_config 的 mediaBuckets：\n  ${merged.json}`);
-    return;
-  }
-  const entry = { id: 'public', label: '公开桶（直链）', kind: 'r2', binding: R2_PUBLIC_BINDING, baseUrl: pub.baseUrl };
-  const merged = mergePublicBucketEntry(readRemoteConfig('mediaBuckets'), entry);
+  const withPrivate = mergePublicBucketEntry(readRemoteConfig('mediaBuckets'), PRIVATE_BUCKET_ENTRY);
+  const merged = mergePublicBucketEntry(withPrivate.json, PUBLIC_BUCKET_ENTRY(pub.baseUrl));
   if (!merged.changed) {
-    good('后台「媒体库 → 存储桶」里已经有 R2_PUBLIC 这条，不重复写');
+    good('后台「媒体库 → 存储桶」里私有桶与公开桶都在，不重复写');
     return;
   }
   if (upsertConfigValue(D1_NAME, 'mediaBuckets', merged.json, 'json')) {
-    good(`公开桶已登记进后台（${pub.baseUrl}）：上传时选它，图片地址就是直链`);
+    if (pub.baseUrl) good(`两个桶都已登记进后台，上传时可选：私有桶走 Worker 读取，公开桶 ${pub.baseUrl} 是直链`);
+    else good('两个桶都已登记进后台，上传时可选；公开桶还没有可用的直链域名，它的图片先走 Worker 读取，绑好域名后在该桶填「直链前缀」即可');
   } else {
-    warn(`桶建好了，但没能自动写进 D1。域名生效后在后台「媒体库 → 存储桶」手工加一条：\n  ${merged.json}`);
+    warn(`桶建好了，但没能自动写进 D1。在后台「媒体库 → 存储桶」手工加这两条：\n  ${merged.json}`);
   }
+}
+
+/**
+ * 向导问过的项直接写进 site_config。
+ *
+ * 以前 SITE_URL / SITE_NAME 只进 wrangler vars、SMTP 只存了密码，于是后台「设置」里
+ * 那些框还是空的，汇总又让站主去填第二遍 —— 而 vars 那份后台根本看不见，
+ * 站主改在后台的值也不会回头影响 vars。写进库里才是后台显示与修改的那一份。
+ */
+function seedSiteConfig(a: Answers): string[] {
+  const user = (a.smtpUser ?? '').trim();
+  const want: [string, string][] = [
+    ['siteName', (a.siteName ?? '').trim()],
+    ['siteUrl', (a.siteUrl ?? '').trim().replace(/\/+$/, '')],
+    ['cmsAdminUrl', (a.cmsUrl ?? '').trim()],
+    ['githubOwner', (a.githubOwner ?? '').trim()],
+    ['githubRepo', (a.githubRepo ?? '').trim()],
+    ['githubBranch', (a.githubBranch ?? '').trim()],
+  ];
+  if (a.emailProvider === 'smtp') want.push(['smtpHost', (a.smtpHost ?? '').trim()], ['smtpPort', (a.smtpPort ?? '').trim()], ['smtpUser', user], ['emailFrom', user]);
+  if (a.emailProvider === 'cloudflare') want.push(['cloudflareAccountId', (a.cfAccountId ?? '').trim()]);
+
+  const written: string[] = [];
+  for (const [key, value] of want) {
+    if (!value) continue;
+    if (upsertConfigValue(D1_NAME, key, value, 'string')) written.push(key);
+    else warn(`「${key}」没能自动写进 D1（值：${value}），到后台「设置」里补一下`);
+  }
+  return written;
+}
+
+/** 向导拿不到、必须站主自己去后台补的东西；空数组就意味着配置已经齐了 */
+function stillMissing(a: Answers): string[] {
+  const missing: string[] = [];
+  if (a.emailProvider === 'none') missing.push('发信方式（SMTP 主机 / 账号 / 授权码，或 Resend key）');
+  if (a.emailProvider === 'resend' || a.emailProvider === 'cloudflare') missing.push('发件人地址 emailFrom');
+  if (a.useGithub && !(a.githubToken ?? '').trim()) missing.push('内容仓库的 GitHub token（后台「设置 → 内容仓库」）');
+  return missing;
 }
 
 /** 已配置过的仓库重复运行 setup 时，直接沿用旧 id，避免再次占用同名资源 */function readExistingIds(): ResourceIds | null {
@@ -509,7 +553,7 @@ const QUESTIONS: PromptObject[] = [
 
 assertShortMessages(QUESTIONS);
 
-async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string): Promise<void> {
+async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string, seeded: string[], pub: PublicBucketPlan): Promise<void> {
   console.log('\n\x1b[32m✅ 部署完成\x1b[0m\n');
   /** 站主填的自定义域名要探一次才算数：控制台没绑、DNS 没生效时浏览器是 530，
       而按输出直接打印出来看着就像已经可用了（后台与前台都会连不上，很难往这上面想）。 */
@@ -527,17 +571,20 @@ async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | nul
   console.log(`        ${prod.note}`);
   console.log('\n后续步骤：');
   console.log(`  1. 打开后台：库里还没有账号时，登录页会自己变成「建为站长并登录」表单，填邮箱 + 两遍密码即可（第一个账号自动是 admin，跳过邮箱验证）${apiUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
-  console.log('  2. 后台「设置」补齐 siteUrl、emailFrom、smtpHost、smtpUser 等配置项');
-  if (a.emailProvider === 'smtp') {
-    console.log(`     （SMTP：${a.smtpHost ?? '待填'}:${a.smtpPort ?? '待填'}，账号 ${a.smtpUser ?? '待填'}；密码已存为 secret）`);
-  }
+  const missing = stillMissing(a);
+  console.log('  2. 站点与发信配置：向导问过的那些已经写进数据库，打开后台「设置」核对就行（要改也在那里改）');
+  if (seeded.length) console.log(`     已写好：${seeded.join('、')}`);
+  if (a.emailProvider === 'smtp') console.log(`     （SMTP：${a.smtpHost ?? '待填'}:${a.smtpPort ?? '待填'}，账号 ${a.smtpUser ?? '待填'}；发件人默认取这个账号，密码已存为 secret）`);
+  console.log(missing.length ? `     还需要你补：${missing.join('；')}` : '     没有需要额外补的项');
   console.log(`  3. pnpm create:site 生成私密内容仓库，然后在「设置 → 内容仓库」填 owner / repo / token`);
   console.log(`  4. 主题侧 hugo.toml 设置 params.apiBaseURL = ${apiUrl ?? 'https://<worker>.workers.dev'}（前台与后台都走这一个地址，CORS 已放行 ${a.siteUrl}）`);
   console.log('  5. 迁移旧评论：pnpm migrate:waline（详见 docs/DEPLOYMENT.md）');
+  console.log('  6. 图片两个桶都已建好并登记进后台「媒体库」，上传时在桶下拉里任选：');
+  console.log(`     · 私有 ${R2_NAME}：走 Worker 读取，不对外直链（原图与要紧的图放这里）`);
   console.log(
-    `  6. 图片公开桶：${a.publicBucket || R2_PUBLIC_DEFAULT}${
-      a.publicDomain ? ` → https://${a.publicDomain}` : '（没填域名，图片继续走 Worker 代理读）'
-    }；上传时在后台「媒体库」里选它，文章里的图片就是直链地址`,
+    `     · 公开 ${a.publicBucket || R2_PUBLIC_DEFAULT}：${
+      pub.baseUrl ? `${pub.baseUrl} 直链，不占 Worker 请求数（不重要的图放这里）` : '还没有可用的直链域名，图片先走 Worker 读取；到控制台 R2 → 该桶 → 自定义域名 绑好后，在后台该桶填「直链前缀」即成直链'
+    }`,
   );
 }
 
@@ -600,6 +647,10 @@ async function main(): Promise<void> {
     warn(`最后一步还没完：把 ${pub.hostname} 绑到 ${pub.name} 并验证 DNS（控制台 R2 → ${pub.name} → 设置 → 自定义域名），\n      绑好后域名才真的能取图`);
   }
 
+  step('写入站点与发信配置');
+  const seeded = seedSiteConfig(a);
+  if (seeded.length) good(`已写进 site_config，后台「设置」直接显示这些值：${seeded.join('、')}`);
+
   const workerUrl = deployWorker();
   /** 密钥必须排在 worker 部署之后：首次运行时 worker 还不存在，先写就全以 Worker not found 失败 */
   configureSecrets(a);
@@ -609,7 +660,7 @@ async function main(): Promise<void> {
   /** 绑了自定义域名就用它编进后台产物：*.workers.dev 在很多网络根本连不通 */
   const finalApiUrl = apiUrl || workerUrl;
   const pagesUrl = deployCms(finalApiUrl);
-  await summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）');
+  await summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）', seeded, pub);
 }
 
 main().catch((e: unknown) => {

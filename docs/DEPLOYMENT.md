@@ -109,17 +109,21 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 |---|---|---|
 | 谁来读 | 只有 Worker（`/api/media/<桶>/<键>` 代读） | 任何人（绑了域名就是直链） |
 | 图片地址 | 占 Worker 的请求数与 10ms CPU 额度 | 不占 Worker，RSS / 阅读器 / 外链都能直接取 |
-| 怎么启用 | 开箱就是默认桶 | 绑好域名后在后台「媒体库 → 存储桶」选它上传 |
+| 怎么启用 | 开箱就是默认桶，永远出现在后台桶列表里 | 向导建好并登记进后台；域名绑上后它的「直链前缀」才生效 |
 
 向导为此多问三样：**公开桶名**（默认 `zero-media-public`）、**公开桶域名**（默认 `zero-media-public.<站点裸域>`）、
 **Zone ID**。判定规则：
 
 - 填了 Zone ID（域名的 DNS 就托管在当前 Cloudflare 账户）→ 直接跑 `wrangler r2 bucket domain add` 自动绑好，
-  并把 `{"id":"public","binding":"R2_PUBLIC","baseUrl":"https://<域名>"}` 追加进 D1 的 `mediaBuckets`
-  （只追加这一条，站长自己加的 S3 桶等原样保留；重复运行不会写第二份）；
-- 没填 Zone ID，或自动绑定被 Cloudflare 拒绝 → **不写这条配置**，只把该做的操作和完整 JSON 打印出来。
-  域名还没生效就先把 `baseUrl` 写进配置，图片地址会指向一个还不存在的域名，
-  表现为「后台上传成功、前台一片裂图」，比不配更难查；
+  公开桶那条会带上 `baseUrl`，上传即直链；
+- 没填 Zone ID、或自动绑定被 Cloudflare 拒绝、或域名已经绑在别的资源上 → 公开桶照样登记进后台，
+  只是 `baseUrl` 留空：它的图片先走 `/api/media/<桶>/<键>` 代读（能用，只是占 Worker 额度），
+  之后域名绑好了，在后台该桶填上「直链前缀」就升级成直链。**没绑成域名不再连桶一起不登记** ——
+  早先那样做会让后台只剩一个桶可选，「要紧的放私有、不重要的放公开」根本没法用；
+- 两个桶（私有 `{"binding":"R2"}` 与公开 `{"binding":"R2_PUBLIC"}`）都是**只追加**进 D1 的 `mediaBuckets`，
+  站长自己加的 S3 桶原样保留，重复运行不会写第二份，也不会覆盖已经填好的 `baseUrl`；
+- 就算 `mediaBuckets` 里只写了公开桶，接口也会把 Worker 绑定的私有桶补回列表最前面
+  （`services/media.ts` 的 `withBoundR2`）—— 配置一有值就顶掉默认桶是早期的坑；
 - 桶已存在就跳过创建，绝不删除、不动桶里已有的文件。
 
 > `packages/api/wrangler.jsonc` 已在 `.gitignore` 中，仓库只保留 `.example`。
