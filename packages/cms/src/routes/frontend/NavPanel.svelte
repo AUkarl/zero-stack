@@ -215,7 +215,7 @@
       </label>
       <label>
         标识 identifier
-        <input bind:value={it.identifier} maxlength={LIMIT.short} placeholder="有子项时必填，例如 tools" />
+        <input bind:value={it.identifier} maxlength={LIMIT.short} placeholder="有子项时必填，例如 work" />
         <span class="muted small">子项靠 parent 指回这个值</span>
       </label>
       <label>

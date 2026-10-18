@@ -299,14 +299,13 @@ comments: true
 
 /**
  * 主题的每个页面都靠 `layouts/<分区>/list.html` 渲染，少了 `content/<分区>/_index.md`
- * 那条路由就是 404（导航里的 主页 / 关于 / 归档 / 工具 / 工坊 / 订阅 / 账号 都是这种页）。
+ * 那条路由就是 404（导航里的 主页 / 关于 / 归档 / 工坊 / 订阅 / 账号 都是这种页）。
  * 正文一律留空：这些页显示的内容来自 data/*.json 与后台「前端管理」，Markdown 只是占位。
  */
 const SECTIONS: [string, string][] = [
   ['home', '主页'],
   ['about', '关于'],
   ['archive', '归档'],
-  ['tools', '工具'],
   ['work', '工坊'],
   ['subscribe', '邮箱订阅'],
   ['account', '账号'],

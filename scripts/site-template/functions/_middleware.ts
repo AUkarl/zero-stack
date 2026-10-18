@@ -24,7 +24,6 @@ const GATED: Array<[string, string]> = [
   ['/moments/', 'momentsEnabled'],
   ['/subscribe/', 'subscribeEnabled'],
   ['/account/', 'accountSystemEnabled'],
-  ['/tools/', 'toolsEnabled'],
   ['/work/', 'workEnabled'],
   ['/about/', 'aboutEnabled'],
 ];

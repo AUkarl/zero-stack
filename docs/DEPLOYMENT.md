@@ -239,7 +239,7 @@ pnpm create:site
 
 向导会问站点名称、GitHub 用户名、仓库名、API 地址、站点域名、主题仓库地址，然后在 **zero-stack 的同级目录**
 生成一个可直接推送的 Hugo 仓库：`hugo.toml`（站点参数不放这里，见下）、落地页 `content/_index.md`、
-主题需要的**全部页面分区**（`home / about / archive / tools / work / subscribe / account / links / moments / posts`，
+主题需要的**全部页面分区**（`home / about / archive / work / subscribe / account / links / moments / posts`，
 少一个分区导航里就是一条 404）、`config/_default/params.toml`（从主题那份全量注释版复制，并写入 `apiBaseURL` 与默认署名）、`.gitignore`、`.github/workflows/deploy.yml`、
 `README.md`，并在本地 `git init` + 提交。
 
@@ -248,9 +248,9 @@ pnpm create:site
 - 配了 `--api=`（或向导填了 API 地址）时，仓库里会多一个 `functions/_middleware.ts`：
   后台把某个功能关掉，那个页面在**边缘**直接返回 404 并带上 `x-robots-tag: noindex, nofollow`。
   主题原来只在浏览器里按 `/api/config` 把入口 hidden 掉，旧地址照样打得开、搜索引擎照旧收录，
-  「站内不显示 + 不收录 + 关掉就是 404」只有在这一层做得到。它管七条路径：
+  「站内不显示 + 不收录 + 关掉就是 404」只有在这一层做得到。它管六条路径：
   `/links/`（`friendsEnabled`）、`/moments/`（`momentsEnabled`）、`/subscribe/`（`subscribeEnabled`）、
-  `/account/`（`accountSystemEnabled`）、`/tools/`（`toolsEnabled`）、`/work/`（`workEnabled`）、
+  `/account/`（`accountSystemEnabled`）、`/work/`（`workEnabled`）、
   `/about/`（`aboutEnabled`）。`GATED` 表加一行就能多管一个页面，但后台「设置」里得真有那个键，
   否则判不到关、页面照旧正常出。开关状态在边缘缓存 60 秒 —— 后台改完最迟一分钟后生效，不用重建站点；
   读不到配置时一律按「默认开」放行，绝不会因为接口抖动把整站变 404。模板在
