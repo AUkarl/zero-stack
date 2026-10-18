@@ -73,6 +73,17 @@ function withBoundR2(list: MediaBucket[]): MediaBucket[] {
   return [DEFAULT_BUCKET, ...list];
 }
 
+/**
+ * 直链前缀补上协议头：只写 `cdn.example.com` 时拼出来的是
+ * `cdn.example.com/uploads/a.png`，浏览器按站内相对路径去解，图片全 404，
+ * 而后台那份配置看着像是配好了 —— 裂图比空着更难查。
+ */
+function normalizeBaseUrl(raw: unknown): string {
+  const s = String(raw ?? '').trim().replace(/\/+$/, '');
+  if (!s) return '';
+  return /^https?:\/\//i.test(s) ? s : `https://${s}`;
+}
+
 function normalizeBucket(item: unknown): MediaBucket | null {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
   const o = item as Record<string, unknown>;
@@ -90,7 +101,7 @@ function normalizeBucket(item: unknown): MediaBucket | null {
     region: o.region ? String(o.region) : undefined,
     accessKeyId: o.accessKeyId ? String(o.accessKeyId) : undefined,
     secretAccessKey: o.secretAccessKey ? String(o.secretAccessKey) : undefined,
-    baseUrl: o.baseUrl ? String(o.baseUrl) : '',
+    baseUrl: normalizeBaseUrl(o.baseUrl),
     prefix: o.prefix ? String(o.prefix) : '',
     pathStyle: o.pathStyle === true ? true : undefined,
   };
@@ -180,7 +191,7 @@ export function objectPath(bucket: MediaBucket, key: string): string {
 export async function objectUrl(env: Env, bucket: MediaBucket, key: string): Promise<string> {
   const path = objectPath(bucket, key);
   if (/^https?:\/\//i.test(path)) return path;
-  const base = ((await getConfig(env, 'mediaPublicUrl')) ?? '').trim().replace(/\/+$/, '');
+  const base = normalizeBaseUrl(await getConfig(env, 'mediaPublicUrl'));
   return base ? `${base}${path}` : path;
 }
 

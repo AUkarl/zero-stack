@@ -28,6 +28,7 @@ import {
   pickProdUrl,
   probeUrl,
   run,
+  readConfigValue,
   readSavedApiBase,
   saveApiBase,
   saveCmsUrl,
@@ -194,13 +195,6 @@ function preparePublicBucket(a: Answers): PublicBucketPlan {
   return { name, hostname: bind.hostname, baseUrl: bind.ok && bind.hostname ? `https://${bind.hostname}` : '', bound: bind.ok, note: bind.detail };
 }
 
-/** 读 D1 里现成的那条配置（这里是 mediaBuckets），没有就空串 */
-function readRemoteConfig(key: string): string {
-  const raw = wranglerTry(`d1 execute ${D1_NAME} --remote --command "select value from site_config where key='${key}'" --json`, { cwd: API_DIR });
-  const parsed = raw ? parseJson<Array<{ results?: { value?: string }[] }>>(raw) : null;
-  return parsed?.[0]?.results?.[0]?.value ?? '';
-}
-
 /** 后台那两个默认桶：私有桶是这个 Worker 唯一确定可读的桶，公开桶负责直链 */
 const PRIVATE_BUCKET_ENTRY = { id: 'r2', label: '私有桶（走后台读取）', kind: 'r2', binding: 'R2', baseUrl: '' };
 const PUBLIC_BUCKET_ENTRY = (baseUrl: string): Record<string, unknown> => ({ id: 'public', label: '公开桶（直链）', kind: 'r2', binding: R2_PUBLIC_BINDING, baseUrl });
@@ -211,20 +205,30 @@ const PUBLIC_BUCKET_ENTRY = (baseUrl: string): Record<string, unknown> => ({ id:
  * 以前只登记公开桶、且域名没绑成就一条都不写：前者让默认桶从列表里消失
  * （配置一有值就不再兜底），后者让后台只看到一个桶 —— 站主要「要紧的放私有、
  * 不重要的放公开」，两个都得先出现在上传下拉里。
+ *
+ * @returns 没写成功时给出要手工补的那条，成功返回空数组
  */
-function seedPublicBucketConfig(pub: PublicBucketPlan): void {
-  const withPrivate = mergePublicBucketEntry(readRemoteConfig('mediaBuckets'), PRIVATE_BUCKET_ENTRY);
+function seedPublicBucketConfig(pub: PublicBucketPlan): string[] {
+  const existing = readConfigValue('mediaBuckets');
+  /** 读不到现有那份就绝不覆盖写：合并的前提是知道库里有什么，否则这一写会把站长自己加的 S3 桶抹掉 */
+  if (existing.error) {
+    warn(`读不到后台现有的存储桶清单：${existing.error}\n  为避免覆盖你自己加的桶，这一步先不写；到后台「媒体库 → 存储桶」手工加下面两条：\n  ${JSON.stringify([PRIVATE_BUCKET_ENTRY, PUBLIC_BUCKET_ENTRY(pub.baseUrl)])}`);
+    return ['存储桶清单 mediaBuckets（后台「媒体库 → 存储桶」）'];
+  }
+  const withPrivate = mergePublicBucketEntry(existing.value, PRIVATE_BUCKET_ENTRY);
   const merged = mergePublicBucketEntry(withPrivate.json, PUBLIC_BUCKET_ENTRY(pub.baseUrl));
   if (!merged.changed) {
     good('后台「媒体库 → 存储桶」里私有桶与公开桶都在，不重复写');
-    return;
+    return [];
   }
-  if (upsertConfigValue(D1_NAME, 'mediaBuckets', merged.json, 'json')) {
+  const r = upsertConfigValue('mediaBuckets', merged.json, 'json');
+  if (r.ok) {
     if (pub.baseUrl) good(`两个桶都已登记进后台，上传时可选：私有桶走 Worker 读取，公开桶 ${pub.baseUrl} 是直链`);
     else good('两个桶都已登记进后台，上传时可选；公开桶还没有可用的直链域名，它的图片先走 Worker 读取，绑好域名后在该桶填「直链前缀」即可');
-  } else {
-    warn(`桶建好了，但没能自动写进 D1。在后台「媒体库 → 存储桶」手工加这两条：\n  ${merged.json}`);
+    return [];
   }
+  warn(`桶建好了，但没能写进 D1：${r.detail}\n  在后台「媒体库 → 存储桶」手工加这两条：\n  ${merged.json}`);
+  return ['存储桶清单 mediaBuckets（后台「媒体库 → 存储桶」）'];
 }
 
 /**
@@ -233,8 +237,10 @@ function seedPublicBucketConfig(pub: PublicBucketPlan): void {
  * 以前 SITE_URL / SITE_NAME 只进 wrangler vars、SMTP 只存了密码，于是后台「设置」里
  * 那些框还是空的，汇总又让站主去填第二遍 —— 而 vars 那份后台根本看不见，
  * 站主改在后台的值也不会回头影响 vars。写进库里才是后台显示与修改的那一份。
+ *
+ * @returns written 已写进库的项；failed 没写进去的项（连同要填的值，汇总里要让站主补）
  */
-function seedSiteConfig(a: Answers): string[] {
+function seedSiteConfig(a: Answers): { written: string[]; failed: string[] } {
   const user = (a.smtpUser ?? '').trim();
   const want: [string, string][] = [
     ['siteName', (a.siteName ?? '').trim()],
@@ -248,12 +254,19 @@ function seedSiteConfig(a: Answers): string[] {
   if (a.emailProvider === 'cloudflare') want.push(['cloudflareAccountId', (a.cfAccountId ?? '').trim()]);
 
   const written: string[] = [];
+  const failed: string[] = [];
   for (const [key, value] of want) {
     if (!value) continue;
-    if (upsertConfigValue(D1_NAME, key, value, 'string')) written.push(key);
-    else warn(`「${key}」没能自动写进 D1（值：${value}），到后台「设置」里补一下`);
+    const r = upsertConfigValue(key, value, 'string');
+    if (r.ok) {
+      written.push(key);
+      continue;
+    }
+    /** 报错原文要打出来：以前只说「没能写进」，站主重跑三轮都查不出是命令本身在报错 */
+    warn(`「${key}」没能写进 D1：${r.detail}`);
+    failed.push(`${key} = ${value}`);
   }
-  return written;
+  return { written, failed };
 }
 
 /** 向导拿不到、必须站主自己去后台补的东西；空数组就意味着配置已经齐了 */
@@ -553,7 +566,7 @@ const QUESTIONS: PromptObject[] = [
 
 assertShortMessages(QUESTIONS);
 
-async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string, seeded: string[], pub: PublicBucketPlan): Promise<void> {
+async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | null, apiUrlNote: string, written: string[], failed: string[], pub: PublicBucketPlan): Promise<void> {
   console.log('\n\x1b[32m✅ 部署完成\x1b[0m\n');
   /** 站主填的自定义域名要探一次才算数：控制台没绑、DNS 没生效时浏览器是 530，
       而按输出直接打印出来看着就像已经可用了（后台与前台都会连不上，很难往这上面想）。 */
@@ -573,9 +586,13 @@ async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | nul
   console.log(`  1. 打开后台：库里还没有账号时，登录页会自己变成「建为站长并登录」表单，填邮箱 + 两遍密码即可（第一个账号自动是 admin，跳过邮箱验证）${apiUrl ? '（API 地址已内置在产物里）' : '（先在登录页填 API 地址）'}`);
   const missing = stillMissing(a);
   console.log('  2. 站点与发信配置：向导问过的那些已经写进数据库，打开后台「设置」核对就行（要改也在那里改）');
-  if (seeded.length) console.log(`     已写好：${seeded.join('、')}`);
+  if (written.length) console.log(`     已写好并回读确认：${written.join('、')}`);
   if (a.emailProvider === 'smtp') console.log(`     （SMTP：${a.smtpHost ?? '待填'}:${a.smtpPort ?? '待填'}，账号 ${a.smtpUser ?? '待填'}；发件人默认取这个账号，密码已存为 secret）`);
-  console.log(missing.length ? `     还需要你补：${missing.join('；')}` : '     没有需要额外补的项');
+  /** 写不进去就得点名到项并给出值：以前只报「没能自动写进 D1」就过去了，汇总照旧说「没有需要额外补的项」，
+      站主只能看到后台一片空框，查不到是命令本身在报错。 */
+  if (failed.length) console.log(`     \x1b[33m✗ 这几项没能写进库，请在后台「设置」里按这个值补：${failed.join('；')}\x1b[0m`);
+  if (missing.length) console.log(`     还需要你补：${missing.join('；')}`);
+  else if (!failed.length) console.log('     没有需要额外补的项');
   console.log(`  3. pnpm create:site 生成私密内容仓库，然后在「设置 → 内容仓库」填 owner / repo / token`);
   console.log(`  4. 主题侧 hugo.toml 设置 params.apiBaseURL = ${apiUrl ?? 'https://<worker>.workers.dev'}（前台与后台都走这一个地址，CORS 已放行 ${a.siteUrl}）`);
   console.log('  5. 迁移旧评论：pnpm migrate:waline（详见 docs/DEPLOYMENT.md）');
@@ -642,14 +659,14 @@ async function main(): Promise<void> {
   good('D1 表结构已同步');
 
   step('登记公开桶');
-  seedPublicBucketConfig(pub);
+  const bucketFailed = seedPublicBucketConfig(pub);
   if (pub.hostname && !pub.bound) {
     warn(`最后一步还没完：把 ${pub.hostname} 绑到 ${pub.name} 并验证 DNS（控制台 R2 → ${pub.name} → 设置 → 自定义域名），\n      绑好后域名才真的能取图`);
   }
 
   step('写入站点与发信配置');
   const seeded = seedSiteConfig(a);
-  if (seeded.length) good(`已写进 site_config，后台「设置」直接显示这些值：${seeded.join('、')}`);
+  if (seeded.written.length) good(`已写进 site_config，后台「设置」直接显示这些值：${seeded.written.join('、')}`);
 
   const workerUrl = deployWorker();
   /** 密钥必须排在 worker 部署之后：首次运行时 worker 还不存在，先写就全以 Worker not found 失败 */
@@ -660,7 +677,7 @@ async function main(): Promise<void> {
   /** 绑了自定义域名就用它编进后台产物：*.workers.dev 在很多网络根本连不通 */
   const finalApiUrl = apiUrl || workerUrl;
   const pagesUrl = deployCms(finalApiUrl);
-  await summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）', seeded, pub);
+  await summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）', seeded.written, [...seeded.failed, ...bucketFailed], pub);
 }
 
 main().catch((e: unknown) => {

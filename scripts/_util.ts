@@ -296,26 +296,68 @@ export function mergePublicBucketEntry(
 }
 
 /**
+ * wrangler 的报错原文：带 ANSI、前面还夹着整条命令行回显与 WARNING 行，
+ * 直接打进向导输出里没法读。去掉颜色，优先留 X [ERROR] 那几行。
+ */
+function errText(e: unknown): string {
+  const msg = (e instanceof Error ? e.message : String(e)).replace(/\x1b\[[0-9;]*m/g, '');
+  const lines = msg.split('\n').map((l) => l.trim()).filter(Boolean);
+  const at = lines.findIndex((l) => /^X \[ERROR\]/.test(l));
+  const kept = at >= 0 ? lines.slice(at, at + 3) : lines.filter((l) => !/^".*wrangler/.test(l)).slice(0, 4);
+  return kept.join(' / ') || msg.slice(0, 200);
+}
+
+export interface ConfigDeps {
+  dbName?: string;
+  cwd?: string;
+  /** 默认走本地 wrangler（失败时 throw，消息里带 wrangler 的原文）；测试可注入假的执行器 */
+  wr?: (args: string, opts: RunOptions) => string;
+}
+
+/** 读 site_config 里的一条：库里没这条时 value 是空串，命令本身失败才带 error */
+export function readConfigValue(key: string, deps: ConfigDeps = {}): { value: string; error: string } {
+  const { dbName = D1_NAME, cwd = API_DIR, wr = wrangler } = deps;
+  try {
+    const raw = wr(`d1 execute ${dbName} --remote --json --command "select value from site_config where key='${key}'"`, { cwd, capture: true });
+    const rows = parseJson<Array<{ results?: { value?: string }[] }>>(raw);
+    return { value: rows?.[0]?.results?.[0]?.value ?? '', error: '' };
+  } catch (e) {
+    return { value: '', error: errText(e) };
+  }
+}
+
+/**
  * 写进 D1 的 site_config。走 --file 而不是 --command：JSON 里全是双引号，
  * 拼在命令行上要穿过 cmd.exe 这一层，转义出错的报错长得很像「SQL 语法错误」，很难查。
+ *
+ * 两个必须避开的坑：
+ * - 文件里绝不能包 begin;/commit;：远端执行本来就把整个文件当一次事务提交，再撞上一个
+ *   begin 直接回 `{"D1_RESET_DO":true}`，于是每条配置都写不进去；
+ * - 读写都用同一个 cwd（packages/api，那里有 wrangler.jsonc 的真 database_id）：
+ *   换了库名相同的另一条库，命令会照跑不误、后台却永远看不到变化。
+ *
+ * 写完回读比对，确认库里真是这个值才算成功。
  */
-export function upsertConfigValue(
-  dbName: string,
-  key: string,
-  value: string,
-  valueType: string,
-  runCmd: (args: string) => string | null = wranglerTry,
-): boolean {
-  const file = resolve(tmpdir(), `zero-media-buckets-${process.pid}.sql`);
-  const sqlText = [
-    'begin;',
-    `insert into site_config (key, value, value_type, updated_at) values ('${key}', '${value.replace(/'/g, "''")}', '${valueType}', strftime('%s','now'))`,
-    `on conflict (key) do update set value = '${value.replace(/'/g, "''")}', value_type = '${valueType}', updated_at = strftime('%s','now');`,
-    'commit;',
-  ].join('\n');
+export function upsertConfigValue(key: string, value: string, valueType: string, deps: ConfigDeps = {}): { ok: boolean; detail: string } {
+  const { dbName = D1_NAME, cwd = API_DIR, wr = wrangler } = deps;
+  const file = resolve(tmpdir(), `zero-site-config-${key.replace(/[^A-Za-z0-9_.-]/g, '_')}-${process.pid}.sql`);
+  const q = (s: string) => s.replace(/'/g, "''");
+  const sql =
+    `insert into site_config (key, value, value_type, updated_at) values ('${q(key)}', '${q(value)}', '${q(valueType)}', strftime('%s','now'))` +
+    ` on conflict (key) do update set value = excluded.value, value_type = excluded.value_type, updated_at = excluded.updated_at;\n`;
   try {
-    writeFileSync(file, sqlText, 'utf-8');
-    return runCmd(`d1 execute ${dbName} --remote --file ${quote(file)}`) !== null;
+    writeFileSync(file, sql, 'utf-8');
+    try {
+      /** 一定要 capture：stdio 走 inherit 时 stdout 是空的，失败就只剩「退出码 1」，
+          报错原文（D1 那句拒绝事务的话）永远打不出来 */
+      wr(`d1 execute ${dbName} --remote --file ${quote(file)}`, { cwd, capture: true });
+    } catch (e) {
+      return { ok: false, detail: errText(e) };
+    }
+    const back = readConfigValue(key, deps);
+    if (back.error) return { ok: false, detail: `写完没能回读确认：${back.error}` };
+    if (back.value !== value) return { ok: false, detail: `库里的值是「${back.value}」，不是要写的「${value}」` };
+    return { ok: true, detail: '' };
   } finally {
     try {
       rmSync(file, { force: true });
