@@ -327,6 +327,112 @@ const SECTIONS: [string, string][] = [
   ['account', '账号'],
 ];
 
+/**
+ * 主题自动跟进工作流。
+ *
+ * 两件事各自解决一半：
+ * - 子模块记的是**固定提交号**，主题仓库推了新提交，本仓库指针不动就没有 push，
+ *   Pages 与 Actions 都不会重新构建 —— 这条 workflow 每天把指针推到最新并提一次交，
+ *   那次推送本身就是重建的触发器；
+ * - Pages 直连 Git 的构建**不会拉子模块**（Cloudflare 的行为），所以构建命令里要自己把主题取下来，
+ *   见 pagesBuildCommand()。取的是主题默认分支的最新提交，所以任何一次重建都跟着最新主题走。
+ *
+ * 试构建这一道闸门保的是「本地构建 + 用 Actions 部署的那条路」：主题写坏了就不提交指针。
+ */
+function updateThemeWorkflow(a: Answers): string {
+  return `# ============================================================
+# 主题有新提交时自动跟上：每天检查一次，先把指针推到最新再提交
+# ------------------------------------------------------------
+# 为什么需要这条：子模块记的是固定提交号，主题仓库推了新提交，本仓库
+# 指针不动就没有 push —— Pages 与 Actions 都不可能被触发。
+# 流程：取主题默认分支最新提交 → 与仓库里记录的指针比 → 不一样就先本地
+# 构建一次（构建不过就不提交，免得主题写坏把站点带崩）→ 通过才提交指针并推送，
+# 这次推送又触发 Pages 的正常构建。
+#
+# 手动立刻跟一次：Actions → Update theme → Run workflow
+# 注意：仓库连续 60 天没有任何提交时 GitHub 会暂停定时任务，
+#       去 Actions 页面点一次 Enable workflow 即可恢复。
+# ============================================================
+
+name: Update theme
+
+on:
+  schedule:
+    # UTC 21:00 = 北京时间次日 05:00
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-theme
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出站点仓库及其子模块
+        uses: actions/checkout@v5
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: 主题有没有新提交
+        id: check
+        run: |
+          set -euo pipefail
+          git -C themes/zero fetch origin HEAD
+          current=$(git rev-parse HEAD:themes/zero)
+          latest=$(git -C themes/zero rev-parse FETCH_HEAD)
+          echo "本站记录的主题提交: \${current:0:8}"
+          echo "主题仓库最新:     \${latest:0:8}"
+          if [ "$current" = "$latest" ]; then
+            echo "已是最新，无需更新"
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            echo "new_sha=$(echo "$latest" | cut -c1-8)" >> "$GITHUB_OUTPUT"
+            git -C themes/zero checkout "$latest"
+            echo "已把子模块切到 \${latest:0:8}，准备试构建"
+          fi
+
+      - name: 安装 Hugo
+        if: steps.check.outputs.up_to_date == 'false'
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: 'latest'
+          extended: true
+        # 想让试构建更贴近线上，把这里的版本与 Cloudflare Pages 里设的 Hugo 版本对齐
+
+      - name: 试构建（不过就不提交）
+        if: steps.check.outputs.up_to_date == 'false'
+        run: hugo --minify --destination "$RUNNER_TEMP/hugo-check"
+
+      - name: 提交并推送新的子模块指针
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          NEW_SHA: \${{ steps.check.outputs.new_sha }}
+        run: |
+          set -euo pipefail
+          git add themes/zero
+          git -c user.name="github-actions[bot]" \\
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \\
+              commit -m "chore: 主题子模块跟到 \${NEW_SHA:-最新提交}"
+          git push origin "HEAD:refs/heads/main"
+          echo "已推送，Pages 会随这次提交重新构建"
+`;
+}
+
+/**
+ * Pages 直连 Git 的构建不拉子模块，构建命令得自己把主题取下来。
+ * 主题仓库是公开的，所以这条命令不需要任何凭据；取的是默认分支最新提交。
+ */
+function pagesBuildCommand(a: Answers): string {
+  return `rm -rf themes/zero && git clone --depth 1 ${a.themeRepo} themes/zero && hugo --minify`;
+}
+
 function sectionIndex(dir: string, title: string): string {
   return `---\ntitle: "${title}"\ntype: "${dir}"\nlayout: "list"\n---\n`;
 }
@@ -486,6 +592,7 @@ node_modules/
 wrangler.toml
 `);
   write(rel('.github/workflows/deploy.yml'), deployWorkflow(a));
+  write(rel('.github/workflows/update-theme.yml'), updateThemeWorkflow(a));
   write(rel('README.md'), `# ${a.siteName}
 
 私密内容仓库：文章 Markdown + 站点配置。主题以 git submodule 形式位于 \`themes/zero\`。
@@ -493,6 +600,20 @@ wrangler.toml
 - 主题仓库：${a.themeRepo}
 - 后端地址：${a.apiBaseURL}
 - 部署：Cloudflare Pages（见 \`.github/workflows/deploy.yml\`）
+- 主题自动跟进：\`.github/workflows/update-theme.yml\`（每天检查主题新提交，试构建过了才提交指针）
+
+## Cloudflare Pages 的构建设置（直连 Git 时必须照抄这一条）
+
+Pages 自己 clone 仓库构建时**不会拉子模块**，\`themes/zero\` 会是空目录，产物就没有样式。
+控制台 → Pages → 本项目 → Settings → Builds → Configurations → Production build commands：
+
+\`\`\`bash
+Build command: ${pagesBuildCommand(a)}
+\`\`\`
+
+这样每次构建都直接取主题默认分支的最新提交（主题仓库是公开的，不需要凭据）。
+想固定在某一个主题版本，把 \`--depth 1\` 后面加上 \`-b <标签或分支>\`，或干脆钉住提交号：
+\`git -C themes/zero fetch --depth 1 ${a.themeRepo} <那个提交号> && git -C themes/zero checkout FETCH_HEAD\`。
 
 ## 需要的 GitHub Secrets
 
@@ -642,6 +763,8 @@ hugo server -D
   todo('给 Actions 两个 secret：仓库 Settings → Secrets and variables → Actions → New repository secret');
   note('CF_API_TOKEN（要有 Pages 编辑权限的 API Token）、CF_ACCOUNT_ID（Cloudflare 控制台首页右侧那串）');
   todo(`推 main 会触发首次构建；Pages 项目 ${a.repoName} 由 workflow 自动创建，自定义域名到 Cloudflare Pages → 该项目 → Custom domains 里绑`);
+  note('⚠ Pages 若是「直连 Git 构建」，一定要把 Build command 换成下面这条 —— Pages 不拉子模块，照默认 hugo 构建出来的页面没有样式：');
+  note(pagesBuildCommand(a));
   note(`本机先看一眼效果：cd ${siteDir} && git submodule update --init --recursive && hugo server -D`);
   todo('让后台写得进这座仓库');
   note(`· zero-stack 的 packages/api/wrangler.jsonc 里 ALLOWED_ORIGINS 加上 ${a.siteUrl}，然后 pnpm deploy:api（不加就是后台一请求就被 CORS 拒掉）`);

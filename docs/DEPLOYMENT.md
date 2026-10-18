@@ -346,6 +346,36 @@ setx GOPRIVATE "github.com/AUkarl/*"
 
 > `pnpm create:site` 生成的是扁平布局，所以向导跑完后要把「文章目录 / 时刻目录」改成 `content/posts`、`content/moments`。
 
+### 6.3 主题更新怎么自动进站点（两层，缺一层就"改了没反应"）
+
+**第一层：Pages 直连 Git 的构建不拉子模块。** `themes/zero` 在 Pages 的构建目录里是空目录，
+产物就没有样式（本地看着一切正常，线上像没装主题）。修法是把 Pages 的构建命令改成自己取主题 ——
+控制台 → Pages → 该项目 → Settings → Builds → Configurations → **Build command**：
+
+```bash
+rm -rf themes/zero && git clone --depth 1 https://github.com/<你>/zero-theme.git themes/zero && hugo --minify
+```
+
+主题仓库是公开的，这条命令不需要任何凭据。它取的是主题默认分支的**最新提交**，
+所以任何一次重建都跟着最新主题；想钉在某个版本（可复现、可回滚）就改成
+
+```bash
+git clone https://github.com/<你>/zero-theme.git themes/zero && git -C themes/zero checkout <提交号> && hugo --minify
+```
+
+**第二层：主题推了新提交，站点仓库没有任何事件。** 子模块记的是固定提交号，
+指针不动就没有 push，Pages 与 Actions 都不会重建 —— 这就是"我主题改了，站点得手动重部一次"的来源。
+`create:site` 会同时生成 `.github/workflows/update-theme.yml` 补上这一层：每天取主题默认分支最新提交，
+与仓库记录的指针相比，不一样就**先本地构建一次**（构建不过就不提交，避免主题写坏把站点带崩），
+通过才提交新指针并推送 —— 那次推送本身就是 Pages 的重建触发器。
+也可以随时 Actions → Update theme → Run workflow 立刻跟一次。
+
+两条合起来的效果：主题一推，站点最迟第二天自动跟上并自动构建；期间你不用碰任何命令。
+仓库连续 60 天没有提交时 GitHub 会暂停定时任务，去 Actions 页面点一次 Enable 就恢复。
+
+> 如果站点走的是「Actions 构建后上传产物」那条路（仓库里配了 `CF_API_TOKEN` / `CF_ACCOUNT_ID`），
+> 第一层不用管 —— `deploy.yml` 里已经写了 `submodules: recursive`，Actions 拉得到子模块。
+
 ---
 
 ## 7. 迁移旧评论数据
@@ -516,6 +546,7 @@ pnpm check   # 本地跑同一套校验
 | 后台「设置」点了「保存修改」什么也没发生，红字也不弹 | 已修：`<input type="number">` 绑进状态的是**数字**，保存前那句 `raw.trim()` 直接抛异常，而它跑在 `try` 外面 —— 不发请求、不报错，发信凭据（SMTP 授权码这类）永远存不进去。现在所有面板字段统一按字符串存。判断依据：保存后必须回显「已保存 N 项」，看不到这句就是没写进库 |
 | 后台里点文章 / 用户的链接，落到一个带后端错误模板的 404 | 那些链接指向**站点前台**，必须由配置键 `siteUrl`（「前端管理 → 基本信息」里的站点地址）拼成完整域名；`siteUrl` 为空时后台只显示纯文本、不给坏链接。后台也补了自己的 404 页，不会再露出后端的 `{error:404}` |
 | `/author/<标识>/` 打不开，文章页顶部的作者名点不动 | Hugo 不读主题里的 `[taxonomies]`：作者分类法必须在**站点**的 `hugo.toml` 声明（`[taxonomies] author = "author"`，`create:site` 生成的模板已带）。老站点补这一句后，在后台把文章重存一次即可 —— 保存时会自动补 `author:`（缺省取 `defaultAuthor`），front matter 里没这个键就不会生成作者页 |
+| 主题改了、也推上去了，站点却要手动重部一次才变；或者 Pages 构建出来的页面没有样式 | 两层各自独立：**Pages 直连 Git 的构建不拉子模块**，`themes/zero` 是空目录，所以构建命令得自己 clone 主题（见 6.3 那条命令）；**子模块记的是固定提交号**，主题仓库推新提交不会让站点仓库产生 push，于是没有任何事件去触发重建。`create:site` 现在会同时生成 `.github/workflows/update-theme.yml`（每天取主题最新提交 → 先试构建 → 通过才提交指针并推送，那次推送就是重建的触发器）。临时想立刻跟：在内容仓库跑 `git submodule update --remote themes/zero && git commit && git push` |
 | 装完主题觉得「跟没装一样」 | 主题自带**结构性**默认 `data/`（导航、首页布局、时刻页、SEO、工具清单、以及一份全空的 site.json），空站点也有导航和排版；站点自己的 `data/*.json` 按键覆盖主题默认、数组整份替换。带文字的占位（关于页、工坊、页脚版权与备案占位、作者表、示例友链）放在 `exampleSite/data/` —— 那是新建站点照抄的样板，不会跑到已有站点的页脚上去。另：站点没写 `data/nav.json` 却配了 `menus.*.toml` 时**菜单优先**，主题默认导航不抢别人的站 |
 | 后台「前端管理 → 主题配置文件」显示读取不到 | 站点通常没有自己的 `config/_default/params.toml`。这种情形现在会把主题那份全量注释模板载入编辑器，改完保存就在你站点里建出这份文件；`create:site` 也会预先复制好一份 |
 | 用 `pnpm create:site` 生成的站点部署完像纯静态：评论、点赞、订阅、时刻全不出现 | 已修：生成器把 `apiBaseURL` 写进根 `hugo.toml` 的 `[params]`，同时又把主题那份全量注释版复制成站点的 `config/_default/params.toml` —— 而 Hugo 合并两处时**以 `config/_default/params.toml` 为准**（同名键实测取那份的值），那份里 `apiBaseURL = ""`，于是后端地址被空值静默盖掉，主题按「无后端」渲染成纯静态。现在站点只留一份参数：`hugo.toml` 里不再写 `[params]`，后端地址与默认署名直接写进 `config/_default/params.toml`；子模块还没拉下来时先生成只含这两个键的最小版本并提示怎么换成全量模板。自查一条命令：`grep -rl '你的worker域名' public \| wc -l`，为 0 就是被盖掉了 |
