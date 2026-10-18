@@ -62,7 +62,8 @@
   const replyToName = $derived(String(node.replyToName || '').trim());
   const isReply = $derived(Boolean(node.parentId));
   const info = $derived(showMeta ? infoLine(node, lang) : '');
-  const pending = $derived(node.status === 'pending');
+  /** 只有作者本人（或带 ownerKey 的访客）能看见未通过的条目，所以这里两种状态都要给角标 */
+  const held = $derived(node.status === 'pending' || node.status === 'spam');
   const edited = $derived(Boolean(node.editedAt));
   const likeCount = $derived(Number(node.likeCount ?? 0));
 
@@ -88,7 +89,7 @@
   }
 </script>
 
-<article class="node" class:is-pending={pending} class:is-reply={isReply}>
+<article class="node" class:is-pending={held} class:is-reply={isReply}>
   <div class="avatar-col">
     {#if linkHref}
       <a href={linkHref} target="_blank" rel="nofollow ugc noopener" title={node.authorLink ?? ''}>
@@ -122,7 +123,7 @@
 
       {#if groupLabel}<span class="group">{groupLabel}</span>{/if}
       {#if isReply && replyToName}<span class="reply-to">{t('replyTo', { name: replyToName })}</span>{/if}
-      {#if pending}<span class="pending">{t('pending')}</span>{/if}
+      {#if held}<span class="pending">{t(node.status === 'spam' ? 'spamHeld' : 'pending')}</span>{/if}
       {#if edited}
         <span class="edited" title={node.editedAt ? new Date(node.editedAt * 1000).toLocaleString() : ''}>
           {t('edited')}

@@ -3,6 +3,9 @@ packages:
 
 # pnpm 默认屏蔽依赖的 postinstall 脚本：
 # esbuild（tsx / vite 需要其二进制）与 workerd（wrangler 本地运行需要）必须放行。
+# allowBuilds 这份写法按 pnpm 11 验证（与根 package.json engines、CI 钉的版本同一个口径）；
+# pnpm 10 那一代认的是 onlyBuiltDependencies 数组，装了旧版时这个键会被当成不认识的配置忽略，
+# 表现是 esbuild / workerd 的脚本被默认拦掉，之后用到 tsx、wrangler 才报错。
 allowBuilds:
   esbuild: true
   workerd: true

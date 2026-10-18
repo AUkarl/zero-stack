@@ -60,7 +60,8 @@ const ZH: Dict = {
   editPlaceholder: '修改评论内容…',
 
   pending: '审核中',
-  myPending: '我的待审核评论',
+  spamHeld: '未通过审核',
+  myPending: '我的待审核与未通过评论',
   anonymous: '匿名',
   /** 身份只用文字标签表达：昵称后面直接跟「站长 / 共创 / 朋友」，不带「用户组：」这种前缀 */
   groupAdmin: '站长',
@@ -133,7 +134,8 @@ const EN: Dict = {
   editPlaceholder: 'Edit your comment…',
 
   pending: 'Pending',
-  myPending: 'My pending comments',
+  spamHeld: 'Not approved',
+  myPending: 'My pending & rejected comments',
   anonymous: 'Guest',
   groupAdmin: 'Admin',
   groupCoauthor: 'Co-author',

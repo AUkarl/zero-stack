@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { deleteRepoFile, readRepoFile, repoBackend, writeRepoFile } from '../services/repo';
 import { getConfig, setConfig } from '../services/config';
 import { requireAdmin } from '../middleware/auth';
-import { triggerPagesBuild } from '../services/git';
+import { buildReceipt, triggerPagesBuild } from '../services/git';
 import { clientIp } from '../lib/http';
 import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
@@ -225,6 +225,33 @@ const SECTIONS = {
 
 type SectionKey = keyof typeof SECTIONS;
 
+/** schema 登记过的键（其余键属于「本站自己加的」，出盘时必须原样留着） */
+function knownKeys(schema: (typeof SECTIONS)[SectionKey]['schema']): Set<string> {
+  const shape = (schema as unknown as { shape?: Record<string, unknown> }).shape;
+  return new Set(Object.keys(shape ?? {}));
+}
+
+/**
+ * data/seo.json 的键名归一：主题 exampleSite 早年那份带的是驼峰（defaultDescription…），
+ * 而这里的 schema 与主题的模板只认下划线。不归一的话后台一打开就是二十几个默认值，
+ * 站主随手点一次保存，把他填过的描述、关键词、OG 图、站长 logo 全抹成空。
+ *
+ * 两种拼法同时出现时以下划线那份为准（它是现在的规范写法）。
+ * 只用在 seo 这一段：site.json 的 defaultAuthor、footer.json 的 socialRow1 本来就是驼峰，
+ * 那些段的键名是另一套口径，不能一起转。
+ */
+function normalizeSeoKeys(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const entries = Object.entries(input as Record<string, unknown>);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of entries) if (!/[A-Z]/.test(k)) out[k] = v;
+  for (const [k, v] of entries) {
+    const to = k.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+    if (!(to in out)) out[to] = v;
+  }
+  return out;
+}
+
 async function dataDir(env: Env): Promise<string> {
   const dir = (await getConfig(env, 'githubDataDir')) || 'data';
   return dir.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -233,23 +260,44 @@ async function dataDir(env: Env): Promise<string> {
 const dataPath = (dir: string, file: string) => `${dir}/${file}`;
 
 /** 读一个 data 文件；不存在返回 null（主题走 params 回落），解析失败给提示 */
-async function readSection(env: Env, dir: string, key: SectionKey): Promise<{ value: unknown; notice: string } | null> {
+async function readSection(
+  env: Env,
+  dir: string,
+  key: SectionKey,
+): Promise<{ value: unknown; extras: Record<string, unknown>; notice: string } | null> {
   let file: Awaited<ReturnType<typeof readRepoFile>> = null;
   try {
     file = await readRepoFile(env, dataPath(dir, SECTIONS[key].file));
   } catch (e) {
     // 读失败和「文件不存在」是两回事：前者要让前台知道自己在看的是回落后 params 的旧值
-    return { value: null, notice: `${SECTIONS[key].label}：读 ${dataPath(dir, SECTIONS[key].file)} 失败（${e instanceof Error ? e.message : String(e)}），本页显示为空，保存会覆盖该文件。` };
+    return { value: null, extras: {}, notice: `${SECTIONS[key].label}：读 ${dataPath(dir, SECTIONS[key].file)} 失败（${e instanceof Error ? e.message : String(e)}），本页显示为空，保存会覆盖该文件。` };
   }
   if (!file || file.content.trim() === '') return null;
+  let raw: unknown;
   try {
-    return { value: SECTIONS[key].schema.parse(JSON.parse(file.content)), notice: '' };
+    raw = JSON.parse(file.content);
   } catch (e) {
     return {
       value: null,
+      extras: {},
       notice: `${SECTIONS[key].label}：${dataPath(dir, SECTIONS[key].file)} 解析失败（${e instanceof Error ? e.message : '格式错误'}），保存会以新内容覆盖。`,
     };
   }
+  const input = key === 'seo' ? normalizeSeoKeys(raw) : raw;
+  const res = SECTIONS[key].schema.safeParse(input);
+  if (!res.success) {
+    return {
+      value: null,
+      extras: {},
+      notice: `${SECTIONS[key].label}：${dataPath(dir, SECTIONS[key].file)} 解析失败（${res.error.issues[0]?.message ?? '格式错误'}），保存会以新内容覆盖。`,
+    };
+  }
+  const known = knownKeys(SECTIONS[key].schema);
+  const extras = Object.fromEntries(Object.entries(input as Record<string, unknown>).filter(([k]) => !known.has(k)));
+  const notice = Object.keys(extras).length
+    ? `${SECTIONS[key].label}：这份文件里有 ${Object.keys(extras).length} 个面板没登记的键（${Object.keys(extras).slice(0, 5).join('、')}），面板上不显示，但保存会原样留着`
+    : '';
+  return { value: res.data, extras, notice };
 }
 
 /**
@@ -285,7 +333,7 @@ export async function setSiteDefaultAuthor(env: Env, handle: string): Promise<{ 
     path,
     JSON.stringify({ ...merged, defaultAuthor: handle }, null, 2) + '\n',
     `zero-cms: 默认作者标识 ${handle}`,
-    { action: 'config' },
+    { action: 'params' },
   );
   return { ok: res.success, detail: res.success ? path : res.error ?? '写入失败' };
 }
@@ -314,7 +362,7 @@ export async function setOwnerProfile(
   const existing = await readRepoFile(env, path).catch(() => null);
   const next = JSON.stringify({ name: profile.name, avatar: profile.avatar }, null, 2) + '\n';
   if (existing?.content.trim() === next.trim()) return { ok: true, changed: false, detail: `${path} 本来就是这份内容` };
-  const res = await writeRepoFile(env, path, next, 'zero-cms: 同步站长账号资料到关于页', { action: 'config' });
+  const res = await writeRepoFile(env, path, next, 'zero-cms: 同步站长账号资料到关于页', { action: 'params' });
   return { ok: res.success, changed: res.success, detail: res.success ? path : res.error ?? '写入失败' };
 }
 
@@ -354,6 +402,7 @@ app.post('/', async (c) => {
   }
 
   // 先整体校验，任何一段不合法都不落盘，免得存一半
+  const dir = await dataDir(c.env);
   const pending: { key: SectionKey; content: string }[] = [];
   for (const key of Object.keys(SECTIONS) as SectionKey[]) {
     const raw = parsed.data[key];
@@ -362,28 +411,30 @@ app.post('/', async (c) => {
       pending.push({ key, content: '' });
       continue;
     }
-    const res = SECTIONS[key].schema.safeParse(raw);
+    const res = SECTIONS[key].schema.safeParse(key === 'seo' ? normalizeSeoKeys(raw) : raw);
     if (!res.success) fail(400, `${SECTIONS[key].label}保存失败：${res.error.issues[0]?.message ?? '字段不合法'}`);
-    let value = res.data as Record<string, unknown>;
+    const prev = await readSection(c.env, dir, key);
+    /* 出盘不能用「过完 schema 的对象」这一份：schema 只登记面板上那些键，
+       本站自己往 data/*.json 里加的键会被 z.object 整条抹掉。所以先把不认识的键垫在下面，
+       再用校验过的值盖上去。同一文件里 site / footer 还要带现值，也顺手复用这一次读取。 */
+    let value = { ...(prev?.extras ?? {}), ...(res.data as Record<string, unknown>) };
     if (key === 'site' && !String(value.defaultAuthor ?? '').trim()) {
       // 基本信息页没有这个输入框：保存时带回仓库里的现值，别把它抹成空串
-      const prev = await readSection(c.env, await dataDir(c.env), 'site');
       const old = (prev?.value as { defaultAuthor?: string } | undefined)?.defaultAuthor ?? '';
       if (old) value = { ...value, defaultAuthor: old };
     }
     if (key === 'footer') {
       /** 这三组键是可选的：面板没送（旧版面板、或别的页面整段保存）时
           必须把仓库里的现值带回去，否则一次保存就把服务图标与社交链接整段抹掉。 */
-      const prev = (await readSection(c.env, await dataDir(c.env), 'footer'))?.value as Record<string, unknown> | undefined;
+      const before = prev?.value as Record<string, unknown> | undefined;
       for (const k of ['services', 'socialRow1', 'socialRow2'] as const) {
-        if (value[k] === undefined && Array.isArray(prev?.[k])) value = { ...value, [k]: prev[k] };
+        if (value[k] === undefined && Array.isArray(before?.[k])) value = { ...value, [k]: before[k] };
       }
     }
     pending.push({ key, content: JSON.stringify(value, null, 2) + '\n' });
   }
   if (!pending.length) fail(400, '没有要保存的内容');
 
-  const dir = await dataDir(c.env);
   const written: string[] = [];
   const failed: string[] = [];
   const message = `zero-cms: 更新前端设置（${pending.map((p) => SECTIONS[p.key].label).join('、')}）`;
@@ -391,12 +442,12 @@ app.post('/', async (c) => {
     const path = dataPath(dir, SECTIONS[item.key].file);
     // 空内容 = 删除该段，主题回到 params.toml 的默认值
     if (item.content === '') {
-      const res = await deleteRepoFile(c.env, path, message, { actor: admin, ip: clientIp(c), action: 'config' }).catch(() => null);
+      const res = await deleteRepoFile(c.env, path, message, { actor: admin, ip: clientIp(c), action: 'params' }).catch(() => null);
       if (res?.success) written.push(path);
       else failed.push(SECTIONS[item.key].label);
       continue;
     }
-    const res = await writeRepoFile(c.env, path, item.content, message, { actor: admin, ip: clientIp(c), action: 'config' });
+    const res = await writeRepoFile(c.env, path, item.content, message, { actor: admin, ip: clientIp(c), action: 'params' });
     if (res.success) written.push(path);
     else failed.push(`${SECTIONS[item.key].label}：${res.error ?? '写入失败'}`);
   }
@@ -421,7 +472,7 @@ app.post('/', async (c) => {
     written,
     notice: failed.length ? `部分未保存：${failed.join('；')}` : null,
     build,
-    message: written.length ? `已保存 ${written.length} 个文件${build?.triggered ? '，已触发站点构建' : ''}` : '未保存任何文件',
+    message: written.length ? buildReceipt(build, `已保存 ${written.length} 个文件`) : '未保存任何文件',
   });
 });
 

@@ -27,7 +27,6 @@
     path: string;
     sha: string;
     bytes: number;
-    message?: string;
     build?: { triggered?: boolean; error?: string } | null;
   }
 
@@ -158,7 +157,6 @@
         triggerBuild,
       });
       const r = d.data;
-      const msg = r.message || '已写入仓库';
       let build: string | null = null;
       if (r.build?.triggered) build = '已请求 Cloudflare Pages 重新构建，前台几分钟内更新。';
       else if (r.build && r.build.triggered === false) build = buildNote(r.build.error);
@@ -166,7 +164,8 @@
       // 回读而不是直接用 PUT 返回的 sha：本地仓库后端提交后回的是 local:<时间戳> 这类临时值，
       // 只有再读一次拿到的才是下次乐观锁能比对上的 sha
       await readFile(path);
-      notice = msg;
+      // 绿字只说「写进去了」这一件事，构建到底有没有点起来归下面那行灰字，两者不重复也不打架
+      notice = `已写入仓库 ${r.path}（${r.bytes} 字节）`;
       note = build;
     } catch (e) {
       const m = errText(e);

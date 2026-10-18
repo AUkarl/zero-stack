@@ -72,6 +72,17 @@ export function purgeNote(p: PurgeOut | null | undefined): string {
   return `；边缘缓存没清掉（${p.detail}），在 Cloudflare 控制台「缓存 → 清除缓存 → 自定义缓存清除」里粘贴这行地址：${p.urls.join('  ')}`;
 }
 
+/**
+ * 审核结果那封信的回执：已交给中继 / 只排进队列 / 失败，三种说法必须分开。
+ * 以前只有一句「已发送邮件通知」，队列还没投、甚至已经 failed，界面照样报成功。
+ */
+export function mailNote(data: { state?: 'sent' | 'queued' | 'failed'; notifyError?: string | null } | null | undefined): string {
+  if (!data || !data.state) return '';
+  if (data.state === 'sent') return ' · 通知信已交给发信中继';
+  if (data.state === 'queued') return ' · 通知信已排进发送队列，稍后投出（后台「订阅」页下方的邮件日志能核对结果）';
+  return ` · 通知信没发出去${data.notifyError ? `：${data.notifyError}` : ''}`;
+}
+
 /** 站点绝对地址：后台显示的站内路径要点开就是真页面，没配 siteUrl 时返回空串（调用方降级成纯文本） */
 export function siteOf(site: string | null | undefined, path: string): string {
   const base = (site ?? '').replace(/\/+$/, '');

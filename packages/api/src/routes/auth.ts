@@ -3,11 +3,12 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { createDb } from '../db/client';
-import { users } from '../db/schema';
+import { users, verifications } from '../db/schema';
 import { clearSessionCookie, requireUser, sessionCookie, tokenFromRequest, type Ctx } from '../middleware/auth';
 import {
   createUser,
   destroySession,
+  destroyUserSessions,
   findUserByEmail,
   isFirstUser,
   issueSession,
@@ -31,7 +32,7 @@ import {
 import { fail, ok } from '../lib/errors';
 import { clientIp, userAgent } from '../lib/http';
 import { rateLimit } from '../lib/rate-limit';
-import { verifyPassword } from '../lib/crypto';
+import { hashPassword, verifyPassword } from '../lib/crypto';
 import type { AppEnv } from '../lib/app';
 
 const OTP_TTL = 600;
@@ -137,6 +138,9 @@ app.post('/register', async (c) => {
   const { email, password, name } = parsed.data;
   const inviteInput = normalizeCode(parsed.data.invite ?? '');
 
+  /* 两层桶：邮箱那条防「盯着一个邮箱刷」，IP 这条防「脚本换邮箱连着提」——
+     只有邮箱桶时，同一个出口 IP 换邮箱注册没有总量上限（实测 7 个邮箱全过）。 */
+  await rateLimit(c, 'register-ip', 10, 3600);
   await rateLimit(c, 'register', 5, 3600, email);
   if (await findUserByEmail(env, email)) fail(409, '该邮箱已注册');
 
@@ -217,6 +221,8 @@ app.post('/send-code', async (c) => {
   if (!parsed.success) fail(400, '邮箱格式有误');
   const { email, scene } = parsed.data;
 
+  /* 与注册同一套两层桶：只有邮箱桶时，换一个邮箱就是新的一格，同一个 IP 可以无限发信。 */
+  await rateLimit(c, 'send-code-ip', 10, 3600);
   await rateLimit(c, 'send-code', 5, 3600, email);
   const user = await findUserByEmail(env, email);
   if (scene === 'register') {
@@ -224,7 +230,9 @@ app.post('/send-code', async (c) => {
     // 首个账号不需要邮箱验证，其余场景一律受注册开关约束
     if (!(await isFirstUser(env)) && !(await registerPolicy(env)).allowRegister) fail(403, '站点当前关闭了注册');
   } else if (!user) {
-    fail(404, '该邮箱尚未注册');
+    /* 回 404「该邮箱尚未注册」等于把这份名单挂在公网上让人批量验证哪个邮箱开过号。
+       这里与「发信成功」回同一份结构：码不落库、不发信，外面看不出区别。 */
+    return ok({ sent: true, ttl: OTP_TTL });
   }
 
   const otp = await sendEmailOtp(env, email, user?.id ?? null);
@@ -235,7 +243,67 @@ app.post('/send-code', async (c) => {
   return ok({ sent: true, ttl: OTP_TTL });
 });
 
-/** 邮箱 + 验证码登录，同时完成邮箱验证 */
+/**
+ * POST /api/auth/reset-password {email, code, newPassword} —— 忘记密码的唯一出口。
+ *
+ * 为什么必须有这条：/api/account/password 要求先填当前密码，而 send-code 的 reset 场景
+ * 只把码发出去、全站没有任何地方消费它，前台那个「忘记密码」入口等于把人引进死胡同。
+ * 码是 send-code {scene:'reset'} 发的那一条，落库时就把 userId 钉在本账号上，
+ * 别人的登录码在这里用不上；改完把所有会话踢掉，不留「密码换了、旧浏览器还登录着」。
+ */
+app.post('/reset-password', async (c) => {
+  const env = c.env;
+  const parsed = z
+    .object({
+      email: emailSchema,
+      code: z.string().trim().regex(/^\d{6}$/, { message: '验证码是 6 位数字' }),
+      newPassword: z.string().min(8).max(200),
+    })
+    .safeParse(await c.req.json().catch(() => null));
+  /* zod 对「整个键没送」给的原话是 Required，直接回出来对人没用；只有它自己写的校验消息才值得原样转达 */
+  const issue = parsed.error?.issues?.[0]?.message;
+  if (!parsed.success) fail(400, issue && issue !== 'Required' ? issue : '邮箱、6 位验证码与至少 8 位的新密码都要填');
+  const { email, code, newPassword } = parsed.data;
+
+  await rateLimit(c, 'reset-password-ip', 10, 3600);
+  await rateLimit(c, 'reset-password', 10, 3600, email);
+
+  const user = await findUserByEmail(env, email);
+  const bad = '验证码不正确或已过期，请重新获取后再试';
+  /* 账号不存在、没有这份码、码属于别人，三种情况回同一句话：
+     分开发话就等于让人拿这个接口去验证邮箱开没开号。 */
+  if (!user) fail(400, bad);
+
+  const rows = await createDb(env)
+    .select({ value: verifications.value })
+    .from(verifications)
+    .where(eq(verifications.identifier, `otp:${user.email}`))
+    .limit(1);
+  let owner: string | null = null;
+  try {
+    owner = (JSON.parse(rows[0]?.value ?? '{}') as { userId?: string | null }).userId ?? null;
+  } catch {
+    owner = null;
+  }
+  if (!rows[0] || (owner && owner !== user.id)) fail(400, bad);
+
+  const check = await verifyEmailOtp(env, user.email, code);
+  if (!check.ok) fail(400, check.message ?? bad);
+
+  await createDb(env)
+    .update(users)
+    .set({ passwordHash: await hashPassword(newPassword), updatedAt: Math.floor(Date.now() / 1000) })
+    .where(eq(users.id, user.id));
+  await destroyUserSessions(env, user.id);
+  await writeAudit(env, {
+    actor: { id: user.id, name: user.name },
+    action: 'user',
+    target: user.id,
+    detail: { event: 'password.reset' },
+    ip: clientIp(c),
+  });
+  return ok({ reset: true, message: '密码已重置，请用新密码登录；其他设备上的登录状态已全部退出。' });
+});
 
 /**
  * POST /api/auth/verify-email {code} —— 已登录用户在个人中心验证邮箱。

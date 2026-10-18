@@ -44,7 +44,7 @@
       desc: '「前台账号系统」关掉后 /account/ 整页只留提示，用户无法登录；管理员仍可从站点后台路径登录。「允许注册」只下线注册 tab 与验证码注册通道，已注册用户照常登录。',
       fields: [
         { key: 'accountSystemEnabled', label: '前台账号系统', kind: 'bool' },
-        { key: 'allowRegister', label: '允许注册', kind: 'bool' },
+        { key: 'allowRegister', label: '允许注册', kind: 'bool', hint: '关掉后普通账号也无法登录（只有站长与管理员还能进），需要收口时再关' },
         { key: 'requireInviteCode', label: '注册需邀请码', kind: 'bool', hint: '邀请码在「用户」页的「邀请码」tab 生成' },
         { key: 'cmsAdminUrl', label: '后台地址', hint: '管理员在前台登录成功后跳这里。后台是独立的 Pages 项目，与站点不同域：留空时前端只能按同域 /admin/ 兜底，那个路径必然是 404。管理员第一次从后台登录时会自动记下后台自己的域名，换域名后在这里改' },
         { key: 'inviteCodeLength', label: '随机码长度', kind: 'number', hint: '4 ~ 16' },
@@ -496,6 +496,8 @@
   let saved = $state<Record<string, string>>({});
   /** 服务端已经存了值的密钥键名（读取不回传原文，靠这个标记提示「已设置」） */
   let secretSet = $state<string[]>([]);
+  /** 被标记「清除已存密钥」的项：保存时按 null 提交，后端才真的把这列清空 */
+  let clearSecrets = $state<string[]>([]);
   let loading = $state(false);
   let saving = $state(false);
   let error = $state('');
@@ -532,26 +534,34 @@
   }
 
   const changed = $derived(
-    Object.keys(cfg).filter((k) => (cfg[k] ?? '') !== (saved[k] ?? '')),
+    [...new Set([...Object.keys(cfg).filter((k) => (cfg[k] ?? '') !== (saved[k] ?? '')), ...clearSecrets])],
   );
 
   async function save() {
     if (!changed.length) return;
-    const count = changed.length;
     saving = true;
     error = '';
     try {
-      const payload: Record<string, string | number | boolean> = {};
-      for (const key of changed) payload[key] = coerce(key, cfg[key]);
-      await patch('/api/admin/config', payload);
+      const payload: Record<string, string | number | boolean | null> = {};
+      for (const key of changed) payload[key] = clearSecrets.includes(key) && !cfg[key] ? null : coerce(key, cfg[key]);
+      const d = await patch<{ data: { updated: number; failed?: { key: string; error: string }[] } }>('/api/admin/config', payload);
+      clearSecrets = [];
       await load();
-      notice = `已保存 ${count} 项`;
+      /* 后端现在是逐项写的，个别项失败必须说清楚是哪几项：以前一律「已保存 N 项」，写失败也照说 */
+      const failed = d.data?.failed ?? [];
+      if (failed.length) error = `${failed.length} 项没写进去：${failed.map((f) => `${f.key}（${f.error}）`).join('、')}`;
+      notice = d.data?.updated ? `已保存 ${d.data.updated} 项` : '提交的内容与现值相同，没有改动';
       setTimeout(() => (notice = ''), 3000);
     } catch (e) {
       error = e instanceof Error ? e.message : '保存失败';
     } finally {
       saving = false;
     }
+  }
+
+  /** 密钥读回来永远是空串，「留空」等于不改；要真删掉已存的那份得显式标记，后端按 null 处理 */
+  function toggleClear(key: string) {
+    clearSecrets = clearSecrets.includes(key) ? clearSecrets.filter((k) => k !== key) : [...clearSecrets, key];
   }
 
   function applyPreset(p: (typeof SMTP_PRESETS)[number]) {
@@ -615,6 +625,11 @@
               autocomplete={f.kind === 'secret' ? 'new-password' : 'on'}
             />
           </label>
+          {#if f.kind === 'secret' && secretSet.includes(f.key)}
+            <button type="button" class="sm" onclick={() => toggleClear(f.key)}>
+              {clearSecrets.includes(f.key) ? '已标记清除（点这里撤回）' : '清除已存密钥'}
+            </button>
+          {/if}
         {/if}
         {#if f.hint}<span class="muted hint">{f.hint}</span>{/if}
       </div>

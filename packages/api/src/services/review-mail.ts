@@ -17,9 +17,17 @@ import { getConfig } from './config';
 import { postWebPath } from './frontmatter';
 import { queueEmail, renderEmail } from './email';
 
-/** 发送结论：notified 是「信已经交出去」，失败原因只在 notifyError 里 */
+/**
+ * 一封信的三种结局：
+ *   sent   —— 已交给 SMTP/服务商（还不等于进了收件箱，但中继已收下）
+ *   queued —— 只排进了发送队列，消费者还没投（群发与通知走队列时就是这个状态）
+ *   failed —— 没邮箱、被拒、抛异常
+ * 以前只有布尔值 notified，队列在跑还是失败界面分不出来，驳回那封信明明进了
+ * email_logs 的 failed 行，接口却回「已发送邮件通知」。
+ */
+export type NotifyState = 'sent' | 'queued' | 'failed';
 export interface NotifyOutcome {
-  notified: boolean;
+  state: NotifyState;
   notifyError?: string;
 }
 
@@ -84,7 +92,7 @@ async function notifyOne(
   actionLabel = '回到站点查看',
 ): Promise<NotifyOutcome> {
   const address = to.trim();
-  if (!address) return { notified: false, notifyError: '没有可用的收件邮箱' };
+  if (!address) return { state: 'failed', notifyError: '没有可用的收件邮箱' };
   const site = await siteName(env);
   const from = (await getConfig(env, 'emailFrom'))?.trim() ?? '';
   const html = await renderEmail(
@@ -101,9 +109,10 @@ async function notifyOne(
       from: from || undefined,
       kind: 'notice',
     });
-    return res.success ? { notified: true } : { notified: false, notifyError: res.error ?? '邮件发送失败' };
+    if (!res.success) return { state: 'failed', notifyError: res.error ?? '邮件发送失败' };
+    return { state: res.queued ? 'queued' : 'sent' };
   } catch (e) {
-    return { notified: false, notifyError: e instanceof Error ? e.message : String(e) };
+    return { state: 'failed', notifyError: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -150,7 +159,7 @@ export async function sendDraftReviewResult(env: Env, draft: DraftLike, approved
     const rows = await db.select({ email: users.email }).from(users).where(eq(users.id, draft.userId)).limit(1);
     email = rows[0]?.email ?? '';
   } catch (e) {
-    return { notified: false, notifyError: `查不到作者邮箱：${e instanceof Error ? e.message : String(e)}` };
+    return { state: 'failed', notifyError: `查不到作者邮箱：${e instanceof Error ? e.message : String(e)}` };
   }
 
   const home = await siteHome(env);

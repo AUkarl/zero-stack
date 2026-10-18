@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import prompts, { type PromptObject } from 'prompts';
 import {
   API_DIR,
@@ -75,6 +76,13 @@ interface ResourceIds {
 }
 
 async function ask(questions: PromptObject[]): Promise<Answers> {
+  /* 没有终端可问时绝不能挂在这里：CI、管道、`echo | pnpm setup` 这些情况下 prompts 永远不 resolve，
+     进程既不报错也不退出。跳过提问，让后面的必填校验给出「缺什么」的人话。 */
+  if (!process.stdin.isTTY) {
+    console.log('\x1b[33m非交互环境（没有可用的终端）：向导不再提问，只认命令行 / 配置文件里已有的值；缺的必填项会当场报错。\x1b[0m');
+    console.log('   要部署 Worker 与后台，直接用 pnpm deploy:api 与 pnpm deploy:cms；资源与配置已在终端里跑过一次 setup。');
+    return {} as Answers;
+  }
   const answers = await prompts(questions, {
     onCancel: () => {
       console.log('\n已取消，未对 Cloudflare 做任何改动。');
@@ -240,7 +248,7 @@ function seedPublicBucketConfig(pub: PublicBucketPlan): string[] {
  *
  * @returns written 已写进库的项；failed 没写进去的项（连同要填的值，汇总里要让站主补）
  */
-function seedSiteConfig(a: Answers): { written: string[]; failed: string[] } {
+function seedSiteConfig(a: Answers, mediaPublicUrl = ''): { written: string[]; failed: string[] } {
   const user = (a.smtpUser ?? '').trim();
   const want: [string, string][] = [
     ['siteName', (a.siteName ?? '').trim()],
@@ -252,6 +260,9 @@ function seedSiteConfig(a: Answers): { written: string[]; failed: string[] } {
   ];
   if (a.emailProvider === 'smtp') want.push(['smtpHost', (a.smtpHost ?? '').trim()], ['smtpPort', (a.smtpPort ?? '').trim()], ['smtpUser', user], ['emailFrom', user]);
   if (a.emailProvider === 'cloudflare') want.push(['cloudflareAccountId', (a.cfAccountId ?? '').trim()]);
+  /* 公开桶没绑自定义域名时，图片地址走 Worker 代理（/api/media/…）—— 没有这个绝对前缀，
+     写进正文的就是站内相对路径，站点与接口不同源时张都是裂图。 */
+  if (mediaPublicUrl.trim()) want.push(['mediaPublicUrl', mediaPublicUrl.trim().replace(/\/+$/, '')]);
 
   const written: string[] = [];
   const failed: string[] = [];
@@ -321,20 +332,30 @@ function readExistingUrls(): { siteUrl: string; cmsUrl: string; apiUrl: string; 
 
 /* --------------------------- 配置与密钥 --------------------------- */
 
-function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
+/**
+ * 把 `.example` 渲染成真实的 wrangler.jsonc 文本。
+ *
+ * 抽成纯函数（配置文本由参数给，不碰文件系统）：这一步出错的表现最难查 —— 少替换一个占位符，
+ * wrangler 就读不懂配置，而向导会把它当成「你没登录」反复拉浏览器授权。留成可导入的形态，
+ * 就能在没登录、没建资源的机器上直接验渲染结果。
+ */
+export function renderWranglerConfig(a: Answers, ids: ResourceIds, example: string): string {
   const publicBucketName = (a.publicBucket ?? '').trim() || R2_PUBLIC_DEFAULT;
-  const example = readFileSync(resolve(API_DIR, 'wrangler.jsonc.example'), 'utf-8');
   /** JSON.stringify(undefined) 返回 undefined 本身，拼进模板就成了配置里的裸字面量 undefined，
       整份文件不再是合法 JSONC，之后 wrangler 在这个目录里连 whoami 都跑不动 */
   const jstr = (v: string | undefined): string => JSON.stringify(v ?? '');
-  const vars = [`"SITE_URL": ${jstr(a.siteUrl)}`, `"SITE_NAME": ${jstr(a.siteName)}`];
+
+  /** 勾了回 Git 就把仓库坐标跟在站点名那行后面 —— 坐标是明文 vars，不是密钥，
+      真正的令牌走 wrangler secret（configureSecrets） */
+  let githubVars = '';
   if (a.useGithub) {
     if (!a.githubOwner?.trim() || !a.githubRepo?.trim()) {
       die('勾了「文章提交回 Git」但没拿到 GitHub 用户名 / 仓库名，配置不能这么留空。重跑向导并把这两问填上');
     }
-    vars.push(`"GITHUB_OWNER": ${jstr(a.githubOwner)}`);
-    vars.push(`"GITHUB_REPO": ${jstr(a.githubRepo)}`);
-    vars.push(`"GITHUB_BRANCH": ${jstr(a.githubBranch ?? 'main')}`);
+    githubVars =
+      `,\n    "GITHUB_OWNER": ${jstr(a.githubOwner)}` +
+      `,\n    "GITHUB_REPO": ${jstr(a.githubRepo)}` +
+      `,\n    "GITHUB_BRANCH": ${jstr(a.githubBranch ?? 'main')}`;
   }
 
   /** String.replace 不匹配时原样返回，等于什么都没写却不报错：
@@ -349,14 +370,11 @@ function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
   cfg = sub(cfg, '<从 wrangler d1 create 获取>', ids.dbId);
   cfg = sub(cfg, '<CACHE KV ID>', ids.cacheId);
   cfg = sub(cfg, '<SESSION KV ID>', ids.sessionId);
-  /** 公开桶作为第二个绑定加进去：media 那边按 binding 名找桶（services/media.ts 的 r2Bucket），
-      绑定名固定 R2_PUBLIC，后台「媒体库 → 存储桶」那条配置也按这个名字认它 */
-  cfg = sub(
-    cfg,
-    '"bucket_name": "zero-media"',
-    `"bucket_name": "zero-media"\n    },\n    {\n      "binding": "${R2_PUBLIC_BINDING}",\n      "bucket_name": ${JSON.stringify(publicBucketName)}`,
-  );
-  cfg = sub(cfg, '"SITE_NAME": "Zero Site"', vars.join(',\n    '));
+  /* 公开桶的绑定名固定 R2_PUBLIC（后台「媒体库 → 存储桶」那条配置按这个名字认它，
+     services/media.ts 也按 binding 名取桶）。示例文件里已经写好这一条，这里只把桶名换成向导答的那个。 */
+  cfg = sub(cfg, '"bucket_name": "zero-media-public"', `"bucket_name": ${JSON.stringify(publicBucketName)}`);
+  cfg = sub(cfg, '"SITE_URL": "<站点前台地址>"', `"SITE_URL": ${jstr(a.siteUrl)}`);
+  cfg = sub(cfg, '"SITE_NAME": "Zero Site"', `"SITE_NAME": ${jstr(a.siteName)}${githubVars}`);
   cfg = sub(
     cfg,
     '"ALLOWED_ORIGINS": "https://zero-cms.pages.dev,https://zero-site.pages.dev"',
@@ -366,6 +384,11 @@ function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
   if (/"<[^>]+>"/.test(cfg)) die('wrangler.jsonc.example 中仍有未替换的占位符，请核对占位符文本');
   const badKey = cfg.match(/"([A-Z_]+)"\s*:\s*(undefined|NaN|null)\s*,?/);
   if (badKey) die(`生成的 wrangler.jsonc 里 ${badKey[1]} 的值是 ${badKey[2]}，这份配置 wrangler 读不了。请把这一行贴出来反馈`);
+  return cfg;
+}
+
+function writeWranglerConfig(a: Answers, ids: ResourceIds): void {
+  const cfg = renderWranglerConfig(a, ids, readFileSync(resolve(API_DIR, 'wrangler.jsonc.example'), 'utf-8'));
   writeFileSync(resolve(API_DIR, 'wrangler.jsonc'), cfg);
   good(`已生成 packages/api/wrangler.jsonc（worker：${WORKER_NAME}）`);
 }
@@ -593,10 +616,19 @@ async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | nul
   if (failed.length) console.log(`     \x1b[33m✗ 这几项没能写进库，请在后台「设置」里按这个值补：${failed.join('；')}\x1b[0m`);
   if (missing.length) console.log(`     还需要你补：${missing.join('；')}`);
   else if (!failed.length) console.log('     没有需要额外补的项');
-  console.log(`  3. pnpm create:site 生成私密内容仓库，然后在「设置 → 内容仓库」填 owner / repo / token`);
-  console.log(`  4. 主题侧 hugo.toml 设置 params.apiBaseURL = ${apiUrl ?? 'https://<worker>.workers.dev'}（前台与后台都走这一个地址，CORS 已放行 ${a.siteUrl}）`);
-  console.log('  5. 迁移旧评论：pnpm migrate:waline（详见 docs/DEPLOYMENT.md）');
-  console.log('  6. 图片两个桶都已建好并登记进后台「媒体库」，上传时在桶下拉里任选：');
+  console.log(`  3. pnpm create:site 生成私密内容仓库`);
+  /** 勾了回 Git 又给了 token 时，这三项与密钥都已经落好了：让站主再去填一遍是假尾巴 */
+  console.log(
+    a.useGithub && (a.githubToken ?? '').trim()
+      ? '     （仓库 owner / repo / branch 与 GITHUB_TOKEN 这次已随向导写好，到「设置 → 内容仓库」核对即可）'
+      : '     然后在「设置 → 内容仓库」填 owner / repo / token',
+  );
+  console.log(
+    `     （接口地址 ${apiUrl ?? 'https://<worker>.workers.dev'} 由 create:site 写进 config/_default/params.toml 的 apiBaseURL —— ` +
+      `别再往站点根 hugo.toml 的 [params] 里写同名键，那份优先级更高，写了也只会被盖掉）`,
+  );
+  console.log(`  4. 迁移旧评论：pnpm migrate:waline（详见 docs/DEPLOYMENT.md）`);
+  console.log('  5. 图片两个桶都已建好并登记进后台「媒体库」，上传时在桶下拉里任选：');
   console.log(`     · 私有 ${R2_NAME}：走 Worker 读取，不对外直链（原图与要紧的图放这里）`);
   console.log(
     `     · 公开 ${a.publicBucket || R2_PUBLIC_DEFAULT}：${
@@ -648,12 +680,9 @@ async function main(): Promise<void> {
 
   writeWranglerConfig(a, ids);
 
-  if (noDeploy) {
-    info('没写密钥：wrangler secret put 的对象是已存在的 worker，这一步留到真正部署时做。');
-    console.log('\n✅ 资源与配置已就绪。之后运行 pnpm deploy:api 与 pnpm deploy:cms 完成部署。');
-    return;
-  }
-
+  /* 迁移与站点配置只依赖 D1，不依赖 worker 存不存在 —— 以前它们排在 --no-deploy 的 return 之后，
+     于是「✅ 资源与配置已就绪」那句是假的：site_config 一行没写、表结构也没建，
+     后台打开是空框，deploy:api 也不补这两步。先做完再分流。 */
   step('应用数据库迁移');
   wrangler(`d1 migrations apply ${D1_NAME} --remote`, { cwd: API_DIR });
   good('D1 表结构已同步');
@@ -665,8 +694,20 @@ async function main(): Promise<void> {
   }
 
   step('写入站点与发信配置');
-  const seeded = seedSiteConfig(a);
+  /** 公开桶已经绑上自定义域就不种前缀（那时图片本来就是直链） */
+  const seeded = seedSiteConfig(a, pub.baseUrl ? '' : apiUrl ?? '');
   if (seeded.written.length) good(`已写进 site_config，后台「设置」直接显示这些值：${seeded.written.join('、')}`);
+
+  if (noDeploy) {
+    info('这一轮只建资源、跑迁移、写配置：没部署 Worker，也没写密钥（wrangler secret put 的对象必须先存在）。');
+    console.log(
+      '\n✅ 资源、数据库迁移与站点配置已就绪；密钥还没写。\n' +
+        '   完成部署：pnpm deploy:api && pnpm deploy:cms（这两步不写密钥），\n' +
+        '   密钥要么重跑一次 pnpm setup（不带 --no-deploy，它会随机生成 AUTH_SECRET / SESSION_SECRET 并按你填的凭据写 GITHUB_TOKEN 等），\n' +
+        '   要么部署后逐条补：cd packages/api && npx wrangler secret put GITHUB_TOKEN（其余同理）。',
+    );
+    return;
+  }
 
   const workerUrl = deployWorker();
   /** 密钥必须排在 worker 部署之后：首次运行时 worker 还不存在，先写就全以 Worker not found 失败 */
@@ -680,6 +721,10 @@ async function main(): Promise<void> {
   await summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）', seeded.written, [...seeded.failed, ...bucketFailed], pub);
 }
 
-main().catch((e: unknown) => {
-  die(e instanceof Error ? e.message : String(e));
-});
+/** 只有直接被执行时才跑向导；被 import（比如渲染配置那步的验证脚本）时不能顺带把部署流程走一遍 */
+const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (invokedDirectly) {
+  main().catch((e: unknown) => {
+    die(e instanceof Error ? e.message : String(e));
+  });
+}

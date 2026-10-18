@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, post, siteOf } from '#lib/api';
+  import { fmtDate, get, post, siteOf } from '#lib/api';
   import LineChart from '#lib/LineChart.svelte';
 
   interface Summary {
@@ -50,12 +50,28 @@
     users: number;
     email: Record<string, number>;
   }
+  /** 按页面汇总的点赞 / 收藏：票数远大于 actors 就是刷出来的 */
+  interface ReactionRow {
+    slug: string;
+    likes: number;
+    stars: number;
+    actors: number;
+    lastAt: number;
+  }
+  interface ReactionStats {
+    rows: ReactionRow[];
+    reactionRows: number;
+    pages: number;
+  }
 
   let summary = $state<Summary | null>(null);
   let trend = $state<Point[]>([]);
   let devices = $state<Devices | null>(null);
   let top = $state<Top | null>(null);
   let biz = $state<Biz | null>(null);
+  let reactions = $state<ReactionStats | null>(null);
+  /** 文章地址 → 标题：/api/admin/posts 是后端缓存过的那份，这里只做显示用，取不到就原样给地址 */
+  let titles = $state<Record<string, string>>({});
   let days = $state(14);
   let loading = $state(false);
   let error = $state('');
@@ -65,12 +81,14 @@
     loading = true;
     error = '';
     try {
-      const [s, t, dv, tp, bz, cfg] = await Promise.all([
+      const [s, t, dv, tp, bz, rx, ps, cfg] = await Promise.all([
         get<{ data: Summary }>('/api/analytics/summary'),
         get<{ data: Point[] }>(`/api/analytics/trend?days=${days}`),
         get<{ data: Devices }>('/api/analytics/devices'),
         get<{ data: Top }>('/api/analytics/top'),
         get<{ data: Biz }>('/api/admin/stats'),
+        get<{ data: ReactionStats }>('/api/admin/stats/reactions?limit=30'),
+        get<{ data: { path: string; title: string }[] }>('/api/admin/posts'),
         get<{ data: Record<string, string> }>('/api/admin/config'),
       ]);
       summary = s.data;
@@ -78,6 +96,13 @@
       devices = dv.data;
       top = tp.data;
       biz = bz.data;
+      reactions = rx.data;
+      const map: Record<string, string> = {};
+      for (const p of ps.data ?? []) {
+        const stem = (p.path.match(/([^/]+)\.mdx?$/i) ?? [])[1] ?? '';
+        if (stem && /(^|\/)posts\//.test(p.path)) map[`/posts/${stem}/`] = p.title;
+      }
+      titles = map;
       enabled = cfg.data.analyticsEnabled !== 'false';
     } catch (e) {
       error = e instanceof Error ? e.message : '读取统计失败';
@@ -312,9 +337,54 @@
   {/if}
 </section>
 
+<section class="card">
+  <h3>点赞与收藏（按页面，票数最多的前 30 页）</h3>
+  {#if reactions}
+    <p class="muted small">
+      全站 {reactions.reactionRows} 条点赞 / 收藏记录，分布在 {reactions.pages} 个地址上。「不同来源」是按登录账号或匿名访客身份数的：
+      票数远大于来源数，说明同一页被同一批身份反复刷过。匿名身份只认 IP（换 User-Agent 不再算新的一票）。
+    </p>
+    <div class="table-wrap">
+      <table class="cols-wide">
+        <thead>
+          <tr>
+            <th>页面</th>
+            <th>点赞</th>
+            <th>收藏</th>
+            <th>不同来源</th>
+            <th>最近一次</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each reactions.rows as r (r.slug)}
+            <tr>
+              <td class="small">
+                {titles[r.slug] ?? '—'}
+                <span class="muted mono"> {r.slug}</span>
+              </td>
+              <td>{r.likes}</td>
+              <td>{r.stars}</td>
+              <td class={r.likes + r.stars > r.actors * 3 + 5 ? 'err' : ''}>{r.actors}</td>
+              <td class="small muted">{r.lastAt ? fmtDate(r.lastAt) : '—'}</td>
+            </tr>
+          {:else}
+            <tr><td colspan="5" class="muted">还没有人点过赞或收藏。</td></tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <p class="muted small">读取中…</p>
+  {/if}
+</section>
+
 <style>
   .head {
     margin-bottom: 0.6rem;
+  }
+  .mono {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    word-break: break-all;
   }
   .small {
     font-size: 0.76rem;

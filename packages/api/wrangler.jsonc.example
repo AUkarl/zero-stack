@@ -12,13 +12,20 @@
       "migrations_dir": "./migrations"
     }
   ],
-  // pnpm setup 会把公开桶追加到下面这个数组里（binding=R2_PUBLIC，桶名按向导填的来）。
-  // 别在这里手写第二条：脚本是按数组里第一条的桶名那一行做拼接的，
-  // 自己加一条就会拼出两份 r2_buckets，wrangler 读不懂这份配置。
+  // 两个桶都写全，这样「复制 .example 就能跑」是真的：
+  //   R2        私有桶 zero-media，只有 Worker 读得到（后台上传走它，图片经 /api/media/<桶>/<键> 代读）
+  //   R2_PUBLIC 公开桶 zero-media-public，绑上自定义域名后图片是直链，不占 Worker 额度
+  // 少了下面这条，后台「存储桶」里那个公开桶一选就报「Worker 没绑这个桶」（services/media.ts 不会偷偷改用别的桶）。
+  // 本地 wrangler dev 会按这里的名字建模拟桶，不用真的去建。
+  // pnpm setup 会按向导答的桶名重写这一条，别在生成的 wrangler.jsonc 里手改。
   "r2_buckets": [
     {
       "binding": "R2",
       "bucket_name": "zero-media"
+    },
+    {
+      "binding": "R2_PUBLIC",
+      "bucket_name": "zero-media-public"
     }
   ],
   "kv_namespaces": [
@@ -41,6 +48,10 @@
   "vars": {
     "ENVIRONMENT": "production",
     "COMMENT_MAX_DEPTH": "6",
+    // 站点前台地址：后台列表里的「在站点上查看」、邮件里的落地页、清边缘缓存都按它拼。
+    // pnpm setup 用向导「前台地址」那一答替换这个占位符；手工配就把尖括号整段换成 https://你的域名（末尾不带斜杠）。
+    // 只写在这里不够，D1 的 site_config 里也要有同名的 siteUrl —— 后台「设置」读的是那一份。
+    "SITE_URL": "<站点前台地址>",
     "SITE_NAME": "Zero Site",
     // 前台主题与后台 CMS 都是跨源调这个 Worker，两个站点地址都要写进来，
     // 逗号分隔；写 * 等于对任意来源开放带 Cookie 的跨源请求，只在本地开发用。

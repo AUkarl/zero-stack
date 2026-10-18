@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { del, get, post, patch, purgeNote, type PurgeOut } from '#lib/api';
+  import { del, get, post, patch, mailNote, purgeNote, type PurgeOut } from '#lib/api';
   import { fmtDate, timeAgo } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
 
@@ -23,11 +23,6 @@
   }
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
-
-  function mailNote(data: { notified?: boolean; notifyError?: string | null } | null | undefined): string {
-    if (!data || data.notified === undefined) return '';
-    return data.notified ? ' · 已发送邮件通知' : ` · 邮件通知失败${data.notifyError ? `：${data.notifyError}` : ''}`;
-  }
 
   const TABS: [string, string][] = [
     ['pending', '待审'],
@@ -143,10 +138,10 @@
     error = '';
     try {
       const d = await post<{
-        data: { synced: boolean; syncError: string | null; path: string | null; notified?: boolean; notifyError?: string | null };
+        data: { synced: boolean; syncError: string | null; path: string | null; state?: 'sent' | 'queued' | 'failed'; notifyError?: string | null };
       }>(`/api/admin/drafts/${r.id}/approve`, { publish, note: note.trim() || undefined });
       notice =
-        (d.data.synced ? `已通过并写入 ${d.data.path}` : `已通过，未写入仓库：${d.data.syncError ?? '检查设置里的仓库与写回开关'}`) +
+        (d.data.synced ? `已通过并写入 ${d.data.path}` : `已通过，未写入仓库：${d.data.syncError ?? '检查「设置 → 内容仓库」的 owner / repo / 目录与 GITHUB_TOKEN'}`) +
         mailNote(d.data);
       open = null;
       await load();

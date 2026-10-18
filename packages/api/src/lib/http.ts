@@ -48,11 +48,12 @@ export function parseUserAgent(ua: string): DeviceInfo {
 }
 
 /**
- * 搜索引擎 / 社交爬虫 / 监控探针 / 空 UA 的请求不算浏览量。
+ * 只把「真的是浏览器」的请求算作浏览量。
  *
- * 之前 /api/analytics/beat 谁来都记一行，Pages 的爬虫与 Uptime 监控会把热门页 Top 与
- * 浏览量抬到虚高（同一台机器每秒一次、一天就是几万次）。判据只看 User-Agent，
- * 成本一次正则；漏掉的少数伪装 UA 交给「按访客去重」那套口径兜。
+ * 之前这份黑名单挨个列爬虫（bot/curl/监控…），漏一条就算真人 ——
+ * 实测 axios/1.6.8、node-fetch、aiohttp 全被记成访客，同一台机器想刷多少行就多少行。
+ * 现在反过来认：这条 beacon 只由页面里的 navigator.sendBeacon 发出，浏览器 UA 一定带
+ * 「Mozilla/5.0」，脚本默认的 UA 不带。黑名单继续留着，管的是「浏览器壳子的爬虫」（Headless 等）。
  */
 const BOT_RE =
   /bot|crawler|spider|slurp|curl|wget|python-requests|httpie|go-http-client|java\/|okhttp|headlesschrome|phantomjs|lighthouse|pagespeed|pingdom|uptime|monitor|newman|postmanruntime|feedfetcher|rss|archive|ahrefs|semrush|mj12|dotpet|baidujapan|yandex|sogou|360spider|googleweblight|miniflux|fever|reeder|neteasefetcher|bingpreview|facebookexternalhit|telegrambot|whatsapp|slackbot|discordbot|line-pk/i;
@@ -60,6 +61,7 @@ const BOT_RE =
 export function isBot(ua: string | undefined | null): boolean {
   const s = String(ua ?? '').trim();
   if (!s || s === '-') return true;
+  if (!s.includes('Mozilla/5.0')) return true;
   return BOT_RE.test(s);
 }
 

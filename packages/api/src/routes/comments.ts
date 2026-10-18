@@ -12,7 +12,7 @@ import { canonSlug } from '../lib/slug';
 import { clientIp, userAgent } from '../lib/http';
 import { hashIp, visitorMeta } from '../lib/ua';
 import { rateLimit } from '../lib/rate-limit';
-import { requireUser, tokenFromRequest } from '../middleware/auth';
+import { requireAdmin, tokenFromRequest } from '../middleware/auth';
 import { bannedByToken } from '../services/auth';
 import { inspectComment, type Verdict } from '../services/moderation';
 import { deleteCommentSubtree } from '../services/comment-tree';
@@ -250,21 +250,25 @@ function makeShaper(avatarTemplate: string, profiles: Map<string, Profile>) {
 
 
 /* ------------------------------------------------------------------
- * 可见性：管理员看全部；登录用户多看自己的待审；匿名靠 ownerKey
+ * 可见性：管理员看全部；本人看自己的（含被判垃圾的那几条，否则改完像凭空消失）；匿名靠 ownerKey
  * ----------------------------------------------------------------*/
 
-function visibleTo(row: CommentRow, user: AuthUser | null, isAdmin: boolean, owners: Map<string, string>): boolean {
-  if (isAdmin) return true;
-  if (row.status === 'approved') return true;
-  if (row.status !== 'pending') return false;
+/** 这条就是「我」发的：登录账号对上 authorId，或访客带对了 ownerKey */
+function mine(row: CommentRow, user: AuthUser | null, owners: Map<string, string>): boolean {
   if (user?.id && row.authorId === user.id) return true;
   return Boolean(proveKey(row, owners));
 }
 
+function visibleTo(row: CommentRow, user: AuthUser | null, isAdmin: boolean, owners: Map<string, string>): boolean {
+  if (isAdmin) return true;
+  if (row.status === 'approved') return true;
+  return row.status === 'pending' || row.status === 'spam' ? mine(row, user, owners) : false;
+}
+
+/** 列表窗口之外也要发给本人的那几条：待审与被判垃圾的都算，只发自己的那份 */
 function isMinePending(row: CommentRow, user: AuthUser | null, owners: Map<string, string>): boolean {
-  if (row.status !== 'pending') return false;
-  if (user?.id && row.authorId === user.id) return true;
-  return Boolean(proveKey(row, owners));
+  if (row.status !== 'pending' && row.status !== 'spam') return false;
+  return mine(row, user, owners);
 }
 
 function parseSort(value: string | undefined): SortKey {
@@ -310,9 +314,12 @@ app.get('/count', async (c) => {
   return ok(out);
 });
 
-/** GET /api/comments/pending-count —— 后台待审核角标 */
+/**
+ * GET /api/comments/pending-count —— 后台侧栏的待审角标。
+ * 全站待审数量是站长的管理信息，普通读者不需要知道（后台只在 isAdmin 时才请求这一条）。
+ */
 app.get('/pending-count', async (c) => {
-  requireUser(c);
+  requireAdmin(c);
   const rows = await createDb(c.env)
     .select({ count: sql<number>`count(*)` })
     .from(comments)
@@ -571,6 +578,10 @@ app.post('/', async (c) => {
     if (canonSlug(hit.postSlug) !== slug) fail(400, '不能跨文章回复');
     if (hit.status !== 'approved') fail(403, '该评论尚未通过审核');
     depth = hit.depth + 1;
+    /* commentMaxDepth 必须在这里真的拦住：以前它只管「列表展示几层」，
+       于是连点到第十层还能点，缩进超出面板宽度、整页破版，配置看起来像个摆设。 */
+    const maxDepth = await getConfigInt(env, 'commentMaxDepth', 6);
+    if (maxDepth > 0 && depth > maxDepth) fail(400, `回复层级已达上限（最多 ${maxDepth} 层），请回到顶层继续讨论`);
     rootId = hit.rootId ?? hit.id;
     parent = { authorName: hit.authorName, authorEmail: hit.authorEmail, authorId: hit.authorId };
   }
@@ -827,7 +838,15 @@ app.patch('/:id', async (c) => {
   }
 
   await db.update(comments).set(set).where(eq(comments.id, id));
-  return ok({ id, content, status, editedAt });
+  /* 改完没回到「已通过」时必须说一句：以前只回 {status:'spam'}，前台什么也不显示，
+     在人眼里就是「我明明改了，评论凭空不见了」。（本人自己的未通过条目现在仍在列表里，标着状态） */
+  const message =
+    status === 'spam'
+      ? '修改已保存，但这一版没通过自动审核，站内先不公开展示；站主放行后才会出现。'
+      : status === 'pending'
+        ? '修改已保存，这一版要重新审核；通过前只有你自己看得见。'
+        : null;
+  return ok({ id, content, status, editedAt, message });
 });
 
 export default app;

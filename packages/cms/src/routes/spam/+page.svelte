@@ -84,7 +84,8 @@
   let error = $state('');
   let notice = $state('');
 
-  // 仓库正则文件 data/spam-patterns.txt
+  // 仓库正则文件：路径一律用后端回的那个，前端不硬写
+  let pfPath = $state('');
   let pfText = $state('');
   let pfSaved = $state('');
   let pfLoading = $state(false);
@@ -148,12 +149,18 @@
     pfError = '';
     pfMissing = false;
     try {
-      const d = await get<{ data: { content: string } | string }>('/api/admin/spam/pattern-file');
-      const text = typeof d.data === 'string' ? d.data : d.data?.content ?? '';
-      pfText = text;
-      pfSaved = text;
+      const d = await get<{ data: { path?: string; content?: string; exists?: boolean } | string }>(
+        '/api/admin/spam/pattern-file',
+      );
+      if (typeof d.data === 'string') pfText = d.data;
+      else {
+        pfPath = d.data?.path ?? pfPath;
+        pfText = d.data?.content ?? '';
+        pfMissing = d.data?.exists === false;
+      }
+      pfSaved = pfText;
     } catch {
-      // 文件不存在 / 接口未落地：给一个空编辑器，保存即创建
+      // 接口没落地或读仓库失败：同样给一个空编辑器，保存即创建
       pfText = '';
       pfSaved = '';
       pfMissing = true;
@@ -167,15 +174,31 @@
     pfError = '';
     pfNotice = '';
     try {
-      await put('/api/admin/spam/pattern-file', { content: pfText });
+      const d = await put<{ data?: { path?: string } }>('/api/admin/spam/pattern-file', { content: pfText });
+      pfPath = d.data?.path ?? pfPath;
       pfSaved = pfText;
-      pfNotice = '已写入仓库 data/spam-patterns.txt';
+      pfNotice = `已写入仓库 ${pfPath}`;
       pfMissing = false;
       setTimeout(() => (pfNotice = ''), 3000);
     } catch (e) {
       pfError = msg(e);
     } finally {
       pfSaving = false;
+    }
+  }
+
+  /**
+   * 密钥读取恒回空串，「留空提交」的含义是不改；要真把填错的那份清掉得显式发 null，
+   * 否则服务商用错凭据时就只能改着玩、永远卸不下来。
+   */
+  async function clearSecret(key: 'spamProviderKeyId' | 'spamProviderSecret') {
+    if (!window.confirm(`清除已存的「${key === 'spamProviderKeyId' ? 'KeyId / AccessKey' : 'Secret'}」？服务商立刻取不到凭据。`)) return;
+    error = '';
+    try {
+      await patch('/api/admin/config', { [key]: null });
+      await load();
+    } catch (e) {
+      error = msg(e);
     }
   }
 
@@ -286,8 +309,13 @@
     if (!confirm(`把当前 ${ids.length} 条全部标记为${action === 'spam' ? '垃圾评论' : '正常'}？`)) return;
     error = '';
     try {
-      await post('/api/admin/comments/moderate-batch', { ids, action });
+      /* 后端报的是「真的改了几条」：本来就是那个状态、或早已被删掉的都不算，
+         界面别再拿请求条数冒充结果条数。 */
+      const d = await post<{ data: { requested: number; handled: number } }>('/api/admin/comments/moderate-batch', { ids, action });
       await loadQueue();
+      const { requested, handled } = d.data;
+      notice = handled === requested ? `已处理 ${handled} 条` : `已处理 ${handled} 条，另 ${requested - handled} 条本来就是该状态或已不在队列里`;
+      setTimeout(() => (notice = ''), 5000);
     } catch (e) {
       error = msg(e);
     }
@@ -356,8 +384,8 @@
         <span>命中后先进「待审核」而不是「垃圾评论」</span>
       </label>
       <p class="hint">
-        关（默认）：命中规则直接标为垃圾，进「垃圾评论」队列，不再占你的待审核。打开：命中的先压进「待审核」，
-        由你决定放行还是判杀。站长与管理员本人的评论两种情况下都不扫描。
+        开（默认）：命中的先压进「待审核」，由你决定放行还是判杀 —— 规则总有误杀，先进待审评论不会凭空消失。
+        关：命中直接标为垃圾，进「垃圾评论」队列，不再占你的待审核。站长与管理员本人的评论两种情况下都不扫描。
       </p>
       <label class="switch">
         <input
@@ -445,18 +473,24 @@
         <label>
           KeyId / AccessKey
           <input type="password" bind:value={cfg.spamProviderKeyId} placeholder={hasSecret.spamProviderKeyId ? '已设置，留空不改' : '选填'} />
-          {#if hasSecret.spamProviderKeyId}<span class="ok hint">已设置</span>{/if}
+          {#if hasSecret.spamProviderKeyId}
+            <span class="ok hint">已设置</span>
+            <button type="button" class="sm" onclick={() => void clearSecret('spamProviderKeyId')}>清除已存</button>
+          {/if}
         </label>
         <label>
           Secret
           <input type="password" bind:value={cfg.spamProviderSecret} placeholder={hasSecret.spamProviderSecret ? '已设置，留空不改' : '选填'} />
-          {#if hasSecret.spamProviderSecret}<span class="ok hint">已设置</span>{/if}
+          {#if hasSecret.spamProviderSecret}
+            <span class="ok hint">已设置</span>
+            <button type="button" class="sm" onclick={() => void clearSecret('spamProviderSecret')}>清除已存</button>
+          {/if}
         </label>
       </div>
     </section>
 
     <section class="card">
-      <h4>仓库正则文件 data/spam-patterns.txt</h4>
+      <h4>仓库正则文件{pfPath ? ` ${pfPath}` : ''}</h4>
       <p class="muted small">站点仓库里那份共享正则清单，读写走 <code>GET / PUT /api/admin/spam/pattern-file</code>。</p>
       {#if pfLoading}
         <p class="muted small">读取中…</p>

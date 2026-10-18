@@ -3,12 +3,13 @@ import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Context } from 'hono';
 import { createDb } from '../db/client';
 import { commentLikes, comments, reactions } from '../db/schema';
-import { getConfigBool } from '../services/config';
+import { getConfig, getConfigBool } from '../services/config';
 import { anonymousFingerprint, newId } from '../lib/crypto';
+import { hashIp } from '../lib/ua';
+import { readRepoFile } from '../services/repo';
 import { fail, ok } from '../lib/errors';
-import { clientIp, userAgent } from '../lib/http';
+import { clientIp } from '../lib/http';
 import { rateLimit } from '../lib/rate-limit';
-import { visitorFingerprint } from '../lib/ua';
 import { canonSlug } from '../lib/slug';
 import type { AuthUser } from '../services/auth';
 import type { AppEnv } from '../lib/app';
@@ -20,17 +21,65 @@ function secret(env: Env): string {
   return env.AUTH_SECRET!;
 }
 
+/**
+ * 这一页在站上真的存在吗？
+ *
+ * 不做这一步，`/posts/随手编一个/` 也能攒出点赞与计数（实测给根本不存在的文章点赞 200 落库），
+ * 后台看不出差别。地址 → 文件的换算与删除文章、清缓存同一份口径：文章/时刻目录 + 文件名即 slug。
+ * 除 posts / moments 之外的地址上没有点赞按钮（例如 /about/ 这类单页），不去仓库里猜文件名，直接放过。
+ * 探一次仓库，结果在 KV 存 6 分钟；仓库读不动（没配、限流、网络）时按「存在」放过 ——
+ * 反刷不能把正常点赞拦在门外。
+ */
+async function targetExists(env: Env, slug: string): Promise<boolean> {
+  const clean = slug.replace(/^\/+|\/+$/g, '');
+  const hit = /^(posts|moments)\/([^/]+)$/.exec(clean);
+  if (!hit) return true;
+
+  const cacheKey = `zero:target:${clean}`;
+  try {
+    const cached = await env.CACHE.get(cacheKey, { type: 'text' });
+    if (cached === '1') return true;
+    if (cached === '0') return false;
+  } catch {
+    /* KV 读不到就照常探一次 */
+  }
+
+  const dirs = [
+    (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/zh/posts',
+    (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/zh/moments',
+  ];
+  let found = false;
+  for (const dir of dirs) {
+    const file = `${dir.replace(/\/+$/, '')}/${hit[2]}.md`;
+    try {
+      if (await readRepoFile(env, file)) {
+        found = true;
+        break;
+      }
+    } catch {
+      return true;
+    }
+  }
+  try {
+    await env.CACHE.put(cacheKey, found ? '1' : '0', { expirationTtl: 360 });
+  } catch {
+    /* 写不进缓存就下次再探 */
+  }
+  return found;
+}
+
 /* ------------------------------------------------------------------
  * 评论点赞的共用逻辑（路由挂在 routes/comments.ts 的 /api/comments/:id/like）
  *
  * 与文章点赞同一套思路，只是目标从 slug 换成 comment_id：
- *   登录 → 记 user_id；匿名 → 记 hashIp+UA 指纹，同一个人同一条只算一次。
+ *   登录 → 记 user_id；匿名 → 记加盐 IP 哈希，同一个人同一条只算一次。
+ * 匿名身份刻意不含 User-Agent：掺了 UA 就等于「换一条 UA 多一票」。
  * ----------------------------------------------------------------*/
 
-/** 当前访客在 comment_likes 里的身份：登录用 user，匿名用指纹 */
+/** 当前访客在 comment_likes 里的身份：登录用 user，匿名用 IP 哈希 */
 async function likeActor(env: Env, c: Context, user: AuthUser | null): Promise<{ userId: string | null; fingerprint: string | null }> {
   if (user) return { userId: user.id, fingerprint: null };
-  return { userId: null, fingerprint: await visitorFingerprint(env, clientIp(c), userAgent(c)) };
+  return { userId: null, fingerprint: await hashIp(clientIp(c), env) };
 }
 
 /**
@@ -145,7 +194,7 @@ app.post('/', async (c) => {
 
   await rateLimit(c, 'reaction', 60, 3600, slug);
   const db = createDb(env);
-  const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c), userAgent(c));
+  const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c));
 
   const existing = await db
     .select({ id: reactions.id })
@@ -162,6 +211,8 @@ app.post('/', async (c) => {
   if (existing.length) {
     await db.delete(reactions).where(eq(reactions.id, existing[0]!.id));
   } else {
+    // 取消已有的赞不需要文章还在（删掉的文章也要能把自己那一票收回来）；新增才验地址
+    if (!(await targetExists(env, slug))) fail(404, '这一页在站上不存在，无法点赞或收藏');
     await db.insert(reactions).values({
       id: newId(),
       targetSlug: slug,
@@ -200,7 +251,7 @@ app.get('/', async (c) => {
   for (const r of counts) if (byCanon[r.slug]) byCanon[r.slug]!.count = Number(r.n);
 
   const user = c.get('user');
-  const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c), userAgent(c));
+  const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c));
   const mine = await db
     .select({ slug: reactions.targetSlug })
     .from(reactions)

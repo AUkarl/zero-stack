@@ -12,6 +12,8 @@ export interface EmailResult {
   detail?: string;
   /** 这一封在 email_logs 里的行号，后台与服务商日志对账就用它 */
   logId?: string;
+  /** 只是排进了队列、还没真投出去：回执不能说成「已发送」 */
+  queued?: boolean;
 }
 
 interface SendInput {
@@ -80,9 +82,27 @@ export async function mailQuotaCheck(env: Env, count: number): Promise<{ ok: boo
  */
 export async function sendEmail(env: Env, input: SendInput): Promise<EmailResult> {
   const logId = await openEmailLog(env, input);
-  const result = await deliverEmail(env, input);
+  const result = humanize(await deliverEmail(env, input));
   await closeEmailLog(env, logId, result);
   return logId ? { ...result, logId } : result;
+}
+
+/**
+ * 通道报错加工：SMTP 与 workerd 抛上来的那串英文（Stream was cancelled / 535 …）
+ * 站主看不懂也没法照着办事。这里保留原文（与服务商对账要用），在后面补一句人话。
+ */
+const MAIL_HINTS: [RegExp, string][] = [
+  [/stream was cancelled|socket hang up|ECONNRESET|ECONNABORTED/i, '连接被中途断开：多数是端口与加密方式不匹配（465 只能隐式 TLS，587/25 走 STARTTLS），也可能是对方按 IP 直接掐线'],
+  [/timeout|timed out|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNREFUSED/i, '连不上邮件服务器：核对 smtpHost 与端口，注意 Workers 的出口 IP 不在对方白名单里也会被丢'],
+  [/\b53[0-9]\b|authentication failed|invalid (?:login|credentials|user)|Username and Password/i, 'SMTP 登录被拒：用户名与密码/授权码不对（QQ、163、阿里云这类要填「授权码」，不是邮箱登录密码）'],
+  [/handshake|certificate|SSL|TLS library|alert/i, 'TLS 握手失败：证书不受信任，或这个端口要的握手方式与设置不一致'],
+  [/\b5\d\d\b|message rejected|sender (?:not|denied)|spam|quota|too many/i, '中继拒收了这封信：常见原因是发信域名没做 SPF/DKIM、收件人被拦，或超出了每日额度'],
+];
+
+function humanize(result: EmailResult): EmailResult {
+  if (result.success || !result.error) return result;
+  const hint = MAIL_HINTS.find(([re]) => re.test(result.error as string));
+  return hint ? { ...result, error: `${result.error}（${hint[1]}）` } : result;
 }
 
 /** 按 emailProvider 分流到具体通道，不记账 */
@@ -144,7 +164,7 @@ export async function queueEmail(env: Env, input: SendInput): Promise<EmailResul
   const job: EmailJob = { ...input, from: input.from, logId: logId ?? undefined };
   try {
     await env.EMAIL_QUEUE.send(job);
-    return { success: true, logId: logId ?? undefined, detail: '已进入发送队列，等待消费者投信' };
+    return { success: true, queued: true, logId: logId ?? undefined, detail: '已进入发送队列，等待消费者投信' };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     await closeEmailLog(env, logId, { success: false, error });

@@ -36,6 +36,7 @@ import {
   users,
 } from '../db/schema';
 import { SECRET_KEYS, getConfig, invalidateConfigCache } from './config';
+import { SPAM_PATTERN_FILE } from './moderation';
 import { readFileFrom, resolveRepoTarget, walkFiles, writeViaTarget, type RepoTarget } from './repo';
 import { triggerPagesBuild } from './git';
 import { listBuckets, listMediaObjects } from './media';
@@ -46,6 +47,7 @@ export const BACKUP_VERSION = 2;
 
 export type SectionId =
   | 'settings'
+  | 'rules'
   | 'theme'
   | 'posts'
   | 'moments'
@@ -57,8 +59,9 @@ export type SectionId =
   | 'media';
 
 export const SECTION_CATALOG: { id: SectionId; label: string; what: string }[] = [
-  { id: 'settings', label: '站点设置', what: '后台各处开关与文案（评论、点赞、友链、时刻、统计、审核、邮件模板…）' },
-  { id: 'theme', label: '主题样式', what: '仓库 data/*.json 八份覆盖文件与 config 下的 params.toml' },
+  { id: 'settings', label: '站点设置', what: '后台各处开关与文案（评论、点赞、友链、时刻、统计、审核、邮件模板…）；本站绑定项与密钥不导' },
+  { id: 'rules', label: '评论审核规则文件', what: '仓库里那份共享正则清单 .zero/spam-patterns.txt（后台「评论审核」页读写的是同一个文件）' },
+  { id: 'theme', label: '主题样式', what: '仓库数据目录下的 data/*.json 覆盖文件，以及 config 下的 params.toml / config.toml / 菜单' },
   { id: 'posts', label: '文章', what: '文章目录里的全部 .md（含子目录）' },
   { id: 'moments', label: '时刻', what: '时刻目录里的全部 .md' },
   { id: 'friends', label: '友链', what: 'D1 的友链与已抓到的博客动态 + 仓库 links.yaml' },
@@ -73,19 +76,34 @@ export const SECTION_IDS = SECTION_CATALOG.map((s) => s.id);
 const SECTION_LABEL = new Map(SECTION_CATALOG.map((s) => [s.id, s.label]));
 
 /**
- * 绑定「这一个账号 / 这一个域名」的配置项：导出时列出来给人工对照，恢复时一律不写。
+ * 绑定「这一个账号 / 这一个域名 / 这一个仓库」的配置项：导出时列出来给人工对照，恢复时一律不写。
  * 写回的后果是把新站的仓库坐标与域名盖成旧站的，表现为「后台一发文就 404、所有链接指向别人的域名」。
+ *
+ * 发信那三项要一起算：smtpPassword 属于密钥不导出，只把源站的 smtpHost / smtpUser / emailFrom
+ * 搬过来 = 「源站的发信身份 + 本站的密码」，登录必然失败，而且报错看着像密码错了，很难查。
+ * githubDataDir 管的是「后台前端管理那九段去哪个目录读文件」，跟仓库坐标同类，本站自己决定。
  */
 const SITE_BOUND_KEYS = [
   'siteUrl',
+  'apiBaseUrl',
+  'cmsAdminUrl',
   'githubOwner',
   'githubRepo',
   'githubBranch',
+  'githubDataDir',
   'cloudflareAccountId',
+  'cfZoneId',
   'mediaBaseUrl',
   'mediaPublicUrl',
   // 这份 JSON 里可能带明文 S3 accessKeyId / secretAccessKey，绝不能进备份文件
   'mediaBuckets',
+  'smtpHost',
+  'smtpUser',
+  'emailFrom',
+  // 站长的收件箱：搬过来等于新站的通知信全寄到旧站长的邮箱里
+  'adminNotifyEmail',
+  // RSS 比对地址是本站的绝对地址，搬过来推送只会拿旧站的文章列表
+  'subscribeFeedUrl',
 ];
 
 /* -------------------------------------------------------------------- 上限 */
@@ -204,7 +222,7 @@ export async function exportBackup(
   try {
     target = await resolveRepoTarget(env);
   } catch (e) {
-    warnings.push(`读不到内容仓库，文章/时刻/主题样式/友链文件这次是空的：${briefError(e)}`);
+    warnings.push(`读不到内容仓库，文章/时刻/主题样式/友链文件/审核规则文件这次是空的：${briefError(e)}`);
   }
 
   /** 仓库文件读不到不算失败，只记一条 note：新装的站本来就没几篇 */
@@ -246,7 +264,7 @@ export async function exportBackup(
       themeNotes.push(`列 ${dataDir} 失败：${briefError(e)}`);
     }
   }
-  const themePaths = [...dataFiles, ...(await paramFiles(target))];
+  const themePaths = [...dataFiles, ...(await paramFiles(target)), ...(await existingFiles(target, SITE_CONFIG_FILES))];
   const themeFiles = await readRepo(themePaths, themeNotes);
   themeNotes.push('hugo.toml 不在备份里：它带本站域名与 API 地址，新站用 pnpm create:site 生成的那一份');
   sections.push({
@@ -255,6 +273,23 @@ export async function exportBackup(
     files: themeFiles,
     notes: themeNotes,
   });
+
+  /* 评论审核的仓库规则文件：后台「评论审核」页能读能写，之前不在任何分区里，
+     恢复出来的新站会少掉整份共享正则清单，而且界面上看不出少了它。 */
+  const rulesNotes: string[] = [];
+  const rulesFiles: BackupFile[] = [];
+  if (target) {
+    try {
+      const f = await readFileFrom(target, SPAM_PATTERN_FILE);
+      if (f?.content) rulesFiles.push({ path: SPAM_PATTERN_FILE, content: f.content });
+      else rulesNotes.push(`本站还没有 ${SPAM_PATTERN_FILE}：后台「评论审核」页点「写入文件」才会创建`);
+    } catch (e) {
+      rulesNotes.push(`读 ${SPAM_PATTERN_FILE} 失败：${briefError(e)}`);
+    }
+  } else {
+    rulesNotes.push('内容仓库没配好，这份备份里没有规则文件');
+  }
+  sections.push({ id: 'rules', counts: { 文件: rulesFiles.length }, files: rulesFiles, notes: rulesNotes });
 
   const postsNotes: string[] = [];
   const postPaths = target ? await safeList(target, postsDir, ['.md'], postsNotes) : [];
@@ -409,6 +444,28 @@ async function paramFiles(target: RepoTarget | null): Promise<string[]> {
   return found;
 }
 
+/**
+ * 后台「前端管理 → 主题配置文件」还允许编辑这两类（Hugo 基础配置与导航菜单），
+ * 它们决定前台长什么样，却一直没进备份 —— 恢复出来的新站会退回主题默认菜单。
+ * 路径按仓库里可能的两种写法列，谁真实存在就带谁，缺的不报错（很多站点不用 menus 文件）。
+ */
+const SITE_CONFIG_FILES = ['config/_default/config.toml', 'config/config.toml', 'config/_default/menus.zh.toml', 'config/_default/menus.toml'];
+
+/** 仓库里存在且有内容的路径；读不到的一律跳过，不记错误（这几份本来就是可选的） */
+async function existingFiles(target: RepoTarget | null, candidates: string[]): Promise<string[]> {
+  if (!target) return [];
+  const found: string[] = [];
+  for (const p of candidates) {
+    try {
+      const f = await readFileFrom(target, p);
+      if (f?.content) found.push(p);
+    } catch {
+      /* 这份不在，换下一份 */
+    }
+  }
+  return found;
+}
+
 /* ---------------------------------------------------------------- 读表 */
 
 async function readTable(
@@ -453,8 +510,8 @@ export interface SectionOutcome {
   label: string;
   files?: SectionFileResult;
   tables?: SectionTableResult[];
-  /** 站点设置单独说：改了几项、哪几项与本站现值不同 */
-  settings?: { write: number; changed: { key: string; from: string; to: string }[] };
+  /** 站点设置单独说：改了几项、哪几项与本站现值不同，以及本站绑定项没动过、源站值是多少 */
+  settings?: { write: number; changed: { key: string; from: string; to: string }[]; kept: { key: string; here: string; fromBackup: string }[] };
   media?: { total: number; present: number; absent: number };
   notes: string[];
   errors: string[];
@@ -508,6 +565,17 @@ function siteApiBase(content: string): string {
 /** 正文里残留的源站本机地址（导入到线上就是访客打不开的链接） */
 const LOCAL_ADDR_RE = /https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?/;
 
+/** 取一个地址的「协议://主机[:端口]」段；解析不了就原样去掉尾斜杠 */
+function originOf(value: string | undefined | null): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return raw.replace(/\/+$/, '');
+  }
+}
+
 export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOptions = {}): Promise<ImportOutcome> {
   const payload = normalizePayload(raw);
   const db = createDb(env);
@@ -518,6 +586,12 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
   const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
   const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
   const dataDir = (await getConfig(env, 'githubDataDir'))?.trim() || 'data';
+
+  /* 本站自己的地址：本地整套栈跑在 127.0.0.1 上，那是本站的值，不是「源站残留」。
+     早先点名时不分青红皂白，把特意保留下来的本站 apiBaseURL 也报成源站地址。 */
+  const ownOrigins = new Set(
+    [(await getConfig(env, 'siteUrl')), await getConfig(env, 'apiBaseUrl'), env.SITE_URL].map(originOf).filter(Boolean),
+  );
 
   const outcome: ImportOutcome = {
     dryRun,
@@ -563,8 +637,12 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
       const changed: { key: string; from: string; to: string }[] = [];
       let write = 0;
       const existing = new Map<string, string>();
+      /* 备份里明确没导出的本站绑定项（导出时列在「未包含」里）。
+         这份 JSON 有可能是上一版备份做的 —— 那时 apiBaseUrl / cfZoneId / 发信这三项还在里面，
+         所以下面写回时的过滤不能删；这里顺便把「本站现值 vs 源站值」摆出来给人核对。 */
+      const boundInBackup = payload.omitted.filter((o) => SITE_BOUND_KEYS.includes(o.key));
       try {
-        const keys = rows.map((r) => r.key);
+        const keys = [...new Set([...rows.map((r) => r.key), ...boundInBackup.map((o) => o.key)])];
         for (let i = 0; i < keys.length; i += 90) {
           const found = await db.select().from(siteConfig).where(inArray(siteConfig.key, keys.slice(i, i + 90)));
           for (const f of found) existing.set(f.key, f.value);
@@ -572,6 +650,7 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
       } catch (e) {
         result.errors.push(briefError(e));
       }
+      const kept = boundInBackup.map((o) => ({ key: o.key, here: existing.get(o.key) ?? '', fromBackup: o.value }));
       for (const r of rows) {
         if (SECRET_KEYS.includes(r.key as never) || SITE_BOUND_KEYS.includes(r.key)) continue;
         const before = existing.get(r.key);
@@ -590,7 +669,7 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
         }
       }
       if (!dryRun && write) invalidateConfigCache();
-      result.settings = { write, changed };
+      result.settings = { write, changed, kept };
       if (changed.length > 40) result.notes.push(`改动项很多，只列出前 40 项：${changed.slice(0, 40).map((c) => c.key).join('、')}`);
       else if (changed.length) result.notes.push(`将改这些项：${changed.map((c) => c.key).join('、')}`);
       outcome.sections.push(result);
@@ -676,9 +755,10 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
             content = content.replace(API_LINE_RE, `apiBaseURL = "${mine}"`);
             keptApi.push(`${f.path}：保留本站的 ${mine}（备份里那份是 ${theirs}）`);
           }
+          if (mine) ownOrigins.add(originOf(mine));
         }
         const local = LOCAL_ADDR_RE.exec(content)?.[0];
-        if (local) localAddr.push(`${f.path} → ${local}`);
+        if (local && !ownOrigins.has(local)) localAddr.push(`${f.path} → ${local}`);
         if (current) {
           if (current.content === content) {
             fr.unchanged++;
@@ -705,10 +785,11 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
           }
         }
       }
-      if (!dryRun) {
-        fr.conflicts = fr.conflicts.filter((c) => c.includes('：'));
-      } else if (!overwrite && fr.skip) {
-        result.notes.push(`${fr.skip} 个文件本站已有同名且内容不同，没勾「覆盖同名」时保持不动`);
+      if (!dryRun) fr.conflicts = fr.conflicts.filter((c) => c.includes('：'));
+      /* 没勾覆盖时跳过了几个文件必须说出来 —— 真写模式下同名路径会被上面那行过滤掉，
+         界面就成了「同名文件 0 个 / 恢复完成」，人以为全写进去了。演习与真写的口径必须一致。 */
+      if (!overwrite && fr.skip) {
+        result.notes.push(`${fr.skip} 个文件本站已有同名且内容不同，没勾「覆盖同名」所以保持不动（要替换请勾上再导一次）`);
       }
       for (const k of keptApi.slice(0, 3)) result.notes.push(k);
       if (localAddr.length) {

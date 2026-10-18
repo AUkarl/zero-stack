@@ -16,7 +16,7 @@ import { readRepoFileQuiet } from './frontmatter';
  * 规则来源三层，都可后台维护：
  * 1. 内置话术 + spamKeywords（关键词或 /正则/flags）；
  * 2. spamCustomRegex（多行文本，每行一条 /re/flags 或裸正则）；
- * 3. 仓库文件 data/spam-patterns.txt —— 站主用 git 维护的共享黑名单，
+ * 3. 仓库文件 .zero/spam-patterns.txt —— 站主用 git 维护的共享黑名单，
  *    读不到就忽略（缓存 5 分钟，写入后立刻失效），绝不因为仓库抽风把评论关掉。
  * 第四层是服务商适配器（易盾 / 阿里绿网 / 腾讯天御 / generic / moderatejs），
  * 真实签名、真实发请求，score 与本地分取大值。
@@ -52,7 +52,7 @@ export interface VerdictBreakdown {
   builtin: string[];
   /** spamCustomRegex 命中 */
   custom: string[];
-  /** data/spam-patterns.txt 命中 */
+  /** .zero/spam-patterns.txt 命中 */
   file: string[];
   /** 规则文件读取状态 */
   fileError: string | null;
@@ -89,18 +89,27 @@ interface Candidate {
   createdAt?: number;
 }
 
-/** 内置话术（广告导流类），后台 spamKeywords 只能追加，不能替代 */
+/**
+ * 内置话术（广告导流类），后台 spamKeywords 只能追加，不能替代。
+ *
+ * 带上下文的一律写成 /正则/i（这一层认这个格式）：裸词会误杀正常说话 ——
+ * 「我去年去澳门旅游」「这个贷款额度怎么算」「书店免费领取书签」都曾被单条 +70 直接判死，
+ * 而 spamThreshold 默认才 60。地名、证件、领赠品这类必须挨着导流话才计分。
+ */
 const BUILTIN_KEYWORDS = [
   '加微信', '加v信', '加vx', '加qq', '代开发票', '发票代开', '刷单', '兼职日结', '日入过千',
-  '博彩', '彩票投注', '真人视讯', '六合彩', '澳门', '网贷', '贷款额度', '秒下款', '办证',
-  '刻章', '私家侦探', '定位找人', 'pos机办理', '养卡套现', '免费领取', '点击链接领取',
-  'whatsapp', 'telegram群', 'tg群', '招代理', '招商电话', '低息贷款', '征信修复',
+  '博彩', '彩票投注', '真人视讯', '六合彩', '办证', '刻章', '私家侦探', '定位找人',
+  'pos机办理', '养卡套现', '点击链接领取', 'whatsapp', 'telegram群', 'tg群', '招代理', '招商电话',
+  '/(澳门|拉斯维加斯).{0,8}(官方|在线|娱乐|赌场|直营|注册|开户)/i',
+  '/(网贷|贷款|借款|信用卡).{0,8}(额度|秒批|秒下款|包过|低息|无息|无视征信|黑白户)/i',
+  '/(免费领取|免费赠送).{0,8}(红包|优惠券|券|礼品|课程|资料|会员)/i',
+  '/征信.{0,4}(修复|洗白|铲单)/i',
 ];
 
 /**
  * 开箱默认规则集（一行一条，`/正则/flags` 或裸关键词，# 开头是注释）。
  *
- * 为什么放在代码里而不是站点仓库的 data/spam-patterns.txt：那份文件是新站点没有的，
+ * 为什么放在代码里而不是站点仓库的 .zero/spam-patterns.txt：那份文件是新站点没有的，
  * 后台一开就想要有一层兜底。这里作为默认基线，配合配置键：
  *   spamUseBuiltinPatterns  一个开关整份关掉（默认开）
  *   spamRuleWeight          明确规则的单条命中分，默认 70 —— 高于默认阈值 60，
@@ -213,9 +222,23 @@ function isGarbled(text: string): boolean {
   return noise / chars.length > 0.5;
 }
 
+/**
+ * 近一小时内「同一个人」被拒过几条。
+ *
+ * 口径必须是「同 IP 且同昵称/同邮箱」，只按 IP 会连坐：校园网、公司网、基站出口后面是几百号人
+ * 共用一个 IP，其中一人发广告会把整栋楼后面来的正常评论一起加分（实测能抬到 95 分）。
+ * 什么凭据都没留的纯游客（只有 IP）不参与这项统计 —— 宁可少加一分，也不误伤一整栋楼。
+ */
 async function recentRejected(env: Env, input: Candidate): Promise<number> {
+  const sameHandle: SQL[] = [];
+  if (input.authorEmail) sameHandle.push(sql`author_email = ${input.authorEmail}`);
+  if (input.authorName) sameHandle.push(sql`author_name = ${input.authorName}`);
+
   const conds: SQL[] = [];
-  if (input.ipHash) conds.push(sql`ip_hash = ${input.ipHash}`);
+  if (input.ipHash && sameHandle.length) {
+    const both = and(sql`ip_hash = ${input.ipHash}`, or(...sameHandle));
+    if (both) conds.push(both);
+  }
   if (input.authorEmail) conds.push(sql`author_email = ${input.authorEmail}`);
   if (!conds.length) return 0;
   const rows = await createDb(env)
@@ -328,12 +351,20 @@ export async function customRules(env: Env): Promise<PatternRule[]> {
 
 /* ------------------------------------------------------------ 仓库规则文件 */
 
-export const SPAM_PATTERN_FILE = 'data/spam-patterns.txt';
+/**
+ * 规则文件在内容仓库里的位置。
+ *
+ * 必须是 Hugo 完全不碰的路径：`data/` 下每个文件都会被当数据文件解析，纯文本正则会
+ * 直接让整站构建失败（`unmarshal of format "" is not supported`），后台点一次「写入文件」
+ * 就把站点搞挂。仓库根下以点开头的目录 Hugo 既不入内容树也不拷进产物，主题也读不到它 ——
+ * 这份清单本来就是后端专用存储，放在这里才是它的归属。
+ */
+export const SPAM_PATTERN_FILE = '.zero/spam-patterns.txt';
 const PATTERN_CACHE_KEY = 'zero:spam-patterns';
 const PATTERN_CACHE_TTL = 300;
 
 export interface PatternFileState {
-  /** 生效路径（就是 SPAM_PATTERN_FILE，留成函数方便以后做配置项） */
+  /** 生效路径（就是 SPAM_PATTERN_FILE），后台显示的是它而不是前端硬写的字符串 */
   path: string;
   exists: boolean;
   content: string;
@@ -888,7 +919,7 @@ export interface InspectOptions {
 export async function inspectComment(env: Env, input: Candidate, options: InspectOptions = {}): Promise<Verdict> {
   const enabled = await getConfigBool(env, 'spamEnabled', true);
   const threshold = await getConfigInt(env, 'spamThreshold', 60);
-  const hold = await getConfigBool(env, 'spamHoldPending', false);
+  const hold = await getConfigBool(env, 'spamHoldPending', true);
   /** 明确规则（关键词 / 默认规则集 / 自定义正则 / 仓库文件）的单条命中分，默认 70 > 阈值 60 */
   const ruleWeight = await getConfigInt(env, 'spamRuleWeight', 70);
   const useBuiltin = await getConfigBool(env, 'spamUseBuiltinPatterns', true);
@@ -971,7 +1002,7 @@ export async function inspectComment(env: Env, input: Candidate, options: Inspec
   }
 
   const rejected = await recentRejected(env, input);
-  if (rejected >= 5) add(25, `近一小时已有 ${rejected} 条未通过评论`, 'text', 'recentRejected');
+  if (rejected >= 5) add(25, `同一来源（同 IP 且同昵称/邮箱）近一小时已有 ${rejected} 条未通过评论`, 'text', 'recentRejected');
 
   breakdown.local = [...hits];
 
@@ -984,7 +1015,7 @@ export async function inspectComment(env: Env, input: Candidate, options: Inspec
     breakdown.custom = customMatches.map((m) => m.label);
   }
 
-  /* 仓库规则文件 data/spam-patterns.txt */
+  /* 仓库规则文件 .zero/spam-patterns.txt */
   if (options.refreshPatterns) resetPatternCache();
   const file = await fileRules(env);
   breakdown.fileError = file.error;

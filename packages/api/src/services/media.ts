@@ -149,12 +149,18 @@ export async function resolveBucket(env: Env, id?: string | null): Promise<Media
 
 /* ------------------------------------------------------------------ R2 绑定 */
 
+/**
+ * 取桶绑定。
+ *
+ * 绝不退到别的桶上：以前请求 R2_PUBLIC 而 Worker 没绑它时会静默写进私有 R2，
+ * 界面报「上传成功」、图片直链却 404，图还落在了不该落的那个桶里。
+ * 少了绑定就是部署没配好，直接说清楚要补什么。
+ */
 function r2Bucket(env: Env, bucket: MediaBucket): R2Bucket {
   const name = bucket.binding || 'R2';
   const bound = (env as unknown as Record<string, R2Bucket | undefined>)[name];
   if (bound) return bound;
-  if (env.R2) return env.R2;
-  fail(500, `未绑定 R2（需要 ${name}）`);
+  fail(500, `Worker 没绑这个桶（wrangler 里缺 ${name} 绑定）：图没上传，也没偷偷写到别的桶里。补法见 docs/DEPLOYMENT.md 的 R2 绑定一节`);
 }
 
 

@@ -268,7 +268,7 @@
     const front = [momentFront(), extrasFromDoc(baseDoc)].filter(Boolean).join('\n');
     const path = editing || `${momentsDir}/${newSlug()}.md`;
     try {
-      await put<{ data: { sha?: string } }>('/api/admin/content/file', {
+      const res = await put<{ data: { sha?: string; note?: string | null } }>('/api/admin/content/file', {
         path,
         front: {
           date: fromDateInput(date) || date,
@@ -289,14 +289,15 @@
         // 兼容只认 content 的后端
         content: composeFile(front, body),
       });
-      notice = editing ? '时刻已更新到仓库 ✓' : '时刻已发布到仓库 ✓';
+      // 将来时间被后端转成草稿时那句说明必须让站主看见，否则又是一次「发布成功、前台没有」
+      notice = (editing ? '时刻已更新到仓库 ✓' : '时刻已发布到仓库 ✓') + (res.data?.note ? `；${res.data.note}` : '');
       resetForm();
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : '发布失败';
     } finally {
       saving = false;
-      setTimeout(() => (notice = ''), 3000);
+      setTimeout(() => (notice = ''), 8000);
     }
   }
 

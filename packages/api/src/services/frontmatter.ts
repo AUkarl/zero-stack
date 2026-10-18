@@ -242,9 +242,23 @@ export function buildMarkdown(front: Front, body: string): string {
 
 /* ------------------------------------------------------------------ 文章语义 */
 
-
-
-/** 标题 → 文件名 slug：只保留 ASCII 字母数字与短横线，取不出就返回空串 */
+/**
+ * front matter 的 date 是否晚于当前时间；是就返回那个时间的原文，调用方拿去做提示。
+ *
+ * Hugo 只在构建那一刻比对日期，而且这个开关只有命令行 -F/--buildFuture ——
+ * 实测 0.165.0 连 [build].future 都不认（hugo config 里查不到这一项），写了也白写。
+ * 所以「发布时间填成将来」的稿子保存出去会静默消失：后台说发布成功，前台 404、归档也没有。
+ *
+ * 站点没配 timeZone 时 Hugo 把这类不带偏移的时间串按 UTC 解析，workerd 的 Date.parse 同为 UTC，
+ * 两边口径一致。
+ */
+export function futureFrontDate(front: Front, now = Date.now()): string | null {
+  const raw = front?.date;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const text = String(raw).trim().replace(' ', 'T');
+  const at = Date.parse(text);
+  return Number.isFinite(at) && at > now ? text : null;
+}
 
 /** 正文摘要兜底：没有 summary/description 时截第一段纯文本 */
 export function excerpt(mdOrBody: string, len = 160): string {

@@ -74,8 +74,6 @@ publicApp.post('/apply', async (c) => {
   const url = input.url;
   const normalized = normalizeFriendUrl(url);
 
-  await rateLimit(c, 'friend-apply', 3, 3600);
-
   if (await blocked(env, normalized)) fail(400, '该站点不在收录范围内');
 
   const own = await getConfig(env, 'siteUrl');
@@ -85,9 +83,14 @@ publicApp.post('/apply', async (c) => {
   if (listed.some((f) => normalizeFriendUrl(f.url) === normalized)) fail(409, '该站点已在友链列表中');
 
   const previous = await findByNormalized(env, normalized);
+  if (previous && previous.status === 'pending') fail(409, '该站点已提交过申请，请等待审核');
+  if (previous && previous.status === 'approved') fail(409, '该站点已审核通过');
+
+  /* 限流放所有校验之后、真正落库之前：填自己站点(400)、重复申请(409) 这些一次都没改过库，
+     却照样吃掉 3 次/小时的配额 —— 正常人试两次就被 429 挡住，而换个 IP 还能接着刷。 */
+  await rateLimit(c, 'friend-apply', 3, 3600);
+
   if (previous) {
-    if (previous.status === 'pending') fail(409, '该站点已提交过申请，请等待审核');
-    if (previous.status === 'approved') fail(409, '该站点已审核通过');
     // url 上有唯一索引，驳回后重新提交复用同一行，顺带留下重新审核的时间
     await db
       .update(friendApplications)

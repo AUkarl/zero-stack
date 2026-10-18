@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
-import { desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
 import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
-import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, setConfig } from '../services/config';
+import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, setConfig, type ConfigKey } from '../services/config';
 import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
 import { ensureAdminAuthorIdentity } from '../services/admin-author';
 import { avatarForEmail, emailMd5 } from '../lib/avatar';
@@ -30,13 +30,14 @@ import { clientIp } from '../lib/http';
 import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { deleteFile, listDir, readFile, writeFile } from '../services/git';
-import { repoTarget, triggerPagesBuild } from '../services/git';
+import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, type MediaBucket } from '../services/media';
 import {
   buildMarkdown,
   contentWebPath,
   excerpt,
+  futureFrontDate,
   orderFront,
   parseFrontMatter,
   postWebPath,
@@ -75,7 +76,7 @@ app.get('/config', async (c) => {
   return Response.json({ data, hasSecret });
 });
 
-const configWriteSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
+const configWriteSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
 
 /** 登录策略以 LOGIN_POLICIES 为唯一口径：写错值会静默退回单密码，必须在入口就拦住 */
 const POLICY_VALUES: string[] = LOGIN_POLICIES;
@@ -91,24 +92,61 @@ app.patch('/config', async (c) => {
     fail(400, `登录方式只能是这些之一：${POLICY_VALUES.join(' / ')}`);
   }
 
-  const updated: string[] = [];
-  for (const [key, value] of Object.entries(parsed.data)) {
-    if (!isConfigKey(key)) fail(400, `未知配置项 ${key}`);
-    // 密钥字段读取时是空串，后台原样提交回来不能把已存的值抹掉
+  /*
+   * 先把整份请求校验完、再开始写。以前是「边校验边写」：未知键排在中间时，它前面那几项
+   * 已经落库了，接口却回 400「未知配置项」，后台显示「N 项未保存」—— 人和程序都说不清
+   * 现在到底是什么状态。null 只给密钥用，表示「把已存的那份清掉」；
+   * 留空字符串对密钥的含义是「不改」（密钥读取恒回空串，原样提交不能抹掉密码）。
+   */
+  const writes: { key: ConfigKey; value: string; valueType: string }[] = [];
+  for (const [raw, value] of Object.entries(parsed.data)) {
+    if (!isConfigKey(raw)) fail(400, `未知配置项 ${raw}`);
+    const key = raw as ConfigKey;
+    if (value === null) {
+      if (!isSecretKey(key)) fail(400, `${key} 不是密钥项，不能用 null 清除：请填新值（清空就填 ""）`);
+      writes.push({ key, value: '', valueType: 'string' });
+      continue;
+    }
     if (isSecretKey(key) && value === '') continue;
-    const asString = typeof value === 'string' ? value : JSON.stringify(value);
-    await setConfig(c.env, key, asString, typeof value === 'string' ? 'string' : typeof value);
-    updated.push(key);
+    const asText = typeof value === 'string' ? value : JSON.stringify(value);
+    /** 数字键先在这儿拦住（整批不写）：让它落库就等于「存了但没用」，读的时候解析失败默默回落默认值 */
+    if (numericKeyBadValue(key, asText)) fail(400, `${key} 只能填数字（现在送的是「${asText}」），留空表示用默认值`);
+    writes.push({
+      key,
+      value: asText,
+      valueType: typeof value === 'string' ? 'string' : typeof value,
+    });
+  }
+
+  const changed: { key: string; from: string; to: string }[] = [];
+  const failed: { key: string; error: string }[] = [];
+  for (const w of writes) {
+    const before = (await getConfig(c.env, w.key)) ?? '';
+    if (before === w.value) continue;
+    try {
+      await setConfig(c.env, w.key, w.value, w.valueType);
+    } catch (e) {
+      failed.push({ key: w.key, error: e instanceof Error ? e.message : String(e) });
+      continue;
+    }
+    /* 流水里绝不落密钥原文（审计表既不加密也不导出，抄一份密码进去等于多一处泄露面）。
+       界面上也要看得见「这次动过哪条凭据」，所以只留「有没有值」这一档信息。 */
+    if (isSecretKey(w.key)) {
+      changed.push({ key: w.key, from: before ? '（原有，值不记录）' : '（原本为空）', to: w.value ? '（已写入新值，值不记录）' : '（已清除）' });
+      continue;
+    }
+    changed.push({ key: w.key, from: before, to: w.value });
   }
 
   await writeAudit(c.env, {
     actor: admin,
     action: 'config',
-    target: updated.join(','),
-    detail: { keys: updated },
+    target: changed.map((x) => x.key).join(','),
+    detail: { event: 'patch', changed, failed },
     ip: clientIp(c),
   });
-  return ok({ updated: updated.length, keys: updated });
+  /* 写失败要说成写失败：以前整批只在最后 ok，中间某条 D1 出错时界面照样显示「已保存」 */
+  return ok({ updated: changed.length, keys: changed.map((x) => x.key), changed, failed });
 });
 
 /* ---------------- 评论审核 ---------------- */
@@ -172,21 +210,31 @@ app.post('/comments/:id/moderate', async (c) => {
 app.post('/comments/moderate-batch', async (c) => {
   const admin = requireAdmin(c);
   const parsed = z
-    .object({ ids: z.array(z.string().max(64)).min(1).max(200), action: z.enum(['approve', 'spam']) })
+    .object({ ids: z.array(z.string().max(64)).max(200), action: z.enum(['approve', 'spam']) })
     .safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, '参数有误：一次最多 200 条');
-  const db = createDb(c.env);
-  for (const id of parsed.data.ids) {
-    await db.update(comments).set({ status: parsed.data.action === 'approve' ? 'approved' : 'spam' }).where(eq(comments.id, id));
-  }
+  if (!parsed.success) fail(400, '参数有误：action 只能是 approve / spam，一次最多 200 条');
+  if (!parsed.data.ids.length) fail(400, '没有要处理的评论');
+  const env = c.env;
+  const ids = parsed.data.ids;
+  const next = parsed.data.action === 'approve' ? 'approved' : 'spam';
+  const db = createDb(env);
+  /* 一次 UPDATE 而不是一 id 一条：D1 免费写入额度经不起 200 条一次点，而且批量语句的
+     meta.changes 才是「真的改了几条」——传进来的 id 里有早已被删掉的，逐条循环时
+     接口照样回 handled:200，等于谎报。 */
+  const run = await db
+    .update(comments)
+    .set({ status: next })
+    .where(and(inArray(comments.id, ids), ne(comments.status, next)))
+    .run();
+  const handled = Number((run?.meta as { changes?: number } | undefined)?.changes ?? 0);
   await writeAudit(c.env, {
     actor: admin,
     action: 'comment',
-    target: `${parsed.data.ids.length} 条`,
-    detail: { action: parsed.data.action, ids: parsed.data.ids.slice(0, 50) },
+    target: `${ids.length} 条`,
+    detail: { action: parsed.data.action, requested: ids.length, handled, ids: ids.slice(0, 50) },
     ip: clientIp(c),
   });
-  return ok({ handled: parsed.data.ids.length, status: parsed.data.action === 'approve' ? 'approved' : 'spam' });
+  return ok({ requested: ids.length, handled, status: next });
 });
 
 /** 用当前规则试跑一段文本，不入库：后台调阈值时用 */
@@ -223,17 +271,21 @@ app.post('/spam/probe', async (c) => {
   return ok(verdict);
 });
 
-/** 操作留痕：谁在什么时候改了什么 */
+/** 操作留痕：谁在什么时候改了什么（分页 + 总数，界面在「备份」页下面那一段） */
 app.get('/audit', async (c) => {
   requireAdmin(c);
-  const rows = await listAudit(c.env, {
+  const { rows, total, limit, offset } = await listAudit(c.env, {
     action: c.req.query('action') || undefined,
     from: Number(c.req.query('from')) || undefined,
     to: Number(c.req.query('to')) || undefined,
     limit: Number(c.req.query('limit')) || 100,
+    offset: Number(c.req.query('offset')) || 0,
   });
-  return ok(
-    rows.map((r) => ({
+  return ok({
+    total,
+    limit,
+    offset,
+    rows: rows.map((r) => ({
       id: r.id,
       actorName: r.actorName,
       action: r.action,
@@ -242,7 +294,7 @@ app.get('/audit', async (c) => {
       ip: r.ip,
       createdAt: r.createdAt,
     })),
-  );
+  });
 });
 
 /** 脏数据不该让整个审计列表 500 */
@@ -329,10 +381,15 @@ interface ContentItem {
 }
 
 type ContentOutcome =
-  | { ok: true; path: string; sha?: string; bytes: number; notify: NotifyResult; purgedBuild: string[] }
+  | { ok: true; path: string; sha?: string; bytes: number; notify: NotifyResult; purgedBuild: string[]; futureDraft: string | null }
   | { ok: false; path: string; reason: 'invalid' | 'conflict' | 'failed'; error: string };
 
 type NotifyResult = { jobId?: string; sent?: number; failed?: number; skipped?: string };
+
+/** 将来日期被显式转成草稿后说给站主的那一句（回执与审计都用它） */
+function futureDraftNote(from: string): string {
+  return `发布时间（${from}）在将来，Hugo 只在构建时比对日期、这类页面不会生成；已按草稿保存，到时间后取消草稿再保存一次即可上线`;
+}
 
 /**
  * 这篇在本地构建产物里的位置：kind 是 public/ 下的一级目录，stem 是文件名（去扩展名）。
@@ -373,13 +430,25 @@ async function writeContentItem(env: Env, admin: { id?: string | null }, item: C
   const settings = await repoTarget(env);
 
   let content: string;
+  let futureDraft: string | null = null;
   try {
     if (item.front && typeof item.front === 'object') {
       const front = orderFront(await withAuthorFallback(env, path, item.front as Front));
       // 时刻（朋友圈式动态）没有标题，正文/图/音/视频任一非空即可；标题必填只针对文章
       if (isPostPath(path) && !String(front.title ?? '').trim()) throw new Error('标题不能为空');
-      content = buildMarkdown(front, (item.body ?? '').trim());
+      /* 发布时间填在将来 → 落成显式草稿。不转的话保存会「成功」，但 Hugo 到构建时把那页跳过，
+         站主看到的就是「后台说发布成功、前台查无此文」。转成草稿后它至少在后台是可见的。 */
+      const future = isDraftFront(front) ? null : futureFrontDate(front);
+      if (future) futureDraft = future;
+      content = buildMarkdown(future ? { ...front, draft: true } : front, (item.body ?? '').trim());
     } else if (typeof item.content === 'string') {
+      /* 只给整篇 markdown 的写法没有结构化字段可改，不改人家一个字节，直接拦下来：
+         放着不管同样是「写进去了但前台没有」，宁可让调用方当场知道。 */
+      const parsed = parseFrontMatter(item.content);
+      const future = isDraftFront(parsed.front) ? null : futureFrontDate(parsed.front);
+      if (future) {
+        throw new Error(`${futureDraftNote(future)}。这次提交未写入，请在 front matter 里加上 draft: true，或改用 front 字段提交`);
+      }
       content = item.content;
     } else {
       throw new Error('缺少正文');
@@ -411,7 +480,7 @@ async function writeContentItem(env: Env, admin: { id?: string | null }, item: C
   }
 
   const notify: NotifyResult = item.notifySubscribers ? await notifyPostSubscribers(env, admin.id ?? '', path, parsed) : {};
-  return { ok: true, path, sha: result.sha, bytes: content.length, notify, purgedBuild };
+  return { ok: true, path, sha: result.sha, bytes: content.length, notify, purgedBuild, futureDraft };
 }
 
 /** 「发布后群发订阅」：只有非草稿的文章能发，草稿只入库不推送 */
@@ -464,11 +533,12 @@ app.put('/content/file', async (c) => {
       bytes: outcome.bytes,
       notify: outcome.notify.skipped ?? outcome.notify.jobId ?? null,
       ...(outcome.purgedBuild.length ? { purgedBuild: outcome.purgedBuild } : {}),
+      ...(outcome.futureDraft ? { futureDraft: outcome.futureDraft } : {}),
     },
     ip: clientIp(c),
   });
   const build = await finishContentWrite(c.env, 1, body?.triggerBuild !== false);
-  return ok({ ...outcome, build });
+  return ok({ ...outcome, note: outcome.futureDraft ? futureDraftNote(outcome.futureDraft) : null, build });
 });
 
 /**
@@ -495,6 +565,7 @@ app.post('/content/batch', async (c) => {
     error?: string;
     notify?: NotifyResult;
     purgedBuild?: string[];
+    futureDraft?: string | null;
   }[] = [];
   let done = 0;
   for (const item of files) {
@@ -503,16 +574,23 @@ app.post('/content/batch', async (c) => {
     if (r.ok) done++;
     results.push(
       r.ok
-        ? { path: r.path, ok: true, sha: r.sha, bytes: r.bytes, notify: r.notify, purgedBuild: r.purgedBuild }
+        ? { path: r.path, ok: true, sha: r.sha, bytes: r.bytes, notify: r.notify, purgedBuild: r.purgedBuild, futureDraft: r.futureDraft }
         : { path: r.path, ok: false, reason: r.reason, error: r.error },
     );
   }
+  const drafted = results.filter((r) => r.ok && r.futureDraft).map((r) => r.path);
 
   await writeAudit(c.env, {
     actor: admin,
     action: 'content',
     target: results.map((r) => r.path).join(','),
-    detail: { event: 'batch', total: results.length, done, failed: results.filter((r) => !r.ok).map((r) => `${r.path}:${r.reason ?? ''}`) },
+    detail: {
+      event: 'batch',
+      total: results.length,
+      done,
+      drafted,
+      failed: results.filter((r) => !r.ok).map((r) => `${r.path}:${r.reason ?? ''}`),
+    },
     ip: clientIp(c),
   });
   const build = await finishContentWrite(c.env, done, input?.triggerBuild !== false);
@@ -520,8 +598,12 @@ app.post('/content/batch', async (c) => {
     total: results.length,
     done,
     results,
+    drafted,
     build,
-    message: done ? `已推送 ${done}/${results.length} 篇${build?.triggered ? '，已请求站点重建' : ''}` : '没有推送成功，内容都留在本地暂存里',
+    message: done
+      ? buildReceipt(build, `已推送 ${done}/${results.length} 篇`) +
+        (drafted.length ? `；其中 ${drafted.length} 篇发布时间填在将来，已按草稿保存（到时间后取消草稿再保存一次才会上线）` : '')
+      : '没有推送成功，内容都留在本地暂存里',
   });
 });
 
@@ -667,6 +749,9 @@ app.put('/repo/file', async (c) => {
   const path = await repoFilePath(c.env, raw);
 
   const current = await readRepoFile(c.env, path).catch(() => null);
+  /* 这几份文件写空 = 前台立刻坏（params.toml 空 → apiBaseURL 没了，整站退回纯静态；
+     links.yaml 空 → 友链整页没了）。误删全选再保存就是这种后果，所以在入口拦住。 */
+  if (!content.trim()) fail(400, `${path} 的内容是空的：这几份文件写空会直接把前台对应的那块弄没，要恢复默认请到仓库里删掉这个文件`);
   if (sha && current && current.sha !== sha) {
     fail(409, '这份文件在你编辑期间已被改动，请重新读取后再保存，不要直接覆盖');
   }
@@ -674,18 +759,18 @@ app.put('/repo/file', async (c) => {
   const committed = await writeRepoFile(c.env, path, content, message || `zero-cms: 更新 ${path}`, {
     actor: admin,
     ip: clientIp(c),
-    action: 'config',
+    action: 'params',
   });
   if (!committed.success) fail(502, committed.error ?? '写入失败');
   const build = triggerBuild ? await triggerPagesBuild(c.env) : null;
   await writeAudit(c.env, {
     actor: admin,
-    action: 'config',
+    action: 'params',
     target: path,
-    detail: { event: 'repo-file.write', bytes: content.length, sha: committed.sha },
+    detail: { event: 'repo-file.write', bytesBefore: current?.content.length ?? 0, bytes: content.length, sha: committed.sha, build },
     ip: clientIp(c),
   });
-  return ok({ path, sha: committed.sha, bytes: content.length, build, message: '已写入仓库，站点构建已请求' });
+  return ok({ path, sha: committed.sha, bytes: content.length, build, message: buildReceipt(build, `已写入仓库 ${path}`) });
 });
 
 /* ---------------- 媒体库：多桶（R2 绑定 + S3 兼容第三方） ---------------- */
@@ -929,7 +1014,7 @@ app.post('/email/test', async (c) => {
   const res = await sendEmail(env, { to: parsed.data.to, subject: `【${site}】测试邮件（${kind}）`, html, kind: 'notice' });
   await writeAudit(env, {
     actor: admin,
-    action: 'config',
+    action: 'email',
     target: 'email:test',
     detail: { to: parsed.data.to, kind, success: res.success, error: res.error ?? null },
     ip: clientIp(c),
@@ -958,7 +1043,7 @@ app.post('/email/notify-test', async (c) => {
   const result = await notifySelfTest(env, to);
   await writeAudit(env, {
     actor: admin,
-    action: 'config',
+    action: 'email',
     target: 'email:notify-test',
     detail: { to, rows: result.rows.map((r) => ({ to: r.to, sent: r.sent, error: r.error })) },
     ip: clientIp(c),
@@ -1313,7 +1398,7 @@ app.put('/spam/pattern-file', async (c) => {
   const result = await writeRepoFile(env, SPAM_PATTERN_FILE, parsed.data.content, message, {
     actor: admin,
     ip: clientIp(c),
-    action: 'config',
+    action: 'params',
     // repo.ts 在本地后端会自己记一条 content 流水，这里已经记了更详细的，不重复
     audit: false,
   });
@@ -1323,7 +1408,7 @@ app.put('/spam/pattern-file', async (c) => {
   resetPatternCache();
   await writeAudit(c.env, {
     actor: admin,
-    action: 'config',
+    action: 'params',
     target: SPAM_PATTERN_FILE,
     detail: { event: 'spam-pattern-file', backend, bytes: parsed.data.content.length, sha: result.sha ?? null },
     ip: clientIp(c),
@@ -1477,11 +1562,15 @@ app.put('/authors/file', async (c) => {
 
   const problem = validateAuthorsYaml(parsed.data.content);
   if (problem) fail(400, `作者表解析失败：${problem}`);
+  let table: Record<string, unknown>;
   try {
-    parseAuthorsYaml(parsed.data.content);
+    table = parseAuthorsYaml(parsed.data.content);
   } catch (e) {
     fail(400, `作者表解析失败：${errorMessage(e)}`);
   }
+  /* 手工整份覆盖是「一键清空全站署名」最容易发生的地方（全选再保存就是空文件）：空表直接拒。
+     程序内部的合并写入不走这条判断，那类路径不会把整份表抹掉。 */
+  if (!Object.keys(table).length) fail(400, '作者表是空的：这样保存会让前台作者页与所有文章署名一起空白。要删某位作者，只删那一段即可');
 
   const result = await putAuthorsFile(c.env, parsed.data.content, {
     message: parsed.data.message,
@@ -1634,16 +1723,20 @@ app.get('/stats', async (c) => {
  * 之前只 listDir 一层（githubContentDir，默认 content），而文章实际在 content/posts/ 下，
  * 所以仪表盘那个「文章」卡片数出来的永远是 0（或多语言布局下少算一整层）。
  * 用的就是备份分区同一份递归列举，两处口径不会再分叉。
+ *
+ * `_index.md` 不算一篇：它是目录说明文件（管列表页要不要生成、栏目描述写在哪），
+ * 把它数进去，仪表盘就比真实内容多出一篇「文章」。
  */
 app.get('/stats/content', async (c) => {
   requireAdmin(c);
   const postsDir = (await getConfig(c.env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
   const momentsDir = (await getConfig(c.env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
+  const isPage = (p: string) => !(p.split('/').pop() ?? '').startsWith('_');
   try {
     const target = await repoTarget(c.env);
     const [posts, moments] = await Promise.all([
-      walkFiles(target, postsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP }),
-      walkFiles(target, momentsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP }),
+      (await walkFiles(target, postsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP })).filter(isPage),
+      (await walkFiles(target, momentsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP })).filter(isPage),
     ]);
     return ok({
       postsDir,
@@ -1655,6 +1748,44 @@ app.get('/stats/content', async (c) => {
   } catch (e) {
     return ok({ postsDir, momentsDir, posts: 0, moments: 0, capped: false, error: errorMessage(e) });
   }
+});
+
+/**
+ * GET /api/admin/stats/reactions —— 点赞与收藏按页面盘点。
+ *
+ * 以前后台没有任何地方看得见 reactions 表：匿名赞能不能被刷、哪一页的赞数对不上，
+ * 站长只能翻数据库。这里给一个按票数排序的清单（标题由后台拿 /api/admin/posts 自己配）。
+ * actors 是「几个不同来源」：票数远大于人数就是刷出来的。
+ */
+app.get('/stats/reactions', async (c) => {
+  requireAdmin(c);
+  const limit = Math.min(200, Math.max(1, Number(c.req.query('limit')) || 50));
+  const offset = Math.max(0, Number(c.req.query('offset')) || 0);
+  const db = createDb(c.env);
+  const [rows, total, pages] = await Promise.all([
+    db
+      .select({
+        slug: reactions.targetSlug,
+        likes: sql<number>`sum(case when ${reactions.kind} = 'like' then 1 else 0 end)`,
+        stars: sql<number>`sum(case when ${reactions.kind} = 'star' then 1 else 0 end)`,
+        actors: sql<number>`count(distinct coalesce(${reactions.userId}, ${reactions.fingerprint}))`,
+        lastAt: sql<number>`max(${reactions.createdAt})`,
+      })
+      .from(reactions)
+      .groupBy(reactions.targetSlug)
+      .orderBy(sql`(sum(case when ${reactions.kind} = 'like' then 1 else 0 end) + sum(case when ${reactions.kind} = 'star' then 1 else 0 end)) desc`)
+      .limit(limit)
+      .offset(offset),
+    db.select({ n: sql<number>`count(*)` }).from(reactions),
+    db.select({ n: sql<number>`count(distinct ${reactions.targetSlug})` }).from(reactions),
+  ]);
+  return ok({
+    rows: rows.map((r) => ({ slug: r.slug, likes: Number(r.likes), stars: Number(r.stars), actors: Number(r.actors), lastAt: Number(r.lastAt) })),
+    limit,
+    offset,
+    reactionRows: Number(total[0]?.n ?? 0),
+    pages: Number(pages[0]?.n ?? 0),
+  });
 });
 
 /**

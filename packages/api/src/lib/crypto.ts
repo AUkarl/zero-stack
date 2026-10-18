@@ -153,7 +153,13 @@ export async function emailHash(email: string): Promise<{ algo: string; hash: st
   return { algo: 'none', hash: '' };
 }
 
-/** 匿名点赞去重指纹：IP + UA，加服务端盐，不落原始 IP */
-export async function anonymousFingerprint(secret: string, ip: string, userAgent: string): Promise<string> {
-  return hmacHex(secret, `${ip}|${userAgent}`);
+/**
+ * 匿名点赞/收藏的去重身份：只有 IP（加服务端盐），绝不掺 UA。
+ *
+ * 带上 UA 时，同一个人换一下 User-Agent 就是一个新身份，可以无限刷（实测同一 IP 换 4 个 UA
+ * 就从 1 赞刷到 4 赞）。代价是同一出口 IP（校园网、公司网）共用一票 —— 想要每人各计一票，
+ * 就在后台关掉「允许匿名点赞」，登录用户走 user_id，不受这条限制。
+ */
+export async function anonymousFingerprint(secret: string, ip: string): Promise<string> {
+  return hmacHex(secret, ip);
 }

@@ -8,6 +8,7 @@ import { getConfigBool, getConfigInt } from '../services/config';
 import { hashIp, lifetimeStats, recordPageview, statsMeta, visitorDistinctSql } from '../services/stats';
 import { ok, fail } from '../lib/errors';
 import { clientIp, country, isBot, parseUserAgent, referrerHost, userAgent } from '../lib/http';
+import { rateLimit } from '../lib/rate-limit';
 import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
@@ -52,6 +53,9 @@ app.post('/beat', async (c) => {
   const ip = clientIp(c);
   // 爬虫与监控探针不入库，否则浏览量与热门页 Top 会被机器流量抬虚高
   if (isBot(ua)) return ok({ tracked: false });
+  /* 频控：一个 IP 一小时 240 次（约每分钟翻 4 页），正常人逛站碰不到这条线。
+     放在 UA 判断之后，爬虫已经不入库，别为它们白写 KV。 */
+  await rateLimit(c, 'beat', 240, 3600);
   const { device, browser, os } = parseUserAgent(ua);
 
   // 访客指纹 sha256(salt|ip)：明文 IP 只在这一步存在于内存，入库的只有哈希

@@ -69,3 +69,14 @@ export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean;
     return { triggered: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
+
+/**
+ * 写盘之后要给后台的那半句回执。
+ *
+ * 以前不管 Hook 有没有真的调起来都写「站点构建已请求」，前台就一直是旧页面 ——
+ * 静态站不重建等于什么都没发生，这句必须按实际结果拼。
+ */
+export function buildReceipt(build: { triggered?: boolean; error?: string } | null, savedText: string): string {
+  if (!build) return `${savedText}，没请求站点重建（前台要等下次自动构建）`;
+  return build.triggered ? `${savedText}，已请求站点重建` : `${savedText}，但站点重建没起来：${build.error ?? '未知原因'}`;
+}

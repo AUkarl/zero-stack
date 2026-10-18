@@ -20,7 +20,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # 与 ci.yml、根 package.json engines 一致：allowBuilds 那份白名单按 pnpm 11 写，旧版不认
+          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -57,7 +58,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # 与 ci.yml、根 package.json engines 一致：allowBuilds 那份白名单按 pnpm 11 写，旧版不认
+          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22

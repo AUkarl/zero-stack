@@ -1,4 +1,4 @@
-import { apiBase, getConfig } from './config';
+import { getConfig } from './config';
 
 /**
  * Cloudflare 边缘缓存按 URL 清除（Purge Cache）。
@@ -27,8 +27,11 @@ export interface PurgeResult {
 const skipped = (urls: string[], detail: string): PurgeResult => ({ attempted: false, ok: false, detail, urls });
 
 export async function purgePageUrls(env: Env, webPaths: string[]): Promise<PurgeResult> {
-  const base = (await apiBase(env)).replace(/\/+$/, '');
-  if (!base) return skipped([], '站点地址（siteUrl）没配，不知道该清哪条 URL');
+  /* 只用站点前台域名：Pages 的 HTML 只在那一个域名下。曾经这里用的是 apiBase()，
+     而 apiBaseUrl 优先 —— 那个是接口域名（后台登录过一次、订阅者点过确认链接就会被自动记下），
+     结果是「删了文章、清掉了接口域名下一条根本不存在的地址」，边缘那条 7 天缓存照旧端出旧页面。 */
+  const base = (((await getConfig(env, 'siteUrl')) ?? env.SITE_URL ?? '').trim()).replace(/\/+$/, '');
+  if (!base) return skipped([], '站点地址（siteUrl）没配，不知道该清哪条 URL —— 请到后台「设置 → 站点信息」填站点域名后重新删除，或在 Cloudflare 控制台手动清');
   const urls = [...new Set(webPaths.filter(Boolean).map((p) => `${base}/${String(p).replace(/^\/+|\/+$/g, '')}/`))];
   if (!urls.length) return skipped([], '没有要清除的地址');
 

@@ -17,12 +17,12 @@ zero-stack 是「Hono Worker（zero-api）+ SvelteKit 后台（zero-cms）+ 评�
 |---|---|---|---|
 | 1 | 装依赖 | `pnpm install`（Node ≥ 22） | `pnpm exec wrangler --version` 有输出 |
 | 2 | 登录 Cloudflare | `pnpm exec wrangler login` | `wrangler whoami` 显示你的邮箱 |
-| 3 | 一键建资源 + 部署后端与后台 | `pnpm setup`，三问依次是**前台地址**、**后台地址**、**API 地址**（绑了自定义域名就填它，留空则用 `*.workers.dev`） | 结尾打印 API 与后台两个 URL；`GET <API>/api/health` 回 `ok:true` |
+| 3 | 一键建资源 + 部署后端与后台 | `pnpm setup`（向导按你的回答问 9 问，配 SMTP 与回写 Git 是 17 问，另加 2 道确认；开头三问是**站点名称**、**前台地址**、**后台地址**，还有 **API 地址**） | 结尾打印 API 与后台两个 URL；`GET <API>/api/health` 回 `ok:true` |
 | 4 | 建站长账号 | 打开后台地址。**库里没有账号时登录页会自动变成「建为站长并登录」**，填邮箱 + 两遍密码 | 进仪表盘；`GET <API>/api/auth/init-status` 变 `pending:false` |
-| 5 | 后台「设置」 | `siteUrl` = 前台域名、`mediaPublicUrl` = API 地址、发信方式（SMTP/Resend/Cloudflare） | 「发信方式」页的「发一封测试信」收到 |
+| 5 | 核对后台「设置」 | 向导已把 `siteUrl`、`apiBaseUrl`、发信几项、`mediaPublicUrl`（公开桶没绑自定义域时种成 API 地址）写进库；只需核对与补密钥 | 「发信方式」页的「发一封测试信」收到 |
 | 6 | 生成内容仓库 | `pnpm create:site`（在 zero-stack 里跑，生成到同级目录） | 目录里有 `hugo.toml`、`content/`（含 home/about/links/… 全部页面分区）、`themes/zero` 子模块 |
 | 7 | 本地验证前台 | `cd <内容仓库> && hugo server -D` | 浏览器逐个点导航：`/home/ /about/ /links/ /moments/ /posts/…` 都不 404，文章页有评论框 |
-| 8 | 部署前台 | 推到 GitHub → Cloudflare Pages 建项目（构建命令 `hugo --gc --minify`，输出 `public`）→ 绑自定义域名 | 线上首页能 `grep -o "designed by 知止"`；文章页有 `zero-comments…js` |
+| 8 | 部署前台 | 推到 GitHub → Cloudflare Pages 建项目（**构建命令要用第 6.3 节那条带主题克隆的**，只写 `hugo --gc --minify` 会产出一个没样式的站；输出 `public`；环境变量再钉一条 `HUGO_VERSION=0.165.0`，本仓库的模板都在这个 extended 版本上验过，不设就用 Pages 平台默认那个）→ 绑自定义域名 | 线上首页能 `grep -o "designed by 知止"`；文章页有 `zero-comments…js` |
 | 9 | 放行前台域名 | 把第 8 步的域名加进 `packages/api/wrangler.jsonc` 的 `ALLOWED_ORIGINS`，然后 `cd packages/api && npx wrangler deploy` | `curl -X OPTIONS <API>/api/comments -H "Origin: https://你的前台域名" -i` 响应里有 `Access-Control-Allow-Origin` |
 | 10 | 打通后台写仓库 | Worker secret `GITHUB_TOKEN`（Fine-grained PAT：勾上这个仓库 + Contents 读写），后台「设置 → 内容仓库」填 owner/repo/branch | 后台「前端管理」改一项能保存，且 GitHub 上出现对应提交 |
 | 11 | 迁移旧评论（可选） | `pnpm migrate:waline`，见 [第 7 节](#7-迁移旧评论数据) | 后台「评论」里旧评论条数对得上 |
@@ -37,9 +37,10 @@ zero-stack 是「Hono Worker（zero-api）+ SvelteKit 后台（zero-cms）+ 评�
 | 项目 | 要求 |
 |---|---|
 | Node.js | >= 22（wrangler 4.x 强制，低于 22 会在 `wrangler deploy` 时报错）|
-| 包管理 | pnpm >= 9（根目录有 `pnpm-workspace.yaml`） |
+| 包管理 | pnpm ≥ 11（根 `package.json` 的 `engines`、CI、`pnpm-workspace.yaml` 里 `allowBuilds` 那份白名单都按这一版口径写；装旧版时那个键不认，esbuild/workerd 的构建脚本不会被放行） |
 | Cloudflare 账户 | 已开通 Workers、Pages、D1、KV、R2、Queues 免费额度即可起步 |
 | wrangler | 仓库已作为 devDependency 安装，无需全局安装 |
+| Hugo | 只有你要自己本地构建前台时才需要：extended 版，本项目按 **0.165.0** 验证（`create:site` 生成的两个 workflow 与 Pages 的 `HUGO_VERSION` 都钉这个版本）。主题 `theme.toml` 的 `min_version` 是 0.128.0 |
 | 一个能收发邮件的邮箱 | SMTP 通道用；也可改用 Resend 或 Cloudflare Email Sending |
 
 第一次使用先安装依赖并登录：
@@ -57,18 +58,22 @@ pnpm exec wrangler login   # setup 脚本也会自动检测并引导登录
 pnpm setup
 ```
 
-向导会依次完成：
+向导会依次完成（顺序就是代码里的调用顺序，`--no-deploy` 只做到第 6 步）：
 
 1. 检测 `wrangler whoami`，未登录时拉起浏览器授权；
 2. 询问站点名称、前台地址、后台地址、API 地址（给 Worker 绑的自定义域名，留空则用刚部署出的
-   `*.workers.dev`）、邮件通道（SMTP / Resend / Cloudflare / 暂不配置）、是否启用「文章提交回 Git」；
-   三个地址里前两个会整段写成 `ALLOWED_ORIGINS`（CORS 精确匹配），重跑向导时它们默认取
+   `*.workers.dev`）、公开桶三问（桶名 / 域名 / Zone ID）、邮件通道（SMTP / Resend / Cloudflare / 暂不配置）、
+   是否启用「文章提交回 Git」；固定 9 问，配 SMTP 再多 4 问、回 Git 再多 4 问（共 17 问），另加开头与收尾各 1 道确认；
+   两个地址会整段写成 `ALLOWED_ORIGINS`（CORS 精确匹配），重跑向导时它们默认取
    `wrangler.jsonc` 里现有的值，被丢掉的来源会先警告再覆盖；
 3. 创建（或复用）以下 Cloudflare 资源；
 4. 由 `packages/api/wrangler.jsonc.example` 渲染出真实的 `packages/api/wrangler.jsonc`；
-5. 写入 secrets；
-6. `wrangler d1 migrations apply zero-db --remote`；
-7. 部署 zero-api，构建 zero-comment 与 zero-cms，部署到 Cloudflare Pages。
+5. `wrangler d1 migrations apply zero-db --remote`；
+6. 把两个桶登记进 D1 的 `mediaBuckets`，并把向导问过的那些站点/发信配置写进 `site_config`；
+7. 部署 zero-api（`wrangler deploy`）；
+8. 写入 secrets —— **必须排在部署之后**：`wrangler secret put` 的对象是已存在的 worker，
+   首次运行时它还不存在，先写就每条都以 `Worker not found` 失败；
+9. 构建 zero-comment 与 zero-cms，部署到 Cloudflare Pages。
 
 只想准备资源与配置、暂不部署：
 
@@ -95,13 +100,15 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 
 ### 2.2 生成的 wrangler.jsonc
 
-占位符 `<从 wrangler d1 create 获取>`、`<CACHE KV ID>`、`<SESSION KV ID>` 会被真实 id 替换；
-`SITE_NAME` 会替换为 `SITE_URL` + `SITE_NAME` 两项，`ALLOWED_ORIGINS` 用向导输入的两个地址填充。
-选择启用 Git 写回时再追加 `GITHUB_OWNER` / `GITHUB_REPO` / `GITHUB_BRANCH`。
+`.example` 是**一份完整可用的配置**（两个桶、`SITE_URL` 都在），手工复制它也能起本地服务；
+向导只是把里面的占位换成你自己的值。占位符 `<从 wrangler d1 create 获取>`、`<CACHE KV ID>`、
+`<SESSION KV ID>`、`<站点前台地址>` 会被真实值替换，替换不到就当场报错（不会静默产出一份缺 ID 的配置）。
+`SITE_NAME` 换成向导答的站点名，`ALLOWED_ORIGINS` 用「后台地址 + 前台地址」两答整段生成。
+选择启用 Git 写回时再往 `SITE_NAME` 那行后面追加 `GITHUB_OWNER` / `GITHUB_REPO` / `GITHUB_BRANCH`。
 
-`r2_buckets` 里除了私有的 `R2`，还会追加公开桶 `R2_PUBLIC`（桶名取向导里「公开桶名」那一答）。
-公开的 `wrangler.jsonc.example` 里只写第一条 —— 第二条是脚本按第一条那行拼接进去的，
-自己在模板里补一条会拼出两份 `r2_buckets`，wrangler 就读不懂生成的配置了。
+`r2_buckets` 两条（私有 `R2` + 公开 `R2_PUBLIC`）示例里都写好了，向导按「公开桶名」那一答只替换公开桶的 `bucket_name`。
+`ENVIRONMENT` 示例里是 `production`：它只在 `/api/health` 里回显，不影响行为；
+本地开发想标出来就 `wrangler dev --var ENVIRONMENT:development`，别改示例（生成的那份是给你上线用的）。
 
 #### 2.3 两个桶各自负责什么
 
@@ -114,8 +121,9 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 向导为此多问三样：**公开桶名**（默认 `zero-media-public`）、**公开桶域名**（默认 `zero-media-public.<站点裸域>`）、
 **Zone ID**。判定规则：
 
-- 填了 Zone ID（域名的 DNS 就托管在当前 Cloudflare 账户）→ 直接跑 `wrangler r2 bucket domain add` 自动绑好，
-  公开桶那条会带上 `baseUrl`，上传即直链；
+- 填了 Zone ID（域名的 DNS 就托管在当前 Cloudflare 账户）→ 直接跑 `wrangler r2 bucket domain add … --force` 自动绑好，
+  公开桶那条会带上 `baseUrl`，上传即直链。**`--force` 会在那个 Zone 里建一条指向桶的 DNS 记录**，
+  所以 Zone ID 只填你自己域名的那串，别拿别人的域名试；
 - 没填 Zone ID、或自动绑定被 Cloudflare 拒绝、或域名已经绑在别的资源上 → 公开桶照样登记进后台，
   只是 `baseUrl` 留空：它的图片先走 `/api/media/<桶>/<键>` 代读（能用，只是占 Worker 额度），
   之后域名绑好了，在后台该桶填上「直链前缀」就升级成直链。**没绑成域名不再连桶一起不登记** ——
@@ -168,7 +176,7 @@ pnpm deploy:api -- --dry-run      # 只校验打包，不上传
 pnpm deploy:api -- --local        # 只把迁移打到本地 D1
 
 pnpm deploy:cms          # 构建 zero-cms 并部署到 Pages（会问一次 API 地址）
-pnpm deploy:cms -- --no-build     # 复用已有产物
+pnpm deploy:cms -- --no-build     # 复用已有产物：不重新构建就不问地址，收尾报的是产物里**上次**内置的那个（想换地址必须去掉 --no-build 重建）
 pnpm deploy:cms -- --project my-cms
 pnpm deploy:cms -- --api https://zero-api.xxx.workers.dev   # 不问，直接内置这个地址
 pnpm deploy:cms -- --domain https://admin.example.com       # 你在控制台给这个 Pages 项目绑的域名
@@ -231,7 +239,7 @@ VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
 | 站点地址 | 后台「设置」填 `siteUrl`（正式域名）与 `mediaPublicUrl`（Worker 地址），前者决定后台列表里的链接与邮件里的落地页，后者决定图片的绝对地址 |
 | 媒体可用 | 后台「媒体」上传一张图，复制它给出的绝对地址直接打开应能出图：桶配了 `baseUrl` 就是桶域名直链，没配则是 `<mediaPublicUrl>/api/media/<桶>/<键>`（公开只读代理，无需登录） |
 | 管理员联系邮箱 | 后台「设置」填 `adminContactEmail`，前台 `/account/` 的「找回密码」会把这句话补全：「如密码遗失，可使用注册邮箱向管理员 xxx 发送邮件找回」 |
-| Cron 在跑 | 后台「仪表盘」运行状况卡片，或 `SELECT * FROM job_runs ORDER BY started_at DESC LIMIT 10` |
+| Cron 在跑 | 后台「仪表盘」运行状况卡片，或 `SELECT * FROM job_runs ORDER BY started_at DESC LIMIT 10`。**新建的库这张表必然是 0 行，那不是故障**：只有定时任务真跑过（每天 02:00 UTC）才写行。不想等就本地 `wrangler dev --test-scheduled` 起服务，浏览器打开 `http://localhost:8787/__scheduled` 立刻跑一轮；线上只能等下一个整点，或者用后台对应按钮手动触发能手动触发的那几件（群发、友链检测） |
 | 队列在跑 | 后台「订阅」群发一次，观察 `email_logs` 表状态 |
 | 接口链路 | `API=https://<worker-url> bash scripts/smoke.sh`；管理员段要带 cookie：`API=… ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh` |
 | 时刻与作者表 | 后台发一条时刻 → 仓库应出现 `content/zh/moments/<日期>-<标识>.md`；作者认证通过 → `data/authors.yaml` 多一条，前台 `/author/<标识>/` 与文章页作者框同步 |
@@ -250,12 +258,14 @@ pnpm create:site
 ```
 
 向导会问站点名称、GitHub 用户名、仓库名、API 地址、站点域名、主题仓库地址，然后在 **zero-stack 的同级目录**
-生成一个可直接推送的 Hugo 仓库：`hugo.toml`（站点参数不放这里，见下）、落地页 `content/_index.md`、
+生成一个可直接推送的 Hugo 仓库：`hugo.toml`（站点参数不放这里，见下）、落地页 `content/zh/_index.md`、
 主题需要的**全部页面分区**（`home / about / archive / work / subscribe / account / links / moments / posts`，
 少一个分区导航里就是一条 404）、`config/_default/params.toml`（从主题那份全量注释版复制，并写入 `apiBaseURL` 与默认署名）、`.gitignore`、`.github/workflows/deploy.yml`、
 `README.md`，并在本地 `git init` + 提交。
 
-子模块拉下来之后，生成器会把**主题自带的演示站 `exampleSite` 整份灌进新仓库**（`content/zh/**` 抹平成 `content/**`）：四篇示例文章、`data/` 里的页脚（含 ICP 占位）、关于、工坊、友链、作者示例，以及示例正文引用的那几张图 —— 新站开箱就是一座完整的站，不想要直接删文件。子模块没拉下来时只留最小骨架并给出提示。
+子模块拉下来之后，生成器会把**主题自带的演示站 `exampleSite` 整份灌进新仓库**（`content/zh/**` **原样保留那层 `zh`**，
+与 `hugo.toml` 里 `[languages.zh] contentDir = "content/zh"` 对应 —— 抹平会让 Hugo 找不到内容目录，后台发出去的文章不出现）：
+四篇示例文章、`data/` 里的页脚（含 ICP 占位）、关于、工坊、友链、作者示例，以及示例正文引用的那几张图 —— 新站开箱就是一座完整的站，不想要直接删文件。子模块没拉下来时只留最小骨架并给出提示。
 
 - 配了 `--api=`（或向导填了 API 地址）时，仓库里会多一个 `functions/_middleware.ts`：
   后台把某个功能关掉，那个页面在**边缘**直接返回 404 并带上 `x-robots-tag: noindex, nofollow`。
@@ -361,6 +371,10 @@ setx GOPRIVATE "github.com/AUkarl/*"
 rm -rf themes/zero && git clone --depth 1 https://github.com/<你>/zero-theme.git themes/zero && hugo --minify
 ```
 
+同一页往下翻到 **Build environment & advanced settings → Environment variables**，钉一条 `HUGO_VERSION = 0.165.0`：
+不钉就是 Pages 平台默认的那个 Hugo（随平台变，也不保证带 `+extended`）。`create:site` 生成的两个 workflow 里钉的
+就是这个版本，三处对齐才不会出「Actions 构建过了、Pages 红」或「线上产物和本地不一样」。
+
 主题仓库是公开的，这条命令不需要任何凭据。它取的是主题默认分支的**最新提交**，
 所以任何一次重建都跟着最新主题；想钉在某个版本（可复现、可回滚）就改成
 
@@ -371,9 +385,13 @@ git clone https://github.com/<你>/zero-theme.git themes/zero && git -C themes/z
 **第二层：主题推了新提交，站点仓库没有任何事件。** 子模块记的是固定提交号，
 指针不动就没有 push，Pages 与 Actions 都不会重建 —— 这就是"我主题改了，站点得手动重部一次"的来源。
 `create:site` 会同时生成 `.github/workflows/update-theme.yml` 补上这一层：每天取主题默认分支最新提交，
-与仓库记录的指针相比，不一样就**先本地构建一次**（构建不过就不提交，避免主题写坏把站点带崩），
-通过才提交新指针并推送 —— 那次推送本身就是 Pages 的重建触发器。
+与仓库记录的指针相比，不一样就**先构建一次**（构建不过就不提交指针），通过才提交新指针并推送 —— 那次推送本身就是 Pages 的重建触发器。
 也可以随时 Actions → Update theme → Run workflow 立刻跟一次。
+
+> 把这道闸门的边界说清楚，别当成「主题写坏也伤不到站点」：它保护的是**仓库里那个子模块指针**，
+> 坏主题不会被固化进历史。而 Pages 直连构建按第一层那条命令 clone 主题**默认分支的最新提交**、不读指针，
+> 所以主题一旦推了个构建不过的提交，你手上任何一次 Pages 重建（别的文件的一次 push、手动 Trigger deployment）都会红 —— 这条路闸门拦不住。
+> 真想让线上也跟着固定版本走，就把第一层的 clone 换成钉提交号（上面那条命令），代价是升级主题要自己改构建命令。
 
 两条合起来的效果：主题一推，站点最迟第二天自动跟上并自动构建；期间你不用碰任何命令。
 仓库连续 60 天没有提交时 GitHub 会暂停定时任务，去 Actions 页面点一次 Enable 就恢复。
@@ -431,12 +449,13 @@ rclone copy r2:旧桶/uploads r2:zero-media/uploads --progress
 
 ## 7.5 全站备份：把整站搬到新账号、新仓库
 
-后台「备份」只有**一种**备份 —— 全站。导出的是一份 JSON，十个分区：
+后台「备份」只有**一种**备份 —— 全站。导出的是一份 JSON，十一个分区：
 
 | 分区 | 装的是什么 |
 |---|---|
-| 站点设置 | `site_config` 的开关与文案；**密钥与绑定本站域名/仓库坐标的项不进文件** |
-| 主题样式 | 仓库 `data/*.json`（导航、首页、页脚、关于、工坊、时刻页、SEO、站点信息）+ `params.toml` |
+| 站点设置 | `site_config` 的开关与文案；**密钥与绑定本站域名/仓库坐标/发信身份的项不进文件** |
+| 评论审核规则文件 | 仓库 `.zero/spam-patterns.txt`（后台「评论审核」页读写那份共享正则） |
+| 主题样式 | 仓库 `data/*.json`（导航、首页、页脚、关于、工坊、时刻页、SEO、站点信息）+ `params.toml` + `config.toml` + `menus.zh.toml` |
 | 文章 / 时刻 | 设置里那两个目录下的全部 `.md`（递归，含子目录） |
 | 友链 | D1 的友链与已抓到的博客动态 + 仓库 `links.yaml` |
 | 订阅名单 | 已确认的订阅邮箱（发信日志与群发记录不备份） |
@@ -454,7 +473,8 @@ rclone copy r2:旧桶/uploads r2:zero-media/uploads --progress
 5. 确认后点「推送恢复」。同名文件默认保持本站不动；要让旧稿盖掉新站的示例稿，就勾「覆盖同名文件」。
    恢复完会自动调一次 Pages 构建 Hook（没配就提示等下次自动构建）。
 6. 手工补不进文件的东西：各类密钥（SMTP / Resend / Cloudflare / 审核服务商 / 翻译），以及绑定本站的配置
-   （`siteUrl`、仓库坐标、媒体桶清单）—— 这些在恢复结果里逐条列出旧值，照着填即可。
+   （`siteUrl`、接口域名、后台地址、仓库坐标、数据目录、Cloudflare Zone、发信三项 `smtpHost` / `smtpUser` / `emailFrom`、
+   站长收件箱、订阅比对用的 RSS、媒体桶清单）—— 这些在恢复结果的「本站绑定项」里逐条列出本站现值与备份里的源站值，照着核对即可。
    图片本体走后台：旧站点「备份 → 图片（媒体本体）→ 导出图片包」，新站在同一节点「逐张写入」。
    写回按**原对象键**，所以文章里的图片地址一个字都不用改；本站已有同名的会跳过，不会盖掉新站自己新传的图。
    一份包最多 2000 个对象，图多的站先在「媒体库」按目录分批导。

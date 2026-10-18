@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { del, fmtDate, get, patch, post, timeAgo } from '#lib/api';
+  import { del, fmtDate, get, mailNote, patch, post, timeAgo } from '#lib/api';
 
   type Kind = 'friend' | 'alliance';
   const KIND_LABEL: Record<Kind, string> = { friend: '友链', alliance: '站点联盟' };
@@ -42,12 +42,6 @@
   }
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
-
-  /** 后端审核接口负责把结果发到申请人邮箱；返回体带 notified/notifyError 时一并显示 */
-  function mailNote(data: { notified?: boolean; notifyError?: string | null } | null | undefined): string {
-    if (!data || data.notified === undefined) return '';
-    return data.notified ? '· 已发送邮件通知' : `· 邮件通知失败${data.notifyError ? `：${data.notifyError}` : ''}`;
-  }
 
   const normKind = (f: Friend): Kind => (f.kind === 'alliance' ? 'alliance' : 'friend');
 
@@ -340,14 +334,12 @@
       if (form.avatar.trim()) body.avatar = form.avatar.trim();
       if (form.rssUrl.trim()) body.rssUrl = form.rssUrl.trim();
       if (form.note.trim()) body.note = form.note.trim();
-      const d = await post<{ data: { synced: boolean; syncError: string | null; notified?: boolean; notifyError?: string | null } }>(
-        `/api/admin/applications/${r.id}/approve`,
-        body,
-      );
+      const d = await post<{
+        data: { synced: boolean; syncError: string | null; state?: 'sent' | 'queued' | 'failed'; notifyError?: string | null };
+      }>(`/api/admin/applications/${r.id}/approve`, body);
       const dd = d.data;
       appNotice =
         (dd.synced ? `已通过，写入${KIND_LABEL[appKind]}并触发站点重建` : `已通过${dd.syncError ? `（未写仓库文件：${dd.syncError}）` : '（未写仓库文件）'}`) +
-        ' ' +
         mailNote(dd);
       openId = null;
       await Promise.all([loadApps(), loadFriends()]);
@@ -368,9 +360,10 @@
     appError = '';
     appNotice = '';
     try {
-      const d = await post<{ data: { notified?: boolean; notifyError?: string | null } }>(`/api/admin/applications/${r.id}/reject`, {
-        note: rejectNote.trim(),
-      });
+      const d = await post<{ data: { state?: 'sent' | 'queued' | 'failed'; notifyError?: string | null } }>(
+        `/api/admin/applications/${r.id}/reject`,
+        { note: rejectNote.trim() },
+      );
       appNotice = `${r.name} 已驳回 ${mailNote(d.data)}`;
       openId = null;
       await loadApps();
@@ -388,7 +381,7 @@
     appNotice = '';
     try {
       const d = await post<{ data: { synced: boolean; message?: string } }>(`/api/admin/applications/${r.id}/publish`, {});
-      appNotice = d.data.synced ? '已写入友链文件' : `未写入：${d.data.message ?? '检查设置里的仓库与写回开关'}`;
+      appNotice = d.data.synced ? '已写入友链文件' : `未写入：${d.data.message ?? '检查「设置 → 内容仓库」的仓库坐标、友链文件路径与 GITHUB_TOKEN'}`;
       await Promise.all([loadApps(), loadFriends()]);
     } catch (e) {
       appError = msg(e);

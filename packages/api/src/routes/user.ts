@@ -197,8 +197,12 @@ authorsPublic.get('/', async (c) => {
   for (const key of ids) {
     const row = byKey.get(key) ?? byKey.get(key.toLowerCase());
     if (!row || seen.has(row.id)) continue;
+    const card = toAuthorCard(row);
+    /* 只公开「已认证作者」（含站长/共创，withAdminAuthorBits 已把他们算作认证）的名片。
+       未认证的普通读者不该被任何人拿一个 UUID 就换出昵称、简介与个人站点。 */
+    if (!card.verified) continue;
     seen.add(row.id);
-    cards.push(toAuthorCard(row));
+    cards.push(card);
   }
   return ok(cards);
 });

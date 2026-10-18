@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte } from 'drizzle-orm';
+import { and, count, desc, eq, gte, lte } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { auditLogs } from '../db/schema';
 
@@ -10,6 +10,7 @@ import { auditLogs } from '../db/schema';
 export type AuditAction =
   | 'config'
   | 'params'
+  | 'email'
   | 'comment'
   | 'friend'
   | 'friendApp'
@@ -51,18 +52,25 @@ export async function writeAudit(
   }
 }
 
+/**
+ * 翻审计流水：总数要和这一页一起回来，否则界面上「共多少条」只能显示本页条数，
+ * 出了事根本看不出是被截断还是真的只有这几笔。limit 走 1..500，传 0 不再静默当 100。
+ */
 export async function listAudit(
   env: Env,
-  opts: { action?: string; from?: number; to?: number; limit?: number },
-) {
+  opts: { action?: string; from?: number; to?: number; limit?: number; offset?: number },
+): Promise<{ rows: (typeof auditLogs.$inferSelect)[]; total: number; limit: number; offset: number }> {
   const db = createDb(env);
   const conds = [];
   if (opts.action) conds.push(eq(auditLogs.action, opts.action));
   if (opts.from) conds.push(gte(auditLogs.createdAt, opts.from));
   if (opts.to) conds.push(lte(auditLogs.createdAt, opts.to));
-  const query = db.select().from(auditLogs);
-  const rows = await (conds.length ? query.where(and(...conds)) : query)
-    .orderBy(desc(auditLogs.createdAt))
-    .limit(Math.min(500, opts.limit ?? 100));
-  return rows;
+  const where = conds.length ? and(...conds) : undefined;
+  const limit = Math.min(500, Math.max(1, Math.floor(opts.limit ?? 100)));
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+  const [rows, counted] = await Promise.all([
+    db.select().from(auditLogs).where(where).orderBy(desc(auditLogs.createdAt)).limit(limit).offset(offset),
+    db.select({ n: count() }).from(auditLogs).where(where),
+  ]);
+  return { rows, total: counted[0]?.n ?? 0, limit, offset };
 }

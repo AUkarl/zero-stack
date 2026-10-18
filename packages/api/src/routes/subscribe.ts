@@ -68,7 +68,10 @@ app.post('/', async (c) => {
   // 已确认过就不重复走一遍确认流程
   if (row && row.status === 'confirmed') return ok({ status: 'confirmed', message: '该邮箱已订阅' });
 
-  const token = randomToken(16);
+  /* 重复提交（没点到确认信、或退订后再来一次）沿用原来那个 token。
+     以前每次都换新 token，上一封还躺在收件箱里的确认信一点就是「链接无效或已过期」，
+     而订阅者根本不知道自己有两封，试几次都失败 —— 这跟 SMTP 通不通没有关系。 */
+  const token = row?.token || randomToken(16);
   const status = doubleOptIn ? 'pending' : 'confirmed';
   const values = {
     email,
@@ -100,7 +103,9 @@ app.post('/', async (c) => {
   });
   if (!sent.success) {
     console.warn(`[subscribe] 确认邮件发送失败 ${email}: ${sent.error ?? '未知原因'}`);
-    fail(502, '确认邮件发送失败，请稍后再试或联系站主');
+    /* 这一行留在库里是对的（他确实就是「待确认」），要说的只是：信没出去、地址没丢、
+       再提交一次还是同一个链接。回 502 让前台显示成失败，别报成功。 */
+    fail(502, `确认邮件这次没发出去（${sent.error ?? '发信通道未就绪'}）。邮箱已记为「待确认」，稍后重新提交一次即可，确认链接不变；一直收不到就联系站主查发信设置。`);
   }
   return ok({ status, message: '确认邮件已发送，请在邮箱中点击确认' });
 });
@@ -165,7 +170,5 @@ app.post('/unsubscribe', async (c) => {
   await db.update(subscribers).set({ status: 'unsubscribed', unsubscribedAt: now }).where(eq(subscribers.id, rows[0]!.id));
   return ok({ unsubscribed: true });
 });
-
-/** GET /api/subscribe/count —— 后台统计卡片 */
 
 export default app;

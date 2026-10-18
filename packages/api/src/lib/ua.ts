@@ -41,12 +41,6 @@ export async function hashIp(ip: string, env?: Env): Promise<string> {
   return sha256Hex(`${salt(env)}|ip|${value}`);
 }
 
-/** 匿名点赞/匿名评论的访客指纹：IP 哈希 + UA 前缀，同样不落明文 */
-export async function visitorFingerprint(env: Env | undefined, ip: string, userAgent: string): Promise<string> {
-  const hashed = await hashIp(ip, env);
-  return sha256Hex(`${salt(env)}|fp|${hashed}|${String(userAgent || '').slice(0, 120)}`);
-}
-
 /** UA 粗解析：够做「Chrome / macOS / 桌面端」这种展示粒度 */
 export function parseUA(ua: string): UaInfo {
   const s = String(ua || '');

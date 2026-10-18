@@ -75,8 +75,8 @@ Hugo 主题之外的**全套动态后端**：评论、点赞 / 收藏、邮件�
 | 依赖 | 版本 | 校验 |
 | --- | --- | --- |
 | Node.js | ≥ 22（wrangler 4.149+ 的要求，仓库 `engines` 已锁） | `node -v` |
-| pnpm | ≥ 9（workspace 协议必需，npm / yarn 装不上） | `pnpm -v` |
-| Hugo | extended，本地已验证 0.165.0；主题 `min_version = 0.128.0` | `hugo version` 必须带 `+extended` |
+| pnpm | ≥ 11（workspace 协议必需，npm / yarn 装不上；`pnpm-workspace.yaml` 里的 `allowBuilds` 按这一版写） | `pnpm -v` |
+| Hugo | extended，本地已验证 0.165.0；主题 `min_version = 0.128.0`。Pages 上要在环境变量里钉 `HUGO_VERSION`，否则用平台默认那个 | `hugo version` 必须带 `+extended` |
 | wrangler | 由依赖提供（`pnpm dlx wrangler` 也可） | `pnpm exec wrangler -v` |
 | Cloudflare 账号 | 免费档即可：D1 / R2 / KV / Queues / Pages / Cron | — |
 
@@ -174,8 +174,9 @@ ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh     # 追加后台接口
 ```bash
 pnpm setup                     # 交互式：登录检查 → 建 / 复用 D1、私有+公开两个 R2、KV、Queue → 绑公开桶域名 → 渲染 wrangler.jsonc
                                #           前台 / 后台 / API 三个地址默认取现有配置，直接回车就是不改
-                               #           → 写 secrets → 应用远程迁移 → 部署 Worker 与后台
-pnpm setup -- --no-deploy      # 只准备资源与配置，不部署
+                               #           → 应用远程迁移 → 把站点与发信配置写进 D1 → 部署 Worker → 写密钥 → 构建并部署后台
+                               #           固定 9 问；选 SMTP 再追 4 问、勾「回 Git」再追 4 问（共 17 问），另加 2 道确认
+pnpm setup -- --no-deploy      # 只建资源、跑迁移、写配置：不部署也不写密钥（secret put 的对象必须先是个已存在的 worker）
 ```
 
 向导只通过 stdin 写密钥，不会把值拼进命令行，也不会写进任何文件。
@@ -235,19 +236,22 @@ pnpm setup -- --no-deploy      # 只准备资源与配置，不部署
 
 7. **内容仓库**：`pnpm create:site` 生成私密的 `zero-site`（目录结构、CI、`.gitignore`、
    主题 submodule 引用都写好了；本地生成与提交，不会替你 push）。
-   然后在后台「设置 → 内容仓库」填 `owner / repo / branch / 各目录 / 友链文件 /
-   写回开关 / Pages 重建 Hook`。
+   然后在后台「设置 → 内容仓库」填 `owner / repo / branch / 各目录 / 友链文件 / Pages 重建 Hook`。
 
 8. **GitHub Actions 部署**：把 `docs/deploy-template.yml` 复制成 `zero-site` 仓库的
    `.github/workflows/deploy.yml`，替换里面的站点名、D1 / Pages 项目 id 与 `CF_*` secrets 名称。
 
-## 站点侧还差一步（**很容易漏**）
+## 站点侧的接口地址（`create:site` 已经替你写好）
 
-`apiBaseURL` 只在开发环境参数里给了本地地址。**生产构建不会带上它，前台就是一片纯静态**
-（没有评论、没有点赞、没有运行期接管）。上线要做的二选一：
+`pnpm create:site` 把「API 地址」那一答直接写进生成仓库的 `config/_default/params.toml`
+（`apiBaseURL = "https://…"`），开箱就连后端，不用再手工填第二遍。要点：
 
-- 建 `me/zero-site/config/production/params.toml` 写 `apiBaseURL = "https://api.你的域名"`；或
-- 直接在站点 `config/_default/params.toml` 写死线上地址（本地联调时靠 `config/development/` 覆盖回 8787）。
+- **只改这一份**：Hugo 合并根 `hugo.toml` 的 `[params]` 与 `config/_default/params.toml` 时以后者为准（实测），
+  两处都写时根目录那份是死字。留空 = 整站退回纯静态（不加载评论组件、不发任何请求）。
+- 本地联调要把线上地址临时盖回 8787：另建 `config/development/params.toml` 写
+  `apiBaseURL = "http://127.0.0.1:8787"`，`hugo server` 默认按 development 环境取，会自动覆盖。
+- 后台「前端管理 → 主题配置文件」读写的是同一份 `config/_default/params.toml`。
+- 改完要重新构建才进页面（它是构建期烤进 HTML 的）。
 
 > 别用环境变量 `HUGO_PARAMS_APIBASEURL=…` 覆盖：Hugo 会把参数名小写成 `apibaseurl`，
 > 而主题读的是 `params.apiBaseURL`，看着进了 `hugo config` 实际渲染不出任何东西。
@@ -441,7 +445,7 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 
 | 命令 | 作用 |
 | --- | --- |
-| `pnpm setup` | 交互式部署向导（资源 → 配置 → 密钥 → 迁移 → 发布），`-- --no-deploy` 只准备资源 |
+| `pnpm setup` | 交互式部署向导（资源 → 渲染 wrangler.jsonc → 迁移 → 写站点配置 → 部署 Worker → 写密钥 → 部署后台），`-- --no-deploy` 只做到写站点配置 |
 | `pnpm deploy:api` | 同步 D1 迁移并部署 Worker，`-- --no-migrate` / `-- --dry-run` / `-- --local` |
 | `pnpm deploy:cms` | 构建后台并部署 Pages，`-- --api <worker 地址>` / `-- --no-build` / `-- --project <名称>` |
 | `pnpm create:site` | 生成私密的 `zero-site` 内容仓库骨架（含 CI 与 submodule） |

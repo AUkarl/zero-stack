@@ -18,6 +18,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { commenters, comments, reactions, visits } from '../db/schema';
 import { createDb } from '../db/client';
 import { emailMd5, isEmail } from '../lib/avatar';
+import { canonSlug } from '../lib/slug';
 import { newId } from '../lib/crypto';
 
 export type CommentFormat = 'zero' | 'waline' | 'twikoo' | 'artalk' | 'giscus' | 'commentbox' | 'generic';
@@ -89,22 +90,17 @@ function toUnix(v: unknown): number | null {
   return Math.floor(parsed / 1000);
 }
 
-/** slug 归一：去掉域名、查询串，补前后斜杠；与 /api/comments 里的 canonSlug 同口径 */
+/**
+ * 地址归一：一律走 lib/slug 的 canonSlug —— 与 /api/comments 读评论时的口径**必须完全一致**。
+ * 这里曾经自己写过一套（补尾斜杠），而读侧是去尾斜杠，结果第三方导入的评论、
+ * 连同样导入合并的浏览量与点赞数，前台一条都查不到，只有后台看得见（库里存的还是另一种写法）。
+ * 空值与只看得到「/」的地址都按没填处理，交给调用方计数与跳过。
+ */
 function normSlug(raw: string): string {
-  let s = raw.trim();
-  if (!s) return '';
-  if (/^https?:\/\//i.test(s)) {
-    try {
-      s = new URL(s).pathname;
-    } catch {
-      /* 原样继续 */
-    }
-  }
-  s = s.split('?')[0]!.split('#')[0]!;
-  if (!s.startsWith('/')) s = `/${s}`;
-  s = s.replace(/\/{2,}/g, '/');
-  if (s.length > 1 && !s.endsWith('/')) s += '/';
-  return s;
+  const value = String(raw ?? '').trim();
+  if (!value) return '';
+  const slug = canonSlug(value);
+  return slug === '/' ? '' : slug;
 }
 
 const STATUS_MAP: Record<string, string> = {
@@ -491,7 +487,7 @@ function flatten(o: Record<string, unknown>): Raw {
   // 有些导出没有独立的地址字段，objectId 本身就是文章路径（Waline 的 /posts/x/、Giscus 的 pathname）。
   // 只有长得像路径（含斜杠）才拿来兜底，否则会把数字 id 当成 slug 建出一堆假页面。
   const idish = pickStr(o, ['objectId', 'oid', 'id']);
-  const slug = slugRaw || (idish.includes('/') ? idish : '');
+  const slug = slugRaw || (idish.includes('/') ? normSlug(idish) : '');
   // Giscus 的作者是对象：{ login: '…' }
   const authorName = pickStr(rec(o.author), ['login', 'name']);
   return {

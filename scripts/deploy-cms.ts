@@ -70,6 +70,8 @@ async function resolveApiBase(): Promise<string> {
   }
   // CI 里没有终端可问：沿用上次记下的地址，没记过就保持不内置
   if (!process.stdin.isTTY) return saved;
+  // --no-build 根本不重新构建，问地址只是白问（产物里的内置值还是上次那个）
+  if (noBuild) return saved;
   /** 说明单独打一行：prompts 每敲一个字符就重画当前行，长文案在 PowerShell 里
       会换行且擦不干净，屏幕上留下一串重复行 */
   console.log(`  \x1b[2mworker 域名，回车留空 = 部署后在登录页手填；${saved ? '上次：' + saved : '例如 https://zero-api.xxx.workers.dev'}\x1b[0m`);
@@ -88,14 +90,20 @@ async function resolveApiBase(): Promise<string> {
 async function main(): Promise<void> {
   const apiBase = await resolveApiBase();
   const domain = resolveDomain();
-  if (!apiBase) warn('未内置 API 地址：后台打开后要在登录页手填 worker 域名，否则接口全部 404');
+  if (!apiBase && !noBuild) warn('未内置 API 地址：后台打开后要在登录页手填 worker 域名，否则接口全部 404');
 
+  /** 产物里真正带着的地址：--no-build 时这次的答案一个都不生效，报「已内置 X」就是谎 */
+  let builtinApi = apiBase;
   if (!noBuild) {
     step(apiBase ? `构建 zero-cms（内置 API 地址 ${apiBase}）` : '构建 zero-cms');
     run('npm run build', { cwd: CMS_DIR, env: { VITE_API_BASE: apiBase } });
     if (apiBase) saveApiBase(apiBase);
   } else if (!existsSync(output)) {
     die('.svelte-kit/cloudflare 不存在，请先完整构建一次（去掉 --no-build）');
+  } else {
+    builtinApi = readSavedApiBase();
+    info(`--no-build：不重新构建，推的是 .svelte-kit/cloudflare 里现成的产物 —— 内置接口地址 = ${builtinApi || '（上次也没内置，登录后要在登录页手填）'}${apiBase && apiBase !== builtinApi ? `，这次给的 ${apiBase} 不会生效` : ''}`);
+    if (apiBase && apiBase !== builtinApi) warn('要换内置地址就得重新构建：去掉 --no-build 再跑一次。');
   }
 
   step(`准备 Pages 项目 ${project}`);
@@ -112,8 +120,8 @@ async function main(): Promise<void> {
   info(prod.note);
   if (pages && prod.url !== pages) info(`本次部署号：${pages}（每次部署都变，只用来核对这次推上去的是哪一版）`);
   info(
-    apiBase
-      ? `已内置 API 地址 ${apiBase}，打开就能登录；登录页手填的地址优先于内置值。`
+    builtinApi
+      ? `产物里内置的 API 地址是 ${builtinApi}，打开就能登录；登录页手填的地址优先于内置值。`
       : '首次使用：在登录页「API 地址」填 worker 域名（本机只需填一次）。',
   );
   info('库里还没有账号时，登录页会自己变成「建为站长并登录」表单（等价于 POST /api/auth/register）。');

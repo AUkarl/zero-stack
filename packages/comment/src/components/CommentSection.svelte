@@ -305,7 +305,7 @@
     try {
       const owner = ownerKeyOf(key, id);
       const qs = owner ? `?owner=${encodeURIComponent(owner)}` : '';
-      const d = await apiFetch<{ data: { id: string; content: string; status: string; editedAt: number | null } }>(
+      const d = await apiFetch<{ data: { id: string; content: string; status: string; editedAt: number | null; message?: string | null } }>(
         base,
         `/api/comments/${id}${qs}`,
         { method: 'PATCH', body: JSON.stringify({ content, ...(owner ? { ownerKey: owner } : {}) }) },
@@ -316,6 +316,8 @@
         node.editedAt = d.data.editedAt ?? Math.floor(Date.now() / 1000);
         if (d.data.status) node.status = d.data.status;
       }
+      // 改完被打回待审 / 判垃圾时后端会给一句说明，不显示出来人就以为改动丢了
+      if (d.data.message) doneMessage = d.data.message;
       ctx.editingId = null;
       ctx.editDraft = '';
     } catch (e) {

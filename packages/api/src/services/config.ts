@@ -368,8 +368,8 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   spamLinkRatio: '0.5',
   spamMaxUrls: '3',
   spamMinWords: '2',
-  /** false（默认）= 命中垃圾直接标成 spam 进「垃圾评论」队列；true = 先压到「待审核」由人判定 */
-  spamHoldPending: 'false',
+  /** true（默认）= 命中垃圾先进「待审核」由人判定；false = 直接标成 spam 进「垃圾评论」队列 */
+  spamHoldPending: 'true',
   /** 明确规则（关键词 / 默认规则集 / 自定义正则 / 仓库文件）的单条命中分；默认 70 高于 spamThreshold 60，一条即拦 */
   spamRuleWeight: '70',
   spamUseBuiltinPatterns: 'true',
@@ -510,6 +510,38 @@ export const SECRET_KEYS: ConfigKey[] = [
 
 export function isSecretKey(key: string): boolean {
   return (SECRET_KEYS as string[]).includes(key);
+}
+
+/**
+ * 只有「数字」这一种读法的配置项：接口一律走 getConfigInt / Number(getConfig(...))。
+ *
+ * 为什么要单独列出来：这些键在库里存的是字符串，入口不拦的话，一个非数字的值也能"保存成功"，
+ * 而读的时候解析失败就悄悄回落默认值 —— 表现正是「后台改了、站点没反应」（P-08 那一类的另一半）。
+ * 后台那些框是 `<input type="number">`，人手打不出字母，但接口是公开的写入面，得自己站住。
+ */
+export const NUMERIC_CONFIG_KEYS: ConfigKey[] = [
+  'analyticsRetentionDays',
+  'commentMaxDepth',
+  'commentRateLimit',
+  'emailDailyLimit',
+  'inviteCodeLength',
+  'inviteCodeUses',
+  'poststatsViewWindowDays',
+  'spamMaxUrls',
+  'spamMinWords',
+  'spamRuleWeight',
+  'spamThreshold',
+  'spamLinkRatio',
+  'statsUtcOffsetHours',
+  'friendsCheckIntervalHours',
+  'friendsLostAfterDays',
+  'friendsStaleAfterDays',
+];
+
+/** 空串表示「不改 / 用默认值」，所以只有非空且不是数字才算错 */
+export function numericKeyBadValue(key: string, value: string): boolean {
+  if (!(NUMERIC_CONFIG_KEYS as string[]).includes(key)) return false;
+  return value !== '' && !/^[-+]?\d+(\.\d+)?$/.test(value.trim());
 }
 
 /** 后台列表用的脱敏视图与「服务端是否已有值」标记 */

@@ -28,6 +28,13 @@ interface Answers {
 }
 
 async function ask(questions: PromptObject[]): Promise<Answers> {
+  /* 没有终端时不提问：prompts 在 CI / 管道里永不 resolve，进程既不报错也不退出。
+     全部参数都能用命令行给（见 --help），缺的照旧由必填校验报错。 */
+  if (!process.stdin.isTTY) {
+    console.log('\x1b[33m非交互环境（没有可用的终端）：不再提问，只用命令行参数给的值；缺的必填项会当场报错。\x1b[0m');
+    console.log('   完整写法：pnpm create:site --site-name=… --github-user=… --repo=… --api=… --site-url=… --theme-repo=… --git=y');
+    return {} as Answers;
+  }
   const a = await prompts(questions, {
     onCancel: () => {
       console.log('\n已取消。');
@@ -194,10 +201,11 @@ hasCJKLanguage = true
 # 文章列表页 /posts/ 不生成：导航里已经有「归档」承担列表职责。
 # 想恢复就删掉 content/zh/posts/_index.md 里那三行 build。
 
-# 时刻与文章的时间由后台自由填写，将来日期也要立刻上线。
-# Hugo 0.146+ 只认 [build].future，写在顶层的 enableFuture 会被静默忽略。
-[build]
-  future = true
+# 「将来才上线」的稿子：这里没有配置项可开。实测 Hugo 0.165.0 连 [build].future 都不认
+# （hugo config 里根本不出现这一项），只有命令行 -F/--buildFuture 才会把将来日期的页面生成出来。
+# 所以后台走的是另一条路：发布时间填在将来时保存成显式草稿（draft: true）并在回执里说清楚，
+# 到时间后取消草稿再保存一次才上线 —— 至少不会出现「后台说发布成功、前台查无此文」。
+# 想让 Hugo 自己放行将来内容，就把 Pages 的构建命令改成 hugo --gc --minify --buildFuture。
 
 [params]
   # 这里故意什么都不写。站点的参数全部放在 config/_default/params.toml ——
@@ -217,6 +225,18 @@ hasCJKLanguage = true
   minifyOutput = true
 `;
 }
+
+/**
+ * 生成仓库里钉死的 Hugo 版本。
+ *
+ * 不钉就会漂：Pages 直连 Git 构建时用的是平台默认的那个 Hugo（想换只能设 `HUGO_VERSION`），
+ * Actions 里 `hugo-version: 'latest'` 又跟着上游最新发布走。两边版本不同，就会出现
+ * 「本地和 CI 都过、线上构建出来的页面对不上」，而且哪天 Hugo 改了行为你就得当场重查。
+ * 这座站的模板与 `content/zh/posts/_index.md` 里的 `build: { render: never }`
+ * 都在下面这个版本的 extended 构建上实测过，所以三处（Pages、两个 workflow）钉成同一个数。
+ * 想升级主题/站点前先本地 `hugo version` 对齐一次，再改这一个常量重新生成。
+ */
+const HUGO_PIN = '0.165.0';
 
 function deployWorkflow(a: Answers): string {
   return `name: Deploy to Cloudflare Pages
@@ -240,7 +260,8 @@ jobs:
 
       - uses: peaceiris/actions-hugo@v3
         with:
-          hugo-version: 'latest'
+          # 与 Cloudflare Pages 的 HUGO_VERSION 保持一致（见 README「构建设置」）
+          hugo-version: '${HUGO_PIN}'
           extended: true
 
       - name: Build
@@ -261,6 +282,17 @@ jobs:
             echo "enabled=false" >> "\$GITHUB_OUTPUT"
             echo "::notice::未配置 CF_API_TOKEN / CF_ACCOUNT_ID，跳过发布（只构建）。站点若已用 Cloudflare Pages 的 Git 集成，本来就不需要这一步。"
           fi
+
+      - name: Ensure Pages project exists
+        if: steps.cf.outputs.enabled == 'true'
+        # pages deploy 碰到不存在的项目会问「要不要顺手创建」，CI 里没有终端 → 直接报错退出。
+        # 先单独 create 一次；项目已存在时它会失败，那份失败忽略就是（真正要成功的是下一步）。
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: \${{ secrets.CF_API_TOKEN }}
+          accountId: \${{ secrets.CF_ACCOUNT_ID }}
+          command: pages project create ${a.repoName} --production-branch main
 
       - name: Deploy to Cloudflare Pages
         if: steps.cf.outputs.enabled == 'true'
@@ -407,9 +439,10 @@ jobs:
         if: steps.check.outputs.up_to_date == 'false'
         uses: peaceiris/actions-hugo@v3
         with:
-          hugo-version: 'latest'
+          # 与 deploy.yml、Cloudflare Pages 的 HUGO_VERSION 同一个版本：
+          # 试构建用的 Hugo 比线上高或低，就可能「这里过了、Pages 红了」
+          hugo-version: '${HUGO_PIN}'
           extended: true
-        # 想让试构建更贴近线上，把这里的版本与 Cloudflare Pages 里设的 Hugo 版本对齐
 
       - name: 试构建（不过就不提交）
         if: steps.check.outputs.up_to_date == 'false'
@@ -618,16 +651,29 @@ Pages 自己 clone 仓库构建时**不会拉子模块**，\`themes/zero\` 会�
 Build command: ${pagesBuildCommand(a)}
 \`\`\`
 
+同一页往下翻到 **Build environment & advanced settings → Environment variables**，加一条：
+
+\`\`\`text
+HUGO_VERSION = ${HUGO_PIN}
+\`\`\`
+
+不设它就用 Pages 平台默认的 Hugo（会随平台漂移，而且默认那个不一定带 +extended）。
+本仓库的模板与 \`build: { render: never }\`、\`[languages.zh] contentDir\` 都在 ${HUGO_PIN} extended 上验过，
+\`.github/workflows/\` 两个文件里钉的是同一个版本 —— 三处对齐，才不会出现「本地和 Actions 都过、Pages 构建出来的不一样」。
+
 这样每次构建都直接取主题默认分支的最新提交（主题仓库是公开的，不需要凭据）。
 想固定在某一个主题版本，把 \`--depth 1\` 后面加上 \`-b <标签或分支>\`，或干脆钉住提交号：
 \`git -C themes/zero fetch --depth 1 ${a.themeRepo} <那个提交号> && git -C themes/zero checkout FETCH_HEAD\`。
 
-## 需要的 GitHub Secrets
+## 需要的 GitHub Secrets（只有让 Actions 负责发布时才需要）
 
 | 名称 | 说明 |
 |---|---|
 | \`CF_API_TOKEN\` | Cloudflare API Token，需 Pages 编辑权限 |
 | \`CF_ACCOUNT_ID\` | Cloudflare 账户 ID |
+
+站点若走 **Cloudflare Pages 直连 Git 构建**（照上一节配好 Build command 就是这条路），这两个 secret 不用配：
+push 本身就是构建触发器，\`deploy.yml\` 检测不到 secret 时只做构建、不发布。
 
 ## 本地预览
 
@@ -767,11 +813,14 @@ hugo server -D
   if (!submodulePending && imported === 0) {
     note('（示例内容这次没进来：先 git submodule update --init --recursive，再重跑一次 pnpm create:site 覆盖生成）');
   }
-  todo('给 Actions 两个 secret：仓库 Settings → Secrets and variables → Actions → New repository secret');
+  todo('（只有走 Actions 部署才需要）给 Actions 两个 secret：仓库 Settings → Secrets and variables → Actions → New repository secret');
   note('CF_API_TOKEN（要有 Pages 编辑权限的 API Token）、CF_ACCOUNT_ID（Cloudflare 控制台首页右侧那串）');
+  note('站点如果用 Cloudflare Pages 的「直连 Git 构建」（下面第 4 步那条 Build command 配好了就是这条路），这两个 secret 不用配：');
+  note('deploy.yml 检测不到它们就只做构建、不发布，push 本身已经触发 Pages 重建');
   todo(`推 main 会触发首次构建；Pages 项目 ${a.repoName} 由 workflow 自动创建，自定义域名到 Cloudflare Pages → 该项目 → Custom domains 里绑`);
   note('⚠ Pages 若是「直连 Git 构建」，一定要把 Build command 换成下面这条 —— Pages 不拉子模块，照默认 hugo 构建出来的页面没有样式：');
   note(pagesBuildCommand(a));
+  note(`⚠ 同一页的 Environment variables 里再加一条 HUGO_VERSION = ${HUGO_PIN}（生成的两个 workflow 钉的就是这个版本；不设就用 Pages 平台默认那个，三处版本不一致时线上产物会和你本地看到的对不上）`);
   note(`本机先看一眼效果：cd ${siteDir} && git submodule update --init --recursive && hugo server -D`);
   todo('让后台写得进这座仓库');
   note(`· zero-stack 的 packages/api/wrangler.jsonc 里 ALLOWED_ORIGINS 加上 ${a.siteUrl}，然后 pnpm deploy:api（不加就是后台一请求就被 CORS 拒掉）`);

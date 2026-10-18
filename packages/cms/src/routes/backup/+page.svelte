@@ -54,7 +54,7 @@
     label: string;
     files?: { total: number; write: number; skip: number; unchanged: number; conflicts: string[] };
     tables?: { name: string; rows: number; inserted: number; skipped: number; note: string | null }[];
-    settings?: { write: number; changed: { key: string; from: string; to: string }[] };
+    settings?: { write: number; changed: { key: string; from: string; to: string }[]; kept: { key: string; here: string; fromBackup: string }[] };
     media?: { total: number; present: number; absent: number };
     notes: string[];
     errors: string[];
@@ -416,9 +416,10 @@
         for (const c of s.files.conflicts) if (!cur.files.conflicts.includes(c)) cur.files.conflicts.push(c);
       }
       if (s.settings) {
-        cur.settings ??= { write: 0, changed: [] };
+        cur.settings ??= { write: 0, changed: [], kept: [] };
         cur.settings.write += s.settings.write;
         for (const ch of s.settings.changed) if (!cur.settings.changed.some((o) => o.key === ch.key)) cur.settings.changed.push(ch);
+        for (const kp of s.settings.kept) if (!cur.settings.kept.some((o) => o.key === kp.key)) cur.settings.kept.push(kp);
       }
       for (const t of s.tables ?? []) {
         cur.tables ??= [];
@@ -883,6 +884,19 @@
               <ul class="tight">
                 {#each s.settings.changed as c (c.key)}
                   <li class="small"><code>{c.key}</code>：<span class="mono">{c.from || '（空）'}</span> → <span class="mono">{c.to || '（空）'}</span></li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if s.settings?.kept?.length}
+            <details>
+              <summary class="muted small">本站绑定项 {s.settings.kept.length} 项：恢复不写回，源站值只作对照</summary>
+              <ul class="tight">
+                {#each s.settings.kept as k (k.key)}
+                  <li class="small">
+                    <code>{k.key}</code>：本站 <span class="mono">{k.here || '（空）'}</span>
+                    {#if k.fromBackup}· 备份里是 <span class="mono">{k.fromBackup}</span>{/if}
+                  </li>
                 {/each}
               </ul>
             </details>

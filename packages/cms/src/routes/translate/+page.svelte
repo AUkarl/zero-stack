@@ -139,6 +139,21 @@
     status = st.data;
   }
 
+  /** 密钥留空提交等于「不改」，填错的那份要卸掉只能显式发 null */
+  async function clearKey() {
+    if (!window.confirm('清除已保存的翻译密钥？之后要重新填才能调用翻译。')) return;
+    error = '';
+    try {
+      await patch('/api/admin/config', { translateKey: null });
+      apiKey = '';
+      const st = await get<{ data: TrStatus }>('/api/admin/translate/status');
+      status = st.data;
+      flash('已清除翻译密钥');
+    } catch (e) {
+      error = e instanceof Error ? e.message : '清除失败';
+    }
+  }
+
   async function loadDocs() {
     docLoading = true;
     error = '';
@@ -309,6 +324,7 @@
         <label class="tight">模型<input bind:value={model} placeholder="如 gpt-4o-mini" /></label>
       </div>
       <label class="tight">密钥（留空不改）<input type="password" bind:value={apiKey} placeholder="deepseek / qianwen 等需填" /></label>
+      <button type="button" class="sm" onclick={() => void clearKey()}>清除已存密钥</button>
       {#if activeProviderInfo?.family === 'free'}
         <p class="muted small">免费公共接口，无需密钥，配额低，失败会原样报错。</p>
       {/if}
