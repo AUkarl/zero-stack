@@ -248,9 +248,11 @@ pnpm create:site
 - 配了 `--api=`（或向导填了 API 地址）时，仓库里会多一个 `functions/_middleware.ts`：
   后台把某个功能关掉，那个页面在**边缘**直接返回 404 并带上 `x-robots-tag: noindex, nofollow`。
   主题原来只在浏览器里按 `/api/config` 把入口 hidden 掉，旧地址照样打得开、搜索引擎照旧收录，
-  「站内不显示 + 不收录 + 关掉就是 404」只有在这一层做得到。它只管 `/links/ /moments/ /subscribe/ /account/`
-  四条（各自对应的开关键在文件里的 `GATED` 表内，加一行就能多管一个页面；工坊 `/tools/` 目前没有后台开关，
-  要先在设置里加开关才有意义），开关状态在边缘缓存 60 秒 —— 后台改完最迟一分钟后生效，不用重建站点；
+  「站内不显示 + 不收录 + 关掉就是 404」只有在这一层做得到。它管七条路径：
+  `/links/`（`friendsEnabled`）、`/moments/`（`momentsEnabled`）、`/subscribe/`（`subscribeEnabled`）、
+  `/account/`（`accountSystemEnabled`）、`/tools/`（`toolsEnabled`）、`/work/`（`workEnabled`）、
+  `/about/`（`aboutEnabled`）。`GATED` 表加一行就能多管一个页面，但后台「设置」里得真有那个键，
+  否则判不到关、页面照旧正常出。开关状态在边缘缓存 60 秒 —— 后台改完最迟一分钟后生效，不用重建站点；
   读不到配置时一律按「默认开」放行，绝不会因为接口抖动把整站变 404。模板在
   `zero-stack/scripts/site-template/functions/_middleware.ts`，生成时只替换 `__ZERO_API_BASE__` 一个占位。
 - 脚本只在本地生成与提交，**不会替你推送远端**，推送指令会打印出来由你自己执行；

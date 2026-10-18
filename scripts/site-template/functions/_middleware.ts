@@ -13,8 +13,8 @@
  *   · 拿不到配置（后端挂了、超时、返回非 200）时一律按「默认开」放行，绝不把整站变 404
  *   · /admin、/posts、图片与 RSS 这些不在表里的路径完全不经过任何判断，性能与行为都和没有这个文件时一致
  *
- * 想再多管一个页面：往 GATED 里加一行「路径前缀 → 开关键」。
- * 工坊页 /tools/ 目前没有对应的后台开关（内容来自 data/works.json），要先在设置里加开关才有意义。
+ * 想再多管一个页面：往 GATED 里加一行「路径前缀 → 开关键」，键必须真是 /api/config 暴露出来的那个
+ * （后台「设置」里得有对应的开关，否则这里判不到关，页面照旧正常出）。
  */
 const API_BASE = '__ZERO_API_BASE__';
 
@@ -24,6 +24,9 @@ const GATED: Array<[string, string]> = [
   ['/moments/', 'momentsEnabled'],
   ['/subscribe/', 'subscribeEnabled'],
   ['/account/', 'accountSystemEnabled'],
+  ['/tools/', 'toolsEnabled'],
+  ['/work/', 'workEnabled'],
+  ['/about/', 'aboutEnabled'],
 ];
 
 const CACHE_MS = 60_000;

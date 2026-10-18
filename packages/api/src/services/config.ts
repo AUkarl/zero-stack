@@ -81,6 +81,10 @@ export type ConfigKey =
   | 'friendApplyBlocklist'
   // 时刻
   | 'momentsEnabled'
+  /** 工具页 /tools/、工坊页 /work/、关于页 /about/ 是否对外开放（关掉后前台隐藏入口，边缘直接 404） */
+  | 'toolsEnabled'
+  | 'workEnabled'
+  | 'aboutEnabled'
   // 统计
   | 'analyticsEnabled'
   | 'analyticsRetentionDays'
@@ -201,6 +205,9 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'cloudflareEmailToken',
   'friendsEnabled',
   'friendsAutoCheck',
+  'toolsEnabled',
+  'workEnabled',
+  'aboutEnabled',
   'friendsCheckOnlyRss',
   'friendsCheckIntervalHours',
   'friendsLostAfterDays',
@@ -341,6 +348,10 @@ const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   friendsLostAfterDays: '30',
   friendsStaleAfterDays: '90',
   momentsEnabled: 'true',
+  /** 工具页 /tools/、工坊页 /work/、关于页 /about/：默认开；关掉后前台入口隐藏、边缘直接 404（见内容仓库 functions/_middleware.ts） */
+  toolsEnabled: 'true',
+  workEnabled: 'true',
+  aboutEnabled: 'true',
   analyticsEnabled: 'true',
   analyticsRetentionDays: '365',
   statsUtcOffsetHours: '8',
@@ -549,6 +560,9 @@ const PUBLIC_KEYS: ConfigKey[] = [
   'avatarTemplate',
   'friendsEnabled',
   'momentsEnabled',
+  'toolsEnabled',
+  'workEnabled',
+  'aboutEnabled',
   'draftsEnabled',
   'authorVerifyEnabled',
   'analyticsEnabled',
