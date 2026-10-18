@@ -46,6 +46,8 @@
     };
     omitted: { key: string; reason: string; value: string }[];
     sections: Section[];
+    /** 导出这行文件时后端发现的隐患（比如内容仓库一个文件也没读到），空备份不会伪装成成功 */
+    warnings?: string[];
   }
   interface OutcomeSection {
     id: string;
@@ -91,6 +93,8 @@
   let error = $state('');
   let notice = $state('');
   let lastExport = $state<ArchiveResult | null>(null);
+  /** 最近一次「导出到本地」带回来的隐患：空备份必须当场看得见，不能等导入才发现 */
+  let exportWarn = $state<string[]>([]);
 
   let picked = $state<{ name: string; payload: Payload } | null>(null);
   /** 勾选要恢复的分区：默认全选，但可以只挑「文章」或只挑「评论」 */
@@ -170,9 +174,11 @@
   async function download() {
     busy = 'download';
     error = '';
+    exportWarn = [];
     try {
       const payload = await get<Payload>('/api/admin/backup/export');
       saveAs(`zero-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(payload, null, 2));
+      exportWarn = payload.warnings ?? [];
       notice = `已导出全站备份：${payload.sections.length} 个分区；未写回的绑定项与密钥 ${payload.omitted.length} 条只列在文件里供人工对照`;
     } catch (e) {
       error = e instanceof Error ? e.message : '导出失败';
@@ -565,6 +571,18 @@
       {busy === 'archive' ? '存档中…' : '存档到 R2'}
     </button>
   </div>
+
+  {#if exportWarn.length}
+    <div class="meta">
+      {#each exportWarn as w (w)}
+        <p class="err small">{w}</p>
+      {/each}
+      <p class="small">
+        这一份里没有仓库文件，导到新站也写不出文章和样式。本地跑后端时先把内容仓库桥起起来（<code>pnpm repo:bridge</code>）；
+        线上则核对「设置 → 内容仓库」的用户名 / 仓库名 / 分支，以及 Worker 的 GITHUB_TOKEN。修好后重新点一次「导出到本地」。
+      </p>
+    </div>
+  {/if}
 
   {#if lastExport}
     <div class="meta">

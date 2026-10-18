@@ -209,7 +209,10 @@ export async function exportBackup(
 
   /** 仓库文件读不到不算失败，只记一条 note：新装的站本来就没几篇 */
   const readRepo = async (paths: string[], noteSink: string[]): Promise<BackupFile[]> => {
-    if (!target) return [];
+    if (!target) {
+      if (paths.length) noteSink.push(`${paths[0]}：内容仓库没配好（仓库坐标 / 令牌 / 本地目录），这份备份里没有仓库文件`);
+      return [];
+    }
     const out: BackupFile[] = [];
     for (const p of paths) {
       try {
@@ -351,6 +354,17 @@ export async function exportBackup(
       ...mediaNotes,
     ],
   });
+
+  /* 仓库一个文件也没读到 = 桥接进程没起 / GitHub 连不上 / 仓库没配。
+     这种备份导到新站什么也写不进去，只记在分区 notes 里太隐蔽（界面仍然显示「导出成功」），顶到 warnings。 */
+  const repoFileCount =
+    themeFiles.length + postFiles.length + momentFiles.length + linksFileRows.length + authorFileRows.length;
+  if (repoFileCount === 0) {
+    const failure = [...themeNotes, ...postsNotes, ...momentNotes, ...friendNotes, ...userNotes].find((n) =>
+      /读取失败|失败：|没有读到文件|没配好/.test(n),
+    );
+    if (failure) warnings.push(`内容仓库一个文件都没读到，这份备份里没有文章/时刻/主题样式/友链文件。原因：${failure}`);
+  }
 
   const siteNameRow = configRows.find((r) => r.key === 'siteName');
   return {

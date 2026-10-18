@@ -69,7 +69,7 @@ app.get('/export', async (c) => {
   });
 
   if (!save) {
-    return new Response(JSON.stringify(payload), {
+    return new Response(JSON.stringify({ ...payload, warnings }), {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': `attachment; filename="${backupKey().split('/').pop()}"`,
