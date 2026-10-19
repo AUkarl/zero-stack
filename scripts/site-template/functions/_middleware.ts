@@ -123,6 +123,8 @@ export const onRequest = async (context: PagesContext) => {
     const data = await switches();
     const off = data ? offPrefixes(data) : [];
     if (!res.ok || !off.length) return applySecurityHeaders(res);
+    /* 正文一旦被 text() 读走就再也放不回去，所以先留一份副本：过滤环节出任何意外都还能原样递出去 */
+    const untouched = res.clone();
     try {
       const xml = await res.text();
       /* 一个 <url> 块 = 一条地址，整块删掉；只删 <url>…</url> 包住的那一段，
@@ -141,10 +143,10 @@ export const onRequest = async (context: PagesContext) => {
       const headers = new Headers(res.headers);
       // 正文长度变了，留着旧的 content-length 会让客户端截断或挂住
       headers.delete('content-length');
-      return new Response(filtered, { status: res.status, statusText: res.statusText, headers });
+      return applySecurityHeaders(new Response(filtered, { status: res.status, statusText: res.statusText, headers }));
     } catch {
       // 过滤这一步出任何意外都不能把站点地图搞没：原样递出去
-      return applySecurityHeaders(res);
+      return applySecurityHeaders(untouched);
     }
   }
 
