@@ -601,7 +601,11 @@ const PUBLIC_KEYS: ConfigKey[] = [
  * 站长联系邮箱：不再有配置键，直接取管理员账号注册时用的邮箱。
  * 「找回密码」提示与「登录已关闭」那句提示共用这一个来源，改密码用的邮箱和
  * 给用户看的邮箱不会各说一套；管理员换邮箱，前台提示跟着变。
- * /api/config 每次都要问一遍，压一层 5 分钟内存缓存，命中就省一次 D1 读。
+ * 压一层 5 分钟内存缓存，命中就省一次 D1 读。
+ *
+ * 这个值**不进 /api/config**：Cloudflare 的邮箱保护只改写 HTML，JSON 接口是明文直达的，
+ * 挂在整站公开配置里等于给每个来 curl 一下的爬虫送一份收件人名单。
+ * 前端要它得走 GET /api/config/admin-email —— 只有真打开「找回密码」面板才会去要，且带限流。
  */
 let contactCache: { at: number; value: string } | null = null;
 
@@ -627,7 +631,6 @@ export async function getPublicConfig(env: Env): Promise<Record<string, string |
     else if (/^-?\d+$/.test(raw)) out[key] = Number(raw);
     else out[key] = raw;
   }
-  out.adminContactEmail = await getAdminContactEmail(env);
   return out;
 }
 

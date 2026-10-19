@@ -36,3 +36,75 @@ jobs:
         run: cp packages/api/wrangler.jsonc.example packages/api/wrangler.jsonc
       - name: Build
         run: pnpm -r build
+
+  # ------------------------------------------------------------
+  # 评论反垃圾规则的位置闸门
+  # ------------------------------------------------------------
+  # 后台「评论审核」把规则清单写进内容仓库的 .zero/spam-patterns.txt。这个位置是修出来的：
+  # 以前写的是 data/，而 Hugo 把 data/ 下每个文件都当数据文件解析，一份纯文本正则进去就报
+  # unmarshal of format "" is not supported，整站构建不出来 —— 后台点一次「保存」= 全站挂掉
+  # （口径见 packages/api/src/services/moderation.ts 的 SPAM_PATTERN_FILE）。
+  # 上面那个 job 只做 typecheck 与 wrangler 打包，一步都不碰 Hugo，所以「以后有人把路径挪回
+  # data/」或模板改了存放位置都不会提前撞红。这条 job 用 .github/fixtures/hugo-site/ 那份
+  # 最小内容仓库正反各构建一次：规则待在 .zero/ 必须构建成功，把它复制进 data/ 必须构建失败。
+  # 单独成 job 而不是往上面塞一步：这条不装依赖、不碰 pnpm，只需要一个 Hugo。
+  spam-pattern-path:
+    runs-on: ubuntu-latest
+    steps:
+      # 这里不写 submodules —— 主题是内容仓库的子模块，zero-stack 仓库里没有它，
+      # 所以主题得下一步自己取。
+      - uses: actions/checkout@v4
+      - uses: peaceiris/actions-hugo@v3
+        with:
+          # 与 scripts/create-site.ts 的 HUGO_PIN、Cloudflare Pages 的 HUGO_VERSION 同一口径。
+          # 这里用别的版本就可能出现「CI 过了、线上红」；要升级三处一起改。
+          hugo-version: '0.165.0'
+          extended: true
+
+      - name: Fetch theme
+        env:
+          # 主题仓库公开，匿名 clone 即可，不需要凭据（和 Pages 那条构建命令同一条路）。
+          # fork 要换成自己那份主题的，在 Settings → Secrets and variables → Actions
+          # 建一个仓库 Variable 叫 ZERO_THEME_REPO，不必改这个文件。
+          ZERO_THEME_REPO: ${{ vars.ZERO_THEME_REPO || 'https://github.com/AUkarl/zero-theme.git' }}
+        run: git clone --depth 1 "$ZERO_THEME_REPO" .github/fixtures/hugo-site/themes/zero
+
+      - name: Build with rules under .zero
+        run: |
+          set -euo pipefail
+          # fixture 里那份规则文件必须在场，否则这一步会退化成「构建一个压根没规则的站」
+          test -f .github/fixtures/hugo-site/.zero/spam-patterns.txt
+          # 产物一律落到 RUNNER_TEMP，别在 fixture 目录里长出 public/；
+          # Hugo 仍会在 fixture 目录里留 .hugo_build.lock 与 resources/（图片处理缓存），
+          # 那两样已被 fixture 自带的 .gitignore 挡掉，不会污染仓库。
+          hugo --source .github/fixtures/hugo-site --minify --destination "$RUNNER_TEMP/hugo-ok"
+
+      - name: Assert rules absent from the built site
+        run: |
+          set -euo pipefail
+          # 先确认它真渲染出了页面，不然下面两条「产物里没有 .zero」是空过的
+          test -f "$RUNNER_TEMP/hugo-ok/index.html"
+          test ! -e "$RUNNER_TEMP/hugo-ok/.zero"
+          test -z "$(find "$RUNNER_TEMP/hugo-ok" -name 'spam-patterns*' -print)"
+
+      - name: Assert rules under data break the build
+        run: |
+          set -euo pipefail
+          site=.github/fixtures/hugo-site
+          log="$RUNNER_TEMP/hugo-data.log"
+          mkdir -p "$site/data"
+          cp "$site/.zero/spam-patterns.txt" "$site/data/spam-patterns.txt"
+          # 反向断言：这一步只有「构建失败、且失败原因就是这份文件」才算过。
+          # 真把规则写回 data/ 的那次提交会在这里当场红，而不是等线上整站挂掉。
+          if hugo --source "$site" --minify --destination "$RUNNER_TEMP/hugo-data" >"$log" 2>&1; then
+            cat "$log"
+            echo '::error::规则文件复制进 data/spam-patterns.txt 后 Hugo 仍然构建成功，data 目录的解析行为变了，请重看这条 job。'
+            exit 1
+          fi
+          # 失败也得失败在对的地方：报的是别的错，说明 fixture 自己坏了，
+          # 那种「红」会掩盖真正的原因，同样不能放过。
+          grep -q 'spam-patterns.txt' "$log" || {
+            cat "$log"
+            echo '::error::构建确实失败了，但报错与 spam-patterns.txt 无关，是这份 fixture 坏了。'
+            exit 1
+          }

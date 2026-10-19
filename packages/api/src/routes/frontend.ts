@@ -51,12 +51,15 @@ const homeSchema = z.object({
 /** 页脚图标条目：键名与主题 params.toml 的 [[footer.services]] / social_row1/2 一致，
     模板 data 优先、params 兜底，所以后台填了就不必再动 params.toml。 */
 const footerIconItem = z.object({
-  name: short,
+  /** 这条链接唯一的可读名（title 与 aria-label 都用它），空着读屏就只念得出「链接」，所以不许为空 */
+  name: short.pipe(z.string().transform((v) => v.trim()).refine((v) => v.length > 0, '名称不能为空')),
   icon: short.optional().default(''),
   img: href.optional().default(''),
   link: href,
   /** 深色模式下要不要反色（图片 logo 常见需求） */
   invert: z.boolean().optional().default(false),
+  /** 这一条要不要把名字显示在图标旁边；不写就跟着页脚那行的全站默认 */
+  showName: z.boolean().optional(),
 });
 
 const footerSchema = z.object({
@@ -68,6 +71,8 @@ const footerSchema = z.object({
     .array(z.object({ text: short, link: href }))
     .max(20)
     .default([]),
+  /** 「支持服务」那行的全站默认：条目自己写了 showName 就以条目为准 */
+  showServiceName: z.boolean().optional().default(true),
   /** 中栏的服务图标行 */
   services: z.array(footerIconItem).max(20).optional(),
   /** 右栏两排社交图标 */
@@ -429,6 +434,11 @@ app.post('/', async (c) => {
       const before = prev?.value as Record<string, unknown> | undefined;
       for (const k of ['services', 'socialRow1', 'socialRow2'] as const) {
         if (value[k] === undefined && Array.isArray(before?.[k])) value = { ...value, [k]: before[k] };
+      }
+      /** showServiceName 在 schema 里有默认值 true，所以「面板没送」和「用户明确关掉」
+          过完 schema 长得一样 —— 只能看送进来的原文，没写这条时沿用仓库现值。 */
+      if ((raw as Record<string, unknown>)?.showServiceName === undefined && typeof before?.showServiceName === 'boolean') {
+        value = { ...value, showServiceName: before.showServiceName };
       }
     }
     pending.push({ key, content: JSON.stringify(value, null, 2) + '\n' });

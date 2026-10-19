@@ -1,5 +1,7 @@
 /**
- * functions/_middleware.ts — 后台关掉的功能，边缘直接 404
+ * functions/_middleware.ts — 边缘这一层管两件事
+ *   1. 后台关掉的功能，旧地址直接 404，并且不再出现在站点地图里
+ *   2. 全站补上三个安全响应头（CSP 不在这里做，见下面第 4 条硬约束）
  *
  * 为什么要这一层：主题原本只在浏览器里按 /api/config 把入口 hidden 掉（js/zero-switches.js），
  * 于是旧地址照样能直接打开、搜索引擎也照旧收录。要同时做到「站内不显示、旧链接打不开、爬虫别收」，
@@ -8,11 +10,16 @@
  * 这份文件由 pnpm create:site 生成到内容仓库里，__ZERO_API_BASE__ 已经换成填好的接口地址。
  * 单独放在 zero-stack/scripts/site-template 下是源模板，改逻辑改这份，重新生成站点即可带上。
  *
- * 四条硬约束：
+ * 五条硬约束：
  *   · 读的是接口自己的 /api/config，结果在边缘缓存 60 秒 —— 后台打开关最迟一分钟后生效，不用重建站点
  *   · 拿不到配置（后端挂了、超时、返回非 200）时一律按「默认开」放行，绝不把整站变 404
  *   · 判定为「关掉」时只能出 404，任何意外都不许出 5xx
- *   · /admin、/posts、图片与 RSS 这些不在表里的路径完全不经过任何判断，性能与行为都和没有这个文件时一致
+ *   · 除 /sitemap.xml 以外，任何路径都不为了拿配置而多跑一次网络请求：
+ *     只有「这条路径归 GATED 管」或「这是站点地图」才会去 fetch /api/config；
+ *     图片、CSS、文章这些不归管的请求只是原样把响应递出去、顺手补三个头
+ *   · 这里不加 Content-Security-Policy：主题用了 media=print + onload 的异步样式、
+ *     正文里有各家播放器 iframe、还要放过 Cloudflare 自己注入的两段脚本，
+ *     CSP 要一次写全才敢开，漏一项就是整站样式或评论挂掉 —— 单独排期，不顺手做
  *
  * 想再多管一个页面：往 GATED 里加一行「路径前缀 → 开关键」，键必须真是 /api/config 暴露出来的那个
  * （后台「设置」里得有对应的开关，否则这里判不到关，页面照旧正常出）。
@@ -69,6 +76,34 @@ function gatedKey(pathname: string): string {
   return '';
 }
 
+/** 关掉的那几条路径，前缀按当前配置算出来（站点地图用） */
+function offPrefixes(data: Record<string, unknown>): string[] {
+  return GATED.filter(([, key]) => isOff(data[key])).map(([prefix]) => prefix);
+}
+
+/**
+ * 安全响应头。
+ * X-Frame-Options 用 SAMEORIGIN 而不是 DENY：正文里本来就允许嵌各家播放器 iframe，
+ * 而「本站把本站框起来」这种用法不存在，SAMEORIGIN 已经够挡住点框架劫持。
+ * Permissions-Policy 把摄像头/麦克风/定位/支付这类能力一次性关掉，
+ * 免得第三方脚本（播放器、Cloudflare 的人机校验）自己去要设备权限。
+ */
+function applySecurityHeaders(res: Response): Response {
+  try {
+    // Pages 递出来的响应头是可以直接改的；万一哪天变成 immutable，也不能因此把页面搞挂
+    res.headers.set('X-Frame-Options', 'SAMEORIGIN');
+    res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
+    return res;
+  } catch {
+    const headers = new Headers(res.headers);
+    headers.set('X-Frame-Options', 'SAMEORIGIN');
+    headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  }
+}
+
 /** Pages 给中间件的三个方法；写成局部类型，这个文件不依赖任何全局 workers 类型 */
 interface PagesContext {
   request: Request;
@@ -77,12 +112,47 @@ interface PagesContext {
 }
 
 export const onRequest = async (context: PagesContext) => {
-  const pathname = new URL(context.request.url).pathname;
+  const url = new URL(context.request.url);
+  const pathname = url.pathname;
+
+  /* 站点地图：被关功能的地址不该继续留给爬虫。开关键活在 D1（运行时），
+     sitemap.xml 却是构建期烤出来的静态文件 —— 只有在这一层过滤才做得到
+     「后台一关就自动从地图里消失、一开就自动回来」，且不用动内容仓库、不用重新构建。 */
+  if (pathname === '/sitemap.xml') {
+    const res = await context.next();
+    const data = await switches();
+    const off = data ? offPrefixes(data) : [];
+    if (!res.ok || !off.length) return applySecurityHeaders(res);
+    try {
+      const xml = await res.text();
+      /* 一个 <url> 块 = 一条地址，整块删掉；只删 <url>…</url> 包住的那一段，
+         贪婪匹配会把后面所有条目一起带走，所以这里必须用非贪婪 */
+      const filtered = xml.replace(/<url>(?:(?!<\/?url>)[\s\S])*?<\/url>/g, (block) => {
+        const loc = /<loc>([^<]*)<\/loc>/.exec(block);
+        if (!loc) return block;
+        let path = loc[1].trim();
+        try {
+          path = new URL(path).pathname;
+        } catch {
+          /* 不是绝对地址就按原样比 */
+        }
+        return off.some((prefix) => path === prefix.replace(/\/$/, '') || path.startsWith(prefix)) ? '' : block;
+      });
+      const headers = new Headers(res.headers);
+      // 正文长度变了，留着旧的 content-length 会让客户端截断或挂住
+      headers.delete('content-length');
+      return new Response(filtered, { status: res.status, statusText: res.statusText, headers });
+    } catch {
+      // 过滤这一步出任何意外都不能把站点地图搞没：原样递出去
+      return applySecurityHeaders(res);
+    }
+  }
+
   const key = gatedKey(pathname);
-  if (!key) return context.next();
+  if (!key) return applySecurityHeaders(await context.next());
 
   const data = await switches();
-  if (!data || !isOff(data[key])) return context.next();
+  if (!data || !isOff(data[key])) return applySecurityHeaders(await context.next());
 
   /* 关掉：取站点自己那份 404 页当响应体，但状态码要真是 404，并明确告诉爬虫别收。
      直接 new Response('404') 会让访客看到一个空白页，主题那个 404 页才是该有的样子。
@@ -97,7 +167,7 @@ export const onRequest = async (context: PagesContext) => {
   headers.set('content-type', 'text/html; charset=utf-8');
   headers.set('x-robots-tag', 'noindex, nofollow');
   headers.set('cache-control', 'public, max-age=60');
-  return new Response(html || MINIMAL_404, { status: 404, headers });
+  return applySecurityHeaders(new Response(html || MINIMAL_404, { status: 404, headers }));
 };
 
 /** 兜底正文：主题没出 404 页、或那一页取的时候出任何意外，都只回空串，由上面换成内联最小页 */

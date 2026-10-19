@@ -129,12 +129,21 @@
       下面三组图标写进 <code>data/footer.json</code>，优先级高于 params.toml 的
       <code>[[footer.services]]</code> / <code>social_row1</code> / <code>social_row2</code>；
       三组都清空时主题仍会回落到 params.toml 里的那套。地址留空的条目主题不会渲染（免得出现点了没反应的图标）。
+      名称是必填的 —— 它同时是这条链接给读屏软件的唯一可读名，只挂图不写名字，读屏用户听到的就只有「链接」两个字。
     </p>
   {/if}
 
+<section class="card blk">
+  <h3>「支持服务」那一排</h3>
+  <label class="switch">
+    <input type="checkbox" bind:checked={footer.showServiceName} />
+    <span>默认在图标旁边显示名称（单条想例外，就在下面那条上选「显示 / 只留图标」）</span>
+  </label>
+</section>
+
 <FooterIconList
   title="支持服务图标（services）"
-  hint="页脚中栏的一排图标，站点联盟、打赏之类的入口。名称与地址至少填一个，否则保存时丢掉这条。"
+  hint="页脚中栏的一排图标，站点联盟、打赏之类的入口。名称必填、地址必填；名称显示方式可以整排统一，也可以逐条覆盖。"
   bind:items={footer.services}
 />
 

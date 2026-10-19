@@ -22,7 +22,8 @@ import publicMedia from './routes/media';
 import account, { deletionsAdmin } from './routes/account';
 import security from './routes/security';
 import broadcastJobs from './routes/broadcast';
-import { getAllowedOrigins, getConfig, getPublicConfig } from './services/config';
+import { getAllowedOrigins, getConfig, getPublicConfig, getAdminContactEmail } from './services/config';
+import { rateLimit } from './lib/rate-limit';
 import { errorMessage } from './lib/errors';
 import type { AppEnv } from './lib/app';
 import { runScheduledJobs } from './services/scheduler';
@@ -32,22 +33,51 @@ const app = new Hono<AppEnv>();
 
 /* ---------------- CORS：白名单来自 vars，未配置则只允许同源与本地 ---------------- */
 
+/** 这个来源能不能带凭据来：白名单写了 * 、就是本站自己、或是本地开发端口 */
+function isAllowedOrigin(origin: string, allowed: string[], self: string): boolean {
+  if (allowed.includes('*')) return true;
+  if (origin === self) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  return allowed.includes(origin);
+}
+
+/**
+ * 被拒的跨源请求不能留下「可以带凭据」这个信号。hono 的 cors 在 origin 不匹配时
+ * 只是不回 Access-Control-Allow-Origin，凭据头却照样挂着 —— 浏览器确实拦住了，
+ * 但以后谁改这段中间件时照着「有 creds 就是允许」判断就会踩坑，所以在这里抹平。
+ * 必须注册在 cors **外面**（先 use）：cors 是在它自己的 next() 返回之后才写头的，
+ * 排在其后的中间件看到的还是旧头。
+ */
+app.use('*', async (c, next) => {
+  await next();
+  if (!c.res.headers.get('Access-Control-Allow-Origin')) c.res.headers.delete('Access-Control-Allow-Credentials');
+});
+
 app.use('*', async (c, next) => {
   const allowed = await getAllowedOrigins(c.env);
   const self = new URL(c.req.url).origin;
   return cors({
     origin: (origin) => {
       if (!origin) return null;
-      if (allowed.includes('*')) return origin;
-      if (origin === self) return origin;
-      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
-      return allowed.includes(origin) ? origin : null;
+      return isAllowedOrigin(origin, allowed, self) ? origin : null;
     },
     credentials: true,
     allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     maxAge: 86400,
   })(c, next);
+});
+
+/* ---------------- 安全响应头（CSP 暂不做：要先给 Font Awesome 的 onload、百度系
+   之外的第三方播放器等开白名单，配漏一项就是整站样式或评论挂掉，单独排期） ---------------- */
+
+app.use('*', async (c, next) => {
+  await next();
+  c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Worker 只出 JSON 与错误页，不该被任何页面框住，也不该拿到摄像头/定位这类能力
+  c.res.headers.set('X-Frame-Options', 'DENY');
+  c.res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
 });
 
 /* ---------------- 会话解析：所有路由都能拿到可选的 user ---------------- */
@@ -117,6 +147,17 @@ app.route('/api/analytics', analytics);
 app.route('/api/media', publicMedia);
 
 app.get('/api/config', (c) => getPublicConfig(c.env).then((data) => Response.json({ data })));
+
+/**
+ * 站长联系邮箱：只在访客真打开「找回密码」面板时才给，不再混在整站公开配置里
+ * （Cloudflare 的邮箱保护只改写 HTML，curl 这个接口就是明文）。
+ * 限流按 IP 每小时 30 次，够一个正常用户反复开关面板，不够爬一趟名单。
+ */
+app.get('/api/config/admin-email', async (c) => {
+  await rateLimit(c, 'admin-email', 30, 3600);
+  const email = await getAdminContactEmail(c.env);
+  return Response.json({ data: { email } }, { headers: { 'Cache-Control': 'no-store' } });
+});
 
 /* ---------------- 后台：需管理员 ---------------- */
 

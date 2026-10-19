@@ -3,7 +3,7 @@
 
   let { title, hint, items = $bindable() }: { title: string; hint: string; items: FooterIconItem[] } = $props();
 
-  const blank = (): FooterIconItem => ({ name: '', icon: '', img: '', link: '', invert: false });
+  const blank = (): FooterIconItem => ({ name: '', icon: '', img: '', link: '', invert: false, showName: undefined });
 
   function add() {
     if (items.length >= CAP.icons) return;
@@ -54,6 +54,20 @@
         <input type="checkbox" bind:checked={x.invert} />
         <span>深色下反色</span>
       </label>
+      <label class="sn">
+        名称
+        <select
+          value={x.showName === undefined ? 'auto' : x.showName ? 'on' : 'off'}
+          onchange={(e) => {
+            const v = e.currentTarget.value;
+            x.showName = v === 'auto' ? undefined : v === 'on';
+          }}
+        >
+          <option value="auto">跟随全站</option>
+          <option value="on">显示在图标旁</option>
+          <option value="off">只留图标</option>
+        </select>
+      </label>
       <div class="row ops">
         <button class="sm" onclick={() => move(i, -1)} disabled={i === 0} title="上移">↑</button>
         <button class="sm" onclick={() => move(i, 1)} disabled={i === items.length - 1} title="下移">↓</button>
@@ -78,7 +92,7 @@
   }
   .ic {
     display: grid;
-    grid-template-columns: 1.6rem repeat(4, minmax(140px, 1fr)) auto auto;
+    grid-template-columns: 1.6rem repeat(5, minmax(120px, 1fr)) auto auto;
     gap: 0.5rem;
     align-items: end;
     border-top: 1px solid var(--border);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { del, get, getApiBase, patch } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
+  import { loadMediaBases, mediaLink, mediaLinkKind } from '#lib/media-url.svelte';
 
   interface MediaItem {
     key: string;
@@ -51,6 +52,7 @@
   let bucketsFromApi = $state(true);
 
   const selected = $derived(buckets.find((b) => b.id === selectedId) ?? null);
+  const linkKind = $derived(mediaLinkKind(selected));
 
   // 管理抽屉
   let drawer = $state(false);
@@ -134,7 +136,7 @@
       const res = await fetch(getApiBase() + '/api/admin/media' + qs, { method: 'POST', credentials: 'include', body: fd });
       const d = await res.json().catch(() => null);
       if (!res.ok) throw new Error(d?.message || '上传失败');
-      progress = `已上传：${d.data.url}${note ? `（${note}）` : ''}`;
+      progress = `已上传：${mediaLink(selected, d.data.key)}${note ? `（${note}）` : ''}`;
       setTimeout(() => (progress = ''), 3500);
       await load();
     } catch (e) {
@@ -150,18 +152,10 @@
     input.value = '';
   }
 
-  function publicUrl(key: string): string {
-    if (selected?.baseUrl) return selected.baseUrl.replace(/\/+$/, '') + '/' + key;
-    const mb = localStorage.getItem('zero_media_base') || '';
-    if (mb && (!selectedId || selectedId === 'r2')) return mb + '/' + key;
-    const base = getApiBase();
-    return base + '/api/admin/media/' + encodeURIComponent(key) + (selectedId ? `?bucket=${encodeURIComponent(selectedId)}` : '');
-  }
-
   async function copy(key: string) {
     try {
-      await navigator.clipboard.writeText('![](' + publicUrl(key) + ')');
-      progress = '已复制 Markdown 链接';
+      await navigator.clipboard.writeText(mediaLink(selected, key));
+      progress = '已复制链接';
       setTimeout(() => (progress = ''), 2000);
     } catch {
       error = '复制失败，请手动选取';
@@ -265,6 +259,7 @@
   }
 
   $effect(() => {
+    void loadMediaBases();
     void loadBuckets().then(() => void load());
   });
 
@@ -300,6 +295,13 @@
     还没有配置存储桶，点「管理存储桶」新增。
   {/if}
   {#if !bucketsFromApi}<span class="warn"> · 未读到 /api/admin/media/buckets，暂用配置 mediaBuckets 渲染。</span>{/if}
+  {#if selected && linkKind !== 'direct'}
+    <span class="warn">
+      · 这个桶没有公开域名，「复制链接」给的是 Worker 代理地址（/api/media/…）：访客不登录也打得开，但每张图都要接口转发一次。
+      要改成直链，在「管理存储桶」里给这个桶填 baseUrl，或到「设置 → 头像与媒体」填「媒体公开域名」。
+      {#if linkKind === 'relative'}接口域名也没读到，这条现在还是站内相对路径 —— 站点与接口不同源时放进正文访客看不到。{/if}
+    </span>
+  {/if}
 </p>
 
 <div
@@ -319,7 +321,7 @@
   <p>拖拽文件到此处，或点击选择（支持多张，单文件 ≤ 20MB）</p>
   <input bind:this={input} type="file" multiple hidden onchange={onPick} />
   <p class="muted small">
-    上传会带上选中的存储桶 id；配了公开域名则复制 CDN 链接，否则为后台代理链接。
+    上传会带上选中的存储桶 id；桶配了公开域名复制出来就是直链，没配则是访客也能打开的 Worker 代理链接，绝不会是需要登录的后台地址。
     位图（JPEG / PNG / AVIF…）会在浏览器里先转成 WebP 再上传，只存 WebP 那一份，像素尺寸不变；GIF 与 SVG 原样上传。
   </p>
 </div>
@@ -331,7 +333,7 @@
   {#each items as it (it.key)}
     <div class="card tile">
       {#if isImg(it.key)}
-        <img src={publicUrl(it.key)} alt={it.key} loading="lazy" />
+        <img src={mediaLink(selected, it.key)} alt={it.key} loading="lazy" />
       {:else}
         <div class="file">🗎 {it.key.split('/').pop()}</div>
       {/if}

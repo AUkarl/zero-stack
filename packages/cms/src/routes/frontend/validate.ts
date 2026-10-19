@@ -216,6 +216,8 @@ export function notesOf(key: SectionKey, form: Forms[SectionKey]): string[] {
     if (f.showPoweredBy && !f.poweredByText.trim()) out.push('打开了 powered by 开关但文字为空：前台这一行不会出现');
     const noLink = [...f.services, ...f.socialRow1, ...f.socialRow2].filter((x) => !x.link.trim());
     if (noLink.length) out.push(`有 ${noLink.length} 条图标没填地址：主题会跳过整条，前台看不到它们（保存时也会被丢掉）`);
+    const noName = [...f.services, ...f.socialRow1, ...f.socialRow2].filter((x) => x.link.trim() && !x.name.trim());
+    if (noName.length) out.push(`有 ${noName.length} 条图标没填名称：名称是这条链接给读屏的唯一可读名，空着保存会被后端拒掉`);
     const noIcon = [...f.services, ...f.socialRow1, ...f.socialRow2].filter((x) => x.link.trim() && !x.icon.trim() && !x.img.trim());
     if (noIcon.length) out.push(`有 ${noIcon.length} 条图标既没填类名也没填图片：前台会是一个空白点击区`);
   }

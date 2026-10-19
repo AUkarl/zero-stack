@@ -1,13 +1,13 @@
 <script lang="ts">
   import { get, getApiBase } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
+  import { loadMediaBases, mediaLink, mediaLinkKind } from '#lib/media-url.svelte';
 
   interface MediaObj {
     key: string;
     name?: string;
     size?: number;
     uploaded?: string | null;
-    url?: string;
   }
   interface Bucket {
     id: string;
@@ -41,7 +41,6 @@
   let error = $state('');
   let prefix = $state('uploads/');
   let q = $state('');
-  let mediaBase = $state('');
 
   let truncated = $state(false);
   let nextCursor = $state<string | null>(null);
@@ -53,22 +52,10 @@
   let fileEl = $state<HTMLInputElement | null>(null);
 
   const selInfo = $derived(buckets.find((b) => b.id === selBucket) ?? null);
+  const linkKind = $derived(mediaLinkKind(selInfo));
 
-  function absUrl(u: string | undefined | null): string {
-    const s = (u ?? '').trim();
-    if (!s) return '';
-    if (/^https?:\/\//i.test(s)) return s;
-    return `${getApiBase()}${s.startsWith('/') ? '' : '/'}${s}`;
-  }
-
-  /** 优先桶的公开域名 → 配置里的 mediaBaseUrl（默认 R2）→ 走 Worker 代理读取 */
   function urlOf(o: MediaObj): string {
-    const base = (selInfo?.baseUrl ?? '').replace(/\/+$/, '');
-    const key = o.key.replace(/^\/+/, '');
-    if (base) return `${base}/${key}`;
-    if (mediaBase && (selInfo?.kind ?? 'r2') === 'r2') return `${mediaBase.replace(/\/+$/, '')}/${key}`;
-    if (o.url) return absUrl(o.url);
-    return `${getApiBase()}/api/admin/media/${key.split('/').map(encodeURIComponent).join('/')}?bucket=${encodeURIComponent(selBucket)}`;
+    return mediaLink(selInfo, o.key);
   }
 
   async function loadBuckets() {
@@ -81,14 +68,6 @@
       buckets = [];
       error = e instanceof Error ? e.message : '读取存储桶失败';
     }
-  }
-
-  async function loadBase() {
-    if (mediaBase) return;
-    try {
-      const d = await get<{ data: Record<string, string> }>('/api/admin/config');
-      mediaBase = (d.data?.mediaBaseUrl || '').replace(/\/+$/, '');
-    } catch {}
   }
 
   async function loadObjects(reset = true) {
@@ -180,22 +159,19 @@
       /* 后端固定回 { data: { key, url, bucket, size } }。这里以前直接摸 data.url / data.key，
          那两层字段根本不存在，于是上传明明成功（HTTP 200）也报「上传失败」，
          而且不刷新列表 —— 关掉重开才看得见，正是用户描述的现象。 */
-      let stored: { key?: string; url?: string } | null = null;
+      let stored: { key?: string } | null = null;
       let message = '';
       try {
-        const body = JSON.parse(xhr.responseText) as { data?: { key?: string; url?: string }; message?: string };
+        const body = JSON.parse(xhr.responseText) as { data?: { key?: string }; message?: string };
         stored = body?.data ?? null;
         message = typeof body?.message === 'string' ? body.message : '';
       } catch {
         stored = null;
       }
-      if (xhr.status >= 200 && xhr.status < 300 && stored && (stored.key || stored.url)) {
-        // 按当前桶拼地址：能拼公开域名就拼公开域名，拼不出才退回 Worker 代理。
-        // 直接写代理地址等于把图锁在登录后，访客拿到的是 401。
-        const url = urlOf({ key: stored.key ?? '', url: stored.url });
+      if (xhr.status >= 200 && xhr.status < 300 && stored?.key) {
         const note = compressNote(prepared);
         uploadMsg = note ? `上传成功（${file.name}，${note}）` : `上传成功（${file.name}）`;
-        choose(url);
+        choose(mediaLink(selInfo, stored.key));
         void loadObjects(true);
       } else {
         uploadMsg = '';
@@ -222,7 +198,7 @@
 
   $effect(() => {
     if (!open) return;
-    void loadBase();
+    void loadMediaBases();
     void (async () => {
       await loadBuckets();
       await loadObjects(true);
@@ -293,7 +269,16 @@
       {/if}
 
       <p class="muted small tip">
-        {#if kind === 'image'}只显示图片扩展名；{/if}点某条即把地址填回表单；本地文件上传后自动选中并刷新列表。站内地址走桶域名或 Worker 代理，外链由主题构建时处理。
+        {#if kind === 'image'}只显示图片扩展名；{/if}点某条即把地址填回表单；本地文件上传后自动选中并刷新列表。
+        {#if linkKind === 'direct'}
+          当前桶有公开域名，填进正文的是直链，不占接口请求。
+        {:else}
+          <span class="warn">
+            当前桶没有公开域名，填进正文的是 Worker 代理地址 —— 访客不用登录也打得开，但每张图都要接口转发一次；
+            想改成直链，到「媒体库 → 管理存储桶」给这个桶填 baseUrl。
+            {#if linkKind === 'relative'}而且接口域名也没读到，这条还是站内相对路径，只有站点与接口同源时访客才打得开。{/if}
+          </span>
+        {/if}
       </p>
     </div>
   </div>

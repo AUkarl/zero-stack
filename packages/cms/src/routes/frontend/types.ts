@@ -56,6 +56,7 @@ export interface IcpItem {
   link: string;
 }
 export interface FooterIconItem {
+  /** 这条链接唯一的可读名（title 与 aria-label 都用它），后端要求非空 */
   name: string;
   /** Font Awesome 类名，如 fa-brands fa-github */
   icon: string;
@@ -64,6 +65,8 @@ export interface FooterIconItem {
   link: string;
   /** 深色模式下反色（图片 logo 常见需求） */
   invert: boolean;
+  /** 名称显不显示：undefined = 跟随页脚那行的全站默认 */
+  showName?: boolean;
 }
 export interface FooterSection {
   copyrightText: string;
@@ -71,6 +74,8 @@ export interface FooterSection {
   poweredByText: string;
   poweredByLink: string;
   icpItems: IcpItem[];
+  /** 「支持服务」那行的全站默认：条目自己没选时按这个走 */
+  showServiceName: boolean;
   /** 中栏「支持服务」图标行 */
   services: FooterIconItem[];
   /** 右栏两排社交图标 */
@@ -298,7 +303,7 @@ export const blankForms = (): Forms => ({
   },
   nav: { items: [blankNavItem()] },
   home: { layout: 'bento', desc: '', showDesc: true },
-  footer: { copyrightText: '', showPoweredBy: true, poweredByText: '', poweredByLink: '', icpItems: [], services: [], socialRow1: [], socialRow2: [] },
+  footer: { copyrightText: '', showPoweredBy: true, poweredByText: '', poweredByLink: '', icpItems: [], showServiceName: true, services: [], socialRow1: [], socialRow2: [] },
   about: { desc: '', tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
   works: { desc: '', items: [{ title: '', desc: '', status: '', url: '' }] },
   moments: {
@@ -380,7 +385,14 @@ export function normHome(raw: unknown): HomeSection {
 
 const normFooterIcon = (x: unknown): FooterIconItem => {
   const o = rec(x);
-  return { name: str(o.name), icon: str(o.icon), img: str(o.img), link: str(o.link), invert: o.invert === true };
+  return {
+    name: str(o.name),
+    icon: str(o.icon),
+    img: str(o.img),
+    link: str(o.link),
+    invert: o.invert === true,
+    showName: 'showName' in o ? o.showName === true : undefined,
+  };
 };
 
 export function normFooter(raw: unknown): FooterSection {
@@ -391,6 +403,7 @@ export function normFooter(raw: unknown): FooterSection {
     poweredByText: str(o.poweredByText),
     poweredByLink: str(o.poweredByLink),
     icpItems: arr(o.icpItems).map((x) => ({ text: str(rec(x).text), link: str(rec(x).link) })),
+    showServiceName: o.showServiceName !== false,
     services: arr(o.services).map(normFooterIcon),
     socialRow1: arr(o.socialRow1).map(normFooterIcon),
     socialRow2: arr(o.socialRow2).map(normFooterIcon),
@@ -536,13 +549,15 @@ export function readFrontendData(payload: unknown): FrontendData {
 
 /* ------------------------------------------------------------ 规整（写入） */
 
-/** 图标条目写出去之前统一去空格；空行由调用方滤掉（主题本来也不渲染没地址的条目） */
+/** 图标条目写出去之前统一去空格；空行由调用方滤掉（主题本来也不渲染没地址的条目）。
+    showName 只在用户明确选过时写出去 —— 写了 false 是「只留图标」，不写才是「跟随全站」。 */
 const cleanFooterIcon = (x: FooterIconItem) => ({
   name: x.name.trim(),
   icon: x.icon.trim(),
   img: x.img.trim(),
   link: x.link.trim(),
   invert: x.invert === true,
+  ...(x.showName === undefined ? {} : { showName: x.showName }),
 });
 
 
@@ -645,6 +660,7 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
       icpItems: f.icpItems
         .map((x) => ({ text: x.text.trim(), link: x.link.trim() }))
         .filter((x) => x.text || x.link),
+      showServiceName: !!f.showServiceName,
       services: f.services.map(cleanFooterIcon).filter((x) => x.name || x.link),
       socialRow1: f.socialRow1.map(cleanFooterIcon).filter((x) => x.name || x.link),
       socialRow2: f.socialRow2.map(cleanFooterIcon).filter((x) => x.name || x.link),
