@@ -214,7 +214,9 @@ async function fetchFriendFeeds(env: Env): Promise<string> {
       const res = await fetch(feedUrl, { signal: AbortSignal.timeout(15_000), headers: { 'user-agent': 'zero-cms/1.0 (+rss)' } });
       if (!res.ok) continue;
       const xml = await res.text();
-      const items = parseFeed(xml, f.url).slice(0, 10);
+      /* 他自己填的头像不能反过来当「这篇文章的封面」—— 好几站的正文首图就是那张头像，
+         拿它当封面和直接退到第③级没区别，还更难看，所以这里当成没图 */
+      const items = parseFeed(xml, f.url, [f.avatar ?? '']).slice(0, 10);
       for (const item of items) {
         const exists = await db
           .select({ id: friendPosts.id, image: friendPosts.image })
@@ -519,20 +521,26 @@ interface FeedItem {
   pubDate: number | null;
 }
 
-function parseFeed(xml: string, siteUrl: string): FeedItem[] {
+function parseFeed(xml: string, siteUrl: string, avoid: string[] = []): FeedItem[] {
   const items: FeedItem[] = [];
   const chunks = xml.match(/<item[\s\S]*?<\/item>|<entry[\s\S]*?<\/entry>/g) ?? [];
   for (const chunk of chunks) {
     const title = tag(chunk, 'title');
     const link = tag(chunk, 'link') || attr(chunk, 'link', 'href') || '';
     const description = tag(chunk, 'description') || tag(chunk, 'summary') || tag(chunk, 'content') || '';
+    /* 找图用的正文与摘要分开取：WordPress（以及一部分 Halo/Emlog 源）把全文放在
+       `<content:encoded>`，`description` 只是纯文字摘要 —— 而 tag(chunk,'content')
+       配不上它（闭合标签是 `</content:encoded>`，不是 `</content>`）。
+       这一层以前没人读，所以封面永远取不到，前台只能一路退到 favicon。
+       摘要照旧只用 description/summary/content，不会突然变成一整段正文。 */
+    const body = tag(chunk, 'content:encoded') || tag(chunk, 'atom:content') || description;
     const date = tag(chunk, 'pubDate') || tag(chunk, 'updated') || tag(chunk, 'published') || '';
     if (!title || !link) continue;
     items.push({
       title: stripCdata(decodeEntities(title)).trim(),
       link: stripCdata(decodeEntities(link)).trim() || new URL(link, siteUrl).toString(),
       summary: cleanSummary(stripTags(stripCdata(decodeEntities(description)))).slice(0, 300),
-      image: pickItemImage(chunk, stripCdata(decodeEntities(description)), siteUrl),
+      image: pickItemImage(chunk, stripCdata(decodeEntities(body)), siteUrl, avoid),
       pubDate: date ? Math.floor(new Date(date).getTime() / 1000) || null : null,
     });
   }
@@ -540,14 +548,20 @@ function parseFeed(xml: string, siteUrl: string): FeedItem[] {
 }
 
 /**
- * 一条动态的封面图。友链作者的 RSS 各家写法不一，按常见程度依次试：
- * media:thumbnail / media:content（图片类）→ 图片类型的 enclosure → item 里直接的 image →
- * 正文 HTML 里第一张 <img>。都拿不到就返回空串，前台自己退到友链头像或留白。
+ * 一条动态的封面图。
+ *
+ * 先认对方明确声明的封面（那几项是作者自己标的，优先于「正文里第一张图」）：
+ * media:thumbnail / media:content（图片类）→ 图片类型的 enclosure → item 里直接的 image；
+ * 都没有才去正文 HTML 里逐张找 <img>，取第一张看着确实是配图的。
+ * 全拿不到就返回空串，前台自己按 favicon → 友链头像 → 邮箱头像 往下退，最后留白。
  *
  * 相对地址按对方站点解析（有人写 /cover/a.png），只认 http(s)，
  * 其余协议（data:、javascript:）一律丢掉：这张图最后会进 <img src>，别给它机会。
+ *
+ * avoid 是「这条友链自己的头像 / 图标地址」：不少站把作者头像当正文第一张图，
+ * 甚至整站 og:image 都是那张头像 —— 那种图拿来当封面，跟直接退到第③级没区别，还更难看。
  */
-function pickItemImage(chunk: string, html: string, siteUrl: string): string {
+function pickItemImage(chunk: string, html: string, siteUrl: string, avoid: string[] = []): string {
   const byUrlAttr = (name: string) => {
     const m = chunk.match(new RegExp(`<${name}[^>]*\\burl="([^"]+)"`, 'i'));
     return m ? m[1]!.trim() : '';
@@ -564,26 +578,89 @@ function pickItemImage(chunk: string, html: string, siteUrl: string): string {
       break;
     }
   }
-  let raw = byUrlAttr('media:thumbnail') || media;
-  if (!raw) {
-    const enc = chunk.match(/<enclosure\b([^>]*)\/?>/i);
-    if (enc) {
-      const url = /\burl="([^"]+)"/i.exec(enc[1] ?? '')?.[1] ?? '';
-      const type = /\btype="([^"]+)"/i.exec(enc[1] ?? '')?.[1] ?? '';
-      // 没标 type 的旧源也当图片收（对方只有音频时极少见，真拿到音频前台也只是显示不出来）
-      if (url && (!type || /^image\//i.test(type))) raw = url;
-    }
+  const declared: string[] = [];
+  const enc = chunk.match(/<enclosure\b([^>]*)\/?>/i);
+  if (enc) {
+    const url = /\burl="([^"]+)"/i.exec(enc[1] ?? '')?.[1] ?? '';
+    const type = /\btype="([^"]+)"/i.exec(enc[1] ?? '')?.[1] ?? '';
+    // 没标 type 的旧源也当图片收（对方只有音频时极少见，真拿到音频前台也只是显示不出来）
+    if (url && (!type || /^image\//i.test(type))) declared.push(url);
   }
-  if (!raw) raw = (tag(chunk, 'image') ?? '').trim();
-  if (!raw) raw = html.match(/<img\b[^>]*\bsrc="([^"]+)"/i)?.[1]?.trim() ?? '';
-  if (!raw) return '';
-  let abs = '';
+  declared.unshift(byUrlAttr('media:thumbnail'), media);
+  declared.push((tag(chunk, 'image') ?? '').trim());
+
+  const inline: string[] = [];
+  for (const m of html.matchAll(/<img\b([^>]*)>/gi)) {
+    const attrs = m[1] ?? '';
+    const src = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs);
+    const url = (src?.[1] ?? src?.[2] ?? src?.[3] ?? '').trim();
+    if (!url || notArticleImage(url, attrs)) continue;
+    inline.push(url);
+  }
+
+  for (const raw of [...declared, ...inline]) {
+    if (!raw) continue;
+    const abs = toAbsImage(raw, siteUrl);
+    if (!abs) continue;
+    if (avoid.some((a) => sameImage(a, abs))) continue;
+    return abs;
+  }
+  return '';
+}
+
+/** 相对地址按站点补全，只留 http(s)，并且按列宽裁一下（这串要进 D1 与 data 文件） */
+function toAbsImage(raw: string, siteUrl: string): string {
   try {
-    abs = new URL(decodeEntities(raw), siteUrl).toString();
+    const abs = new URL(decodeEntities(raw), siteUrl).toString();
+    return /^https?:\/\//i.test(abs) ? abs.slice(0, 500) : '';
   } catch {
     return '';
   }
-  return /^https?:\/\//i.test(abs) ? abs.slice(0, 500) : '';
+}
+
+/** 头像、表情、图标、水印、统计像素 —— 这些不是「文章的插图」 */
+const NOT_AN_ARTICLE_IMAGE =
+  /(^|[-_/.])(avatar|gravatar|cravatar|fav(ikon|icon)|icons?|logo|badges?|emoji|emojis?|smilies|smileys?|emoticons?|stickers?|qrcode|watermark|spacer|blank|pixel|beacon|counter|widget)([-_./]|$)/i;
+const AVATAR_HOSTS = /(qlogo\.cn|gravatar\.com|cravatar\.cn|v2\.exblog\.cn|cn\.gravatar)/i;
+
+/** 单看地址加 <img> 标签上的尺寸声明，判断这张图是不是根本不算配图 */
+function notArticleImage(url: string, imgAttrs: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.replace(/&amp;/gi, '&'), 'https://.invalid/');
+  } catch {
+    return true;
+  }
+  const path = `${parsed.hostname}${parsed.pathname}`;
+  if (NOT_AN_ARTICLE_IMAGE.test(path)) return true;
+  if (AVATAR_HOSTS.test(parsed.hostname)) return true;
+  /* WordPress 与各家图床喜欢用 -150x150 这类后缀标尺寸：只认这个形态，
+     命中它的小尺寸一定是缩略图，-1024x963 那种才是正文里用的图 */
+  const suffix = /[-_](\d{1,4})x(\d{1,4})(?:\.\w+)?$/i.exec(parsed.pathname);
+  if (suffix && Math.max(Number(suffix[1]), Number(suffix[2])) <= 120) return true;
+  const dim = (name: string) => {
+    const m = new RegExp(`\\b${name}="?(\\d+)`, 'i').exec(imgAttrs);
+    return m ? Number(m[1]) : NaN;
+  };
+  const w = dim('width');
+  const h = dim('height');
+  if ((!Number.isNaN(w) && w > 0 && w <= 80) || (!Number.isNaN(h) && h > 0 && h <= 80)) return true;
+  return false;
+}
+
+/** 比对两个图片地址是不是同一张：查询串与协议常常只是尺寸/清晰度参数不同 */
+function sameImage(a: string, b: string): boolean {
+  const cut = (s: string) => {
+    try {
+      const u = new URL(s.trim());
+      return `${u.hostname.replace(/^www\./, '')}${u.pathname}`.toLowerCase();
+    } catch {
+      return '';
+    }
+  };
+  const x = cut(a);
+  const y = cut(b);
+  return Boolean(x) && x === y;
 }
 
 function tag(xml: string, name: string): string | null {
