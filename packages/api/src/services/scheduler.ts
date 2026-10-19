@@ -51,8 +51,14 @@ export async function runScheduledJobs(env: Env, cron: string): Promise<JobOutco
     const linkSites = await readLinkSites(env);
     await run('friends:sync', () => importFriendsFromLinks(env, linkSites));
     await run('friends:check', () => checkFriends(env));
-    if (await getConfigBool(env, 'friendsAutoCheck', true)) await run('friends:feed', () => fetchFriendFeeds(env));
-    await run('friends:files', () => syncFriendFiles(env, linkSites, (paths) => changedFiles.push(...paths)));
+    /* 这一轮各站 feed 里到底出现了哪些文章（friendId → 链接集合）。
+       动态文件按它裁剪：站主定的口径是「只保留检测时 RSS 里有的，RSS 里没有就删掉」，
+       库里那些已经掉出对方 feed 窗口的老条目再也补不到封面，就一直挂着 favicon。
+       只有「这个站这一轮真的抓成功了」才参与裁剪 —— 抓失败的站不进这张表，
+       它的条目原样留着，免得一次网络抖动把整站动态清空。 */
+    const feedWindow = new Map<string, Set<string>>();
+    if (await getConfigBool(env, 'friendsAutoCheck', true)) await run('friends:feed', () => fetchFriendFeeds(env, feedWindow));
+    await run('friends:files', () => syncFriendFiles(env, linkSites, (paths) => changedFiles.push(...paths), feedWindow));
   }
 
 
@@ -197,7 +203,7 @@ async function checkFriends(env: Env): Promise<string> {
  * RSS 聚合。解析刻意用最轻量的正则：友链源是外部脏数据，
  * 引完整 XML 解析器只会让 Worker 体积膨胀且更容易被畸形 feed 打挂。
  */
-async function fetchFriendFeeds(env: Env): Promise<string> {
+async function fetchFriendFeeds(env: Env, feedWindow?: Map<string, Set<string>>): Promise<string> {
   const db = createDb(env);
   const all = await db.select().from(friends).where(eligible(Math.floor(Date.now() / 1000))).limit(100);
   /*
@@ -217,6 +223,9 @@ async function fetchFriendFeeds(env: Env): Promise<string> {
       /* 他自己填的头像不能反过来当「这篇文章的封面」—— 好几站的正文首图就是那张头像，
          拿它当封面和直接退到第③级没区别，还更难看，所以这里当成没图 */
       const items = parseFeed(xml, f.url, [f.avatar ?? '']).slice(0, 10);
+      /* 这一轮这个站 feed 里出现了哪些文章，交给 syncFriendFiles 裁剪动态文件。
+         放在遍历之前：就算下面全部命中「已入库」一条没新增，这一轮的窗口照样是有效的 */
+      feedWindow?.set(f.id, new Set(items.map((i) => i.link)));
       for (const item of items) {
         const exists = await db
           .select({ id: friendPosts.id, image: friendPosts.image })
@@ -263,7 +272,12 @@ async function fetchFriendFeeds(env: Env): Promise<string> {
  * linksicons.json 也在这批里写，但只补缺：那是「站点地址 → favicon」的缓存，
  * 人工在里面改过某条图标的话不会被这一轮覆盖掉（见 syncLinkIcons）。
  */
-async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (paths: string[]) => void): Promise<string> {
+async function syncFriendFiles(
+  env: Env,
+  linkSites: LinkSite[],
+  onChange?: (paths: string[]) => void,
+  feedWindow?: Map<string, Set<string>>,
+): Promise<string> {
   if ((await repoBackend(env)) === 'none') return '未配置内容仓库，跳过 data 文件写回';
 
   const db = createDb(env);
@@ -286,9 +300,20 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
    * 不然它们会靠「保留没在库里的那几条」这条规则一直留在文件里。
    */
   const allianceUrls = new Set(rows.filter((f) => f.kind === 'alliance').map((f) => normalizeFriendUrl(f.url)));
+  let dropped = 0;
   const mine = posts.filter((p) => {
     const owner = byId.get(p.friendId);
-    return !owner || owner.kind !== 'alliance';
+    if (owner?.kind === 'alliance') return false;
+    /* 站主定的口径：动态只留「这一轮对方 RSS 里还在的」文章，不在的就删掉，不留旧数据 ——
+       那些已经掉出对方 feed 窗口的老条目再也补不到封面，会一直顶着一个网站图标。
+       这一轮没抓到这个站的（没开自动抓取，或者抓取失败）不参与裁剪，
+       否则对方站点抖一下就把那个站的动态整片清空。 */
+    const seen = feedWindow?.get(p.friendId);
+    if (seen && !seen.has(p.link)) {
+      dropped++;
+      return false;
+    }
+    return true;
   });
 
   // 页面顶部那句话的口径：30 天不可访问、或 90 天没有新动态 → 迷失的小船
@@ -389,9 +414,10 @@ async function syncFriendFiles(env: Env, linkSites: LinkSite[], onChange?: (path
   }
   if (written.length && onChange) onChange(written);
   else if (written.length) await triggerPagesBuild(env);
-  return written.length
-    ? `写入 ${written.join('、')}（本次 ${rows.length} 站 / 动态 ${items.length} 条）`
-    : `内容与仓库一致，未提交（本次 ${rows.length} 站 / 动态 ${items.length} 条）`;
+  /* 剔除条数一定要写在结果里：后台「运行状况」卡片只有这一行字，
+     哪天动态突然少了一半，先看这个数字就知道是对方 RSS 变了还是抓取出了问题 */
+  const tail = `（本次 ${rows.length} 站 / 动态 ${items.length} 条${dropped ? ` / 剔除本轮 RSS 里没有的 ${dropped} 条` : ''}）`;
+  return written.length ? `写入 ${written.join('、')}${tail}` : `内容与仓库一致，未提交${tail}`;
 }
 
 /**
