@@ -25,13 +25,15 @@ function emojiLabel(token: string): string {
  * 顺手把 `loading="lazy"` / `decoding="async"` 去掉 —— 它们在网页里是为了省流量，
  * 邮件里没有任何流量可省（信已经下载完了），留着反而会让认这个属性的客户端
  * 「等滚动到可见才加载」，表现就是表情位置一片空白，用户以为没发出去。
+ * 表情那张 img 带的 `data-chain` / `onerror`（换备用图床用的内联脚本）也一并剥掉：
+ * 邮件正文里不该有脚本，图被屏蔽时该看的 alt 已经写成人话了。
  */
 function styleImages(html: string): string {
   /* 非贪婪吃到标签尾，顺手吃掉自闭合的 `/`：留着它会拼出 `<img … / style="…">` 这种脏标签 */
   return html.replace(/<img\b([^>]*?)\s*\/?>/g, (_m, attrs: string) => {
     const isEmoji = /zc-emoji-img/.test(attrs);
     const style = isEmoji ? 'max-height:22px;vertical-align:-3px' : 'max-width:100%;height:auto;border-radius:6px';
-    const clean = attrs.replace(/\s(?:loading|decoding)="[^"]*"/g, '');
+    const clean = attrs.replace(/\s(?:loading|decoding|onerror|data-chain)="[^"]*"/g, '');
     if (!isEmoji) return `<img${clean} style="${style}">`;
     /** alt/title 换成中文标签；data-emoji 留着（前台/排查按它认原文）。
         值里只有「库中文名 表情 名字」，名字被 EMOJI_TOKEN_RE 限定在 [A-Za-z0-9_-]，不会带引号 */

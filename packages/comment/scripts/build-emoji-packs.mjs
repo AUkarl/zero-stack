@@ -4,7 +4,19 @@ import { writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const CDN = 'https://cdn.jsdelivr.net/npm/@waline/emojis@1.3.0';
+/*
+ * 同一份文件在四家公共 CDN 上的根地址，按「国内移动网络可达 + 本机实测延迟」排的序：
+ * fastly 与 gcore 是 jsDelivr 的两个备用域名，cdn.jsdelivr.net 排第三（它最出名但在国内是
+ * 时好时坏的那一个，unpkg 最慢放最后）。一张图取不到就依次换下一家，全失败才退回 token 原文。
+ * 取清单和抽样校验用第一个。
+ */
+const BASES = [
+  'https://fastly.jsdelivr.net/npm/@waline/emojis@1.3.0',
+  'https://gcore.jsdelivr.net/npm/@waline/emojis@1.3.0',
+  'https://cdn.jsdelivr.net/npm/@waline/emojis@1.3.0',
+  'https://unpkg.com/@waline/emojis@1.3.0',
+];
+const CDN = BASES[0];
 
 /** dir 是 CDN 目录名，token 是评论正文里用的简称（[bb:doge] 而不是 [bilibili:doge]） */
 const SETS = [
@@ -62,11 +74,14 @@ async function build() {
   }
 
   const body = `/**
- * emoji-data.gen.ts — 由 scripts/build-emoji-packs.mjs 从 ${CDN} 的官方清单生成，请勿手改。
+ * emoji-data.gen.ts — 由 scripts/build-emoji-packs.mjs 从 @waline/emojis@1.3.0 的官方清单生成，请勿手改。
  * 清单在构建期烘焙进包：运行期只按需向 CDN 要图片本身，不再请求 info.json。
  */
 
-export const EMOJI_CDN_BASE = '${CDN}';
+/** 同一张表情图在几家公共 CDN 上的根地址，按顺序试（见构建脚本里的排序理由） */
+export const EMOJI_CDN_BASES: string[] = [
+${BASES.map((b) => `  '${b}',`).join('\n')}
+];
 
 export interface EmojiImageSet {
   /** 正文 token 里的库名，如 [weibo:smile] 的 weibo */

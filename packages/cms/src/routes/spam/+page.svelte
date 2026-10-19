@@ -1,6 +1,7 @@
 <script lang="ts">
   import { get, patch, post, put } from '#lib/api';
   import { timeAgo } from '#lib/api';
+  import { renderMarkdown } from '#lib/markdown';
   import { frontUrl } from '#lib/session.svelte';
 
   /** 后端 RuleHit：来源 + 规则原文 + 说明 + 权重；旧版接口可能仍回字符串，两种都要能渲染 */
@@ -600,7 +601,7 @@
           {#each queue as r (r.id)}
             <tr>
               <td>{r.authorName}{r.authorEmail ? ` 〈${r.authorEmail}〉` : ''}</td>
-              <td class="clip">{r.content}</td>
+              <td class="clip">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</td>
               <td>
                 {#if frontUrl(r.postSlug)}
                   <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postSlug}</a>
@@ -814,6 +815,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* 这一列现在装的是渲染后的 HTML：段落收成 inline 才仍然单行截断，
+     表情图跟着行高走，别把整行撑高 */
+  .clip :global(p) {
+    display: inline;
+    margin: 0;
+  }
+  .clip :global(img.zc-emoji-img) {
+    display: inline-block; height: 1.4em; width: auto; max-width: 1.4em;
+    vertical-align: -0.3em; margin: 0 0.05em;
   }
   .ops {
     white-space: nowrap;

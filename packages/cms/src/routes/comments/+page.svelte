@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get, post, timeAgo } from '#lib/api';
+  import { renderMarkdown } from '#lib/markdown';
   import { frontUrl } from '#lib/session.svelte';
 
   interface Row {
@@ -80,7 +81,9 @@
         </div>
         <span class="muted t">{timeAgo(r.createdAt)}</span>
       </div>
-      <p class="content">{r.content}</p>
+      <!-- 正文走评论组件那一份渲染器：表情、加粗、链接、代码在后台和读者那边是一个样。
+           渲染器整段先转义 HTML，评论里写的 <script> 只会变成字面文本。 -->
+      <div class="content">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</div>
       <div class="row slug">
         {#if frontUrl(r.postSlug)}
           <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postSlug}</a>
@@ -126,10 +129,21 @@
   .item .t {
     font-size: 0.8rem;
   }
+  /* 渲染出来的是 <p>/<img> 这些标签，不能再要 pre-wrap —— 那样 HTML 源码里的换行
+     会变成第二段空行，每条看起来都像空了一行 */
   .content {
     margin: 0.5rem 0;
-    white-space: pre-wrap;
     line-height: 1.6;
+  }
+  .content :global(p) {
+    margin: 0.2rem 0;
+  }
+  .content :global(img.zc-emoji-img) {
+    display: inline-block; height: 1.5em; width: auto; max-width: 1.5em;
+    vertical-align: -0.3em; margin: 0 0.05em;
+  }
+  .content :global(.zc-emoji-tok) {
+    font-size: 0.82em; color: var(--muted, inherit); word-break: break-all;
   }
   .slug {
     font-size: 0.8rem;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { EmojiPack } from '../lib/emoji-packs';
+  import { emojiImgHtml } from '../lib/emoji-packs';
   import { tr } from '../lib/i18n';
 
   let {
@@ -49,9 +50,6 @@
   const current = $derived(packs.find((p) => p.id === active) ?? packs[0]);
   const images = $derived(current?.images ?? []);
   const texts = $derived(current?.items ?? []);
-
-  /** CDN 挂掉的图：这一格退成 token 文本，宁可丑也不留裂图 */
-  let broken = $state<Record<string, boolean>>({});
 </script>
 
 <div class="picker" role="group" aria-label={t('emoji')}>
@@ -82,17 +80,8 @@
           aria-label={em.token}
           onclick={() => onpick(em.token)}
         >
-          {#if broken[em.token]}
-            <span class="tok">{em.token}</span>
-          {:else}
-            <img
-              src={em.src}
-              alt={em.token}
-              loading="lazy"
-              decoding="async"
-              onerror={() => (broken[em.token] = true)}
-            />
-          {/if}
+          <!-- 与正文、后台、账号页同一枚 img：备选图床与退图都写在它自己身上 -->
+          {@html emojiImgHtml(em)}
         </button>
       {/each}
       {#each texts as em (em)}
@@ -134,6 +123,8 @@
   /* 颜文字那些长的自己占一整行，别把面板挤成竖条 */
   .items button.wide { font-size: 0.78rem; grid-column: 1 / -1; justify-content: flex-start; }
   .items button.cell { aspect-ratio: 1; padding: 0.2rem; }
-  .items img { width: 100%; height: 100%; max-width: 1.9rem; object-fit: contain; display: block; }
-  .items .tok { font-size: 0.6rem; line-height: 1.2; color: var(--zc-muted, #888); word-break: break-all; }
+  /* img 由 {@html} 生成，不写 :global 的话 Svelte 认为这条选择器没用到、直接不收进产物 */
+  .items :global(img) { width: 100%; height: 100%; max-width: 1.9rem; object-fit: contain; display: block; }
+  /* 几家图床都没取到时 img 自己换成这串 token（img 由 {@html} 生成，样式得走 :global） */
+  .items :global(.zc-emoji-tok) { font-size: 0.6rem; line-height: 1.2; color: var(--zc-muted, #888); word-break: break-all; }
 </style>

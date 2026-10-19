@@ -12,9 +12,10 @@
  *
  * 图片表情写法：[weibo:smile] 这类 token，只有 emoji-packs 的白名单表里查得到才出 <img>，
  * 查不到就原样留字面文本（邮件通知、RSS 这些纯文本场景拿到的始终是 token 原文）。
+ * 出图时一张表情带几个备选图床地址，取不到就在浏览器里依次换，全取不到才退回 token 原文。
  */
 
-import { EMOJI_TOKEN_RE, emojiImageOf } from './emoji-packs';
+import { EMOJI_TOKEN_RE, emojiImageOf, emojiImgHtml } from './emoji-packs';
 
 export interface MdOptions {
   /** 短链前缀，默认 /post/ */
@@ -58,13 +59,13 @@ function inline(s: string, base: string): string {
   out = esc(out);
 
   /* 表情先占位再交给后面的行内规则：白名单里查不到的 [x:y] 原样留作文本，
-   * 占位符也不会被链接/加粗那类语法二次吃掉。 */
+   * 占位符也不会被链接/加粗那类语法二次吃掉。能查到的那张 <img> 由 emoji-packs 一处生成，
+   * 备选图床与退图逻辑都在里面（正文、表情面板、后台、个人中心出的是同一枚 img）。 */
   const images: string[] = [];
   out = out.replace(EMOJI_TOKEN_RE, (m, set: string, name: string) => {
     const img = emojiImageOf(`${set}:${name}`);
     if (!img) return m;
-    const token = esc(img.token);
-    images.push(`<img class="zc-emoji-img" src="${img.src}" alt="${token}" title="${token}" data-emoji="${token}" loading="lazy" decoding="async" />`);
+    images.push(emojiImgHtml(img));
     return `\u0001${images.length - 1}\u0001`;
   });
 

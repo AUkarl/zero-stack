@@ -1,9 +1,15 @@
 /**
- * emoji-data.gen.ts — 由 scripts/build-emoji-packs.mjs 从 https://cdn.jsdelivr.net/npm/@waline/emojis@1.3.0 的官方清单生成，请勿手改。
+ * emoji-data.gen.ts — 由 scripts/build-emoji-packs.mjs 从 @waline/emojis@1.3.0 的官方清单生成，请勿手改。
  * 清单在构建期烘焙进包：运行期只按需向 CDN 要图片本身，不再请求 info.json。
  */
 
-export const EMOJI_CDN_BASE = 'https://cdn.jsdelivr.net/npm/@waline/emojis@1.3.0';
+/** 同一张表情图在几家公共 CDN 上的根地址，按顺序试（见构建脚本里的排序理由） */
+export const EMOJI_CDN_BASES: string[] = [
+  'https://fastly.jsdelivr.net/npm/@waline/emojis@1.3.0',
+  'https://gcore.jsdelivr.net/npm/@waline/emojis@1.3.0',
+  'https://cdn.jsdelivr.net/npm/@waline/emojis@1.3.0',
+  'https://unpkg.com/@waline/emojis@1.3.0',
+];
 
 export interface EmojiImageSet {
   /** 正文 token 里的库名，如 [weibo:smile] 的 weibo */

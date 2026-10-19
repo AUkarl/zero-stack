@@ -5,20 +5,20 @@
  *   · 文本库（emoji / 自定义 / 颜文字）：items 是要插进正文的字符本身；
  *   · 图片库（微博 / B站 / QQ / 贴吧）：清单构建期由 scripts/build-emoji-packs.mjs 从
  *     Waline 官方表情包烘焙进 emoji-data.gen.ts，插进正文的是 [库:名字] 这种 token，
- *     图片按需要从 jsDelivr 加载，运行期不再请求 info.json。
+ *     图片按需要从公共 CDN 加载，运行期不再请求 info.json。
  * 图片 token 只有在 EMOJI_IMAGES 里查得到才渲染成 <img>，用户自己拼的 [任意:任意]
  * 一律保持字面文本 —— 渲染点见 lib/markdown.ts 的 emoji 段。
  */
 
-import { EMOJI_CDN_BASE, EMOJI_IMAGE_SETS } from './emoji-data.gen';
+import { EMOJI_CDN_BASES, EMOJI_IMAGE_SETS } from './emoji-data.gen';
 
 export interface EmojiImage {
   /** 正文里的 token，如 [weibo:smile] */
   token: string;
   /** 库内短名，如 smile */
   name: string;
-  /** CDN 上的图片地址 */
-  src: string;
+  /** 同一张图在几家 CDN 上的地址，按优先级排；前面取不到就依次换后面 */
+  srcs: string[];
 }
 
 export interface EmojiPack {
@@ -78,7 +78,7 @@ export const IMAGE_PACKS: EmojiPack[] = EMOJI_IMAGE_SETS.map((s) => ({
   images: s.items.map((name) => ({
     token: `[${s.token}:${name}]`,
     name,
-    src: `${EMOJI_CDN_BASE}/${s.dir}/${s.prefix}${name}.${s.type}`,
+    srcs: EMOJI_CDN_BASES.map((base) => `${base}/${s.dir}/${s.prefix}${name}.${s.type}`),
   })),
 }));
 
@@ -115,6 +115,29 @@ for (const pack of IMAGE_PACKS) {
 
 export function emojiImageOf(key: string): EmojiImage | undefined {
   return EMOJI_IMAGES.get(key);
+}
+
+/*
+ * 表情图的那一枚 <img> —— 正文渲染、表情面板、后台与账号页都用这一份，保证四处行为一致。
+ *
+ * 首张进 src，其余进 data-chain（空格分隔；地址全是构建期从白名单拼出来的，不会带空格），
+ * onerror 里换下一张，全试完就把这张图换成 token 原文（[weibo:smile]）—— 宁可看见代码，
+ * 也不留一个破碎图标。
+ *
+ * onerror 写成内联的：这段 HTML 要出现在评论区（组件内）、后台评论管理（另一个域名、
+ * 另一套 JS）、个人中心（主题里的普通脚本）和邮件正文里，只有内联属性在哪一处都能退图。
+ * 地址与 token 都被白名单限死在 [A-Za-z0-9_:-] 之内，拼进属性不会有引号。
+ */
+const GIVE_UP = "var s=document.createElement('span');s.className='zc-emoji-tok';s.textContent=this.dataset.emoji;this.replaceWith(s)";
+const NEXT_SOURCE = "var l=(this.dataset.chain||'').split(' ');if(l[0]){this.dataset.chain=l.slice(1).join(' ');this.src=l[0]}else{" + GIVE_UP + '}';
+
+export function emojiImgHtml(img: EmojiImage): string {
+  const token = img.token;
+  const chain = img.srcs.slice(1).join(' ');
+  return (
+    `<img class="zc-emoji-img" src="${img.srcs[0]}" alt="${token}" title="${token}" data-emoji="${token}"` +
+    ` data-chain="${chain}" loading="lazy" decoding="async" onerror="${NEXT_SOURCE}">`
+  );
 }
 
 /** 只匹配 [小写库名:名字]，库名与名字都得是白名单字符 */

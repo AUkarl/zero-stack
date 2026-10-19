@@ -4,36 +4,12 @@
   let { text = '', shortBase = '/post/' }: { text?: string; shortBase?: string } = $props();
 
   // 内容里的原始 HTML 会先被转义，只剩 Markdown 子集被渲染成标签，
-  // 所以这里可以安全地 {@html}。
+  // 所以这里可以安全地 {@html}。表情图的备选图床与退图都写在那枚 <img> 自己身上
+  // （见 lib/emoji-packs.ts 的 emojiImgHtml），这里不需要再补监听。
   const html = $derived(renderMarkdown(text, { shortBase }));
-
-  let box = $state<HTMLDivElement | undefined>();
-
-  /**
-   * {@html} 生成不了 Svelte 事件，图片表情的 onerror 只能事后补：
-   * 裂图换成 token 原文（[weibo:smile]），CDN 挂了也不会留一个破碎图标。
-   */
-  const bound = new WeakSet<HTMLImageElement>();
-
-  function demote(img: HTMLImageElement) {
-    img.replaceWith(document.createTextNode(img.dataset.emoji || img.alt || ''));
-  }
-
-  $effect(() => {
-    const el = box;
-    if (!el) return;
-    void html;
-    for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img.zc-emoji-img'))) {
-      if (bound.has(img)) continue;
-      bound.add(img);
-      img.addEventListener('error', () => demote(img), { once: true });
-      // 监听挂上时就已经失败（缓存里的 404）不会再来 error 事件，这里当场补一次
-      if (img.complete && img.naturalWidth === 0) demote(img);
-    }
-  });
 </script>
 
-<div class="md" bind:this={box}>{@html html}</div>
+<div class="md">{@html html}</div>
 
 <style>
   /* 兜底值一律用中性色/inherit：这些样式不只跑在评论区（.zc 里），
@@ -71,4 +47,6 @@
     display: inline-block; height: 1.7em; width: auto; max-width: 1.7em;
     vertical-align: -0.38em; margin: 0 0.06em; border-radius: 0; background: none;
   }
+  /* 几家图床都没取到时留的那串 token：跟着正文字号，别撑破行高 */
+  .md :global(.zc-emoji-tok) { font-size: 0.82em; color: var(--zc-muted, inherit); word-break: break-all; }
 </style>
