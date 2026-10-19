@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
 import { subscribers } from '../db/schema';
-import { getConfig, getConfigBool, rememberApiOrigin } from '../services/config';
+import { getConfig, getConfigBool } from '../services/config';
 import { newId, randomToken } from '../lib/crypto';
 import { fail, ok } from '../lib/errors';
 import { clientIp } from '../lib/http';
@@ -19,12 +19,12 @@ const emailSchema = z.string().email().max(200);
  * 确认订阅的链接必须指向**接口自己**的 /api/subscribe/confirm：
  * 站点域名是 Pages 上的一份 Hugo 静态站，没有 /api 代理，写成 ${siteUrl}/api/... 或
  * ${siteUrl}/subscribe/?confirm= 都点不开（前者 404，后者前台根本没有读 ?confirm= 的代码，
- * 于是订阅永远确认不上、后台名单一直堆着一排 pending）。顺手把接口域名记进配置，
- * 群发与定时任务那种拿不到请求的场合也拼得出绝对地址。
+ * 于是订阅永远确认不上、后台名单一直堆着一排 pending）。
+ * 这里直接用当次请求的 origin；接口域名要留给拿不到请求的场合（群发、定时任务）用，
+ * 那份记录在 services/config.ts 的 recordApiOrigin 里做。
  */
-async function confirmLink(c: { req: { url: string } }, env: Env, token: string): Promise<string> {
+function confirmLink(c: { req: { url: string } }, token: string): string {
   const self = new URL(c.req.url).origin.replace(/\/+$/, '');
-  await rememberApiOrigin(env, self);
   return `${self}/api/subscribe/confirm?token=${encodeURIComponent(token)}`;
 }
 
@@ -92,7 +92,7 @@ app.post('/', async (c) => {
   const html = await renderEmail(
     env,
     'subscribe',
-    { url: await confirmLink(c, env, token), siteName, email },
+    { url: confirmLink(c, token), siteName, email },
     { title: '确认订阅', nickname: '订阅者', actionNote: '确认链接 24 小时内有效，过期后重新提交一次订阅即可。' },
   );
   const sent = await sendEmail(env, {

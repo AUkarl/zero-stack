@@ -22,7 +22,7 @@ import publicMedia from './routes/media';
 import account, { deletionsAdmin } from './routes/account';
 import security from './routes/security';
 import broadcastJobs from './routes/broadcast';
-import { getAllowedOrigins, getConfig, getPublicConfig, getAdminContactEmail } from './services/config';
+import { getAllowedOrigins, getConfig, getPublicConfig, getAdminContactEmail, recordApiOrigin } from './services/config';
 import { rateLimit } from './lib/rate-limit';
 import { errorMessage } from './lib/errors';
 import type { AppEnv } from './lib/app';
@@ -83,6 +83,13 @@ app.use('*', async (c, next) => {
 /* ---------------- 会话解析：所有路由都能拿到可选的 user ---------------- */
 
 app.use('*', authMiddleware);
+
+/* ---------------- 记下接口自己的域名（只记一次，见 services/config.ts 里的说明）：
+   群发邮件的退订链接、订阅确认链接都要用它，而那些场合手里没有请求可问。 */
+app.use('*', async (c, next) => {
+  await recordApiOrigin(c.env, c.req.url);
+  await next();
+});
 
 app.get('/api/health', async (c) => {
   const env = c.env;

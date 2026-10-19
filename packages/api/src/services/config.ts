@@ -663,14 +663,38 @@ export async function rememberCmsOrigin(env: Env, origin: string | null | undefi
  *
  * 为什么需要它：邮件里的「确认订阅」「退订」指向的是**接口自己**的 `/api/...`，
  * 而站点域名是 Pages 上的一份 Hugo 静态站，没有 /api 代理 —— 拿站点地址拼这种链接，
- * 点开就是 404，订阅因此永远确认不上（这就是原来那处 bug）。定时任务、群发这些
- * 没有请求上下文的场合拿不到 origin，所以第一次收到请求时记一次，之后可人工改。
+ * 点开就是 404（群发那封底部的退订行就是这么坏的）。定时任务、群发这些没有请求上下文
+ * 的场合拿不到 origin，所以要趁有请求的时候记一次。
+ *
+ * 三条限制：
+ *   · 只认自定义域。Cloudflare 白送的 `*.workers.dev` / `*.pages.dev` 在国内基本打不开，
+ *     把它们记下来只会把链接带偏，比「没记」更糟；绑域之后的第一个请求会记上。
+ *   · 公网域名一律记成 https（本地 127.0.0.1 / localhost 保持 http）。
+ *   · 每个 isolate 只办一次（库里已有值、或自己已经写过就不再碰），不会变成每条请求都去 UPDATE 一次 D1。
  */
-export async function rememberApiOrigin(env: Env, origin: string | null | undefined): Promise<void> {
-  const clean = String(origin ?? '').trim().replace(/\/+$/, '');
-  if (!/^https?:\/\/[^/?#]+$/.test(clean)) return;
-  if ((await getConfig(env, 'apiBaseUrl'))?.trim()) return;
-  await setConfig(env, 'apiBaseUrl', clean);
+let apiOriginSettled = false;
+
+export async function recordApiOrigin(env: Env, requestUrl: string | undefined): Promise<void> {
+  if (apiOriginSettled) return;
+  let origin = '';
+  try {
+    origin = new URL(String(requestUrl ?? '')).origin;
+  } catch {
+    return;
+  }
+  const host = origin.replace(/^https?:\/\//, '');
+  // 只收纯来源，且排除 Cloudflare 的临时域名
+  if (!/^https?:\/\/[^/?#]+$/.test(origin)) return;
+  if (/\.(workers|pages)\.dev$/.test(host)) return;
+  /* 有人用 http:// 打到接口时不能照原样记：那样退订链接就是明文地址。
+     本地开发（127.0.0.1 / localhost）保持 http，其余一律归一到 https。 */
+  if (origin.startsWith('http://') && !/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) origin = `https://${host}`;
+  if ((await getConfig(env, 'apiBaseUrl'))?.trim()) {
+    apiOriginSettled = true;
+    return;
+  }
+  await setConfig(env, 'apiBaseUrl', origin);
+  apiOriginSettled = true;
 }
 
 /**
