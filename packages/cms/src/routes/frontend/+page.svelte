@@ -13,7 +13,7 @@
   import SectionBar from './SectionBar.svelte';
   import SitePanel from './SitePanel.svelte';
   import WorksPanel from './WorksPanel.svelte';
-  import { notesOf, validateSection } from './validate';
+  import { navOverwriteDiff, notesOf, validateSection } from './validate';
   import {
     CAP,
     LIMIT,
@@ -26,6 +26,7 @@
     readFrontendData,
     type Forms,
     type Issue,
+    type NavItem,
     type SaveResult,
     type SectionKey,
     buildNote,
@@ -333,6 +334,11 @@ async function save() {
       saveError = '没有需要保存的改动：内容没变的段不会重复写入，也不会触发构建';
       return;
     }
+
+    const navNotice = writeKeys.includes('nav')
+      ? navOverwriteDiff(baseline?.nav?.items ?? [], (payloadOf('nav', forms.nav) as { items: NavItem[] }).items)
+      : null;
+    if (navNotice && !confirm(navNotice)) return;
 
     const body: Record<string, unknown> = { triggerBuild };
     for (const k of pendingKeys) body[k] = pendingMap[k] === 'delete' ? null : payloadOf(k, forms[k]);

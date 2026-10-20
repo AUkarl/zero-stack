@@ -15,6 +15,7 @@
 // ============================================================
 import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +27,18 @@ const PORT = Number(process.env.REPO_BRIDGE_PORT || 8792);
  * 所以不能靠 package.json 里传 LOCAL_REPO_DIR。要指向别处再设那个环境变量。
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
+const FROM_ENV = Boolean(process.env.LOCAL_REPO_DIR);
 const ROOT = resolve(process.env.LOCAL_REPO_DIR || join(HERE, '..', '..', '..', 'me', 'zero-site'));
+
+/* 目录不存在就别启动，并把算出来的路径与来源打出来。
+   这条默认值按「仓库在 X/Y/zero-stack」这套布局猜，猜错时它可能正好指向另一座站点的目录；
+   以前它会照常起来，只是每次回写都落进一个不存在的地方 —— 后台显示成功、git status 干净，
+   要排查一轮才知道是这里。真要指向别处，显式给 LOCAL_REPO_DIR。 */
+if (!existsSync(ROOT)) {
+  console.error(`内容仓库桥接没有启动：目录不存在\n  路径 ${ROOT}\n  来源 ${FROM_ENV ? 'LOCAL_REPO_DIR 环境变量' : '按脚本位置算的默认值（没设 LOCAL_REPO_DIR）'}`);
+  console.error(`要指向别的站点目录：LOCAL_REPO_DIR=<绝对路径> node scripts/local-repo-bridge.mjs\n（同时确认 packages/api/.dev.vars 里的 GIT_LOCAL_DIR 指的是同一个目录）`);
+  process.exit(1);
+}
 const TOKEN = process.env.REPO_BRIDGE_TOKEN || '';
 
 /** 仓库内相对路径 → 绝对路径；越界（.. / 绝对路径 / 盘符）一律拒绝 */

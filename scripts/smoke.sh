@@ -8,7 +8,9 @@
 #   ADMIN_COOKIE='zero_session=xxx' bash scripts/smoke.sh  # 追加跑需要管理员的接口
 #
 # 取 ADMIN_COOKIE：浏览器登录后台后，开发者工具里复制 zero_session 的值。
-# 本脚本不写库、不删数据；匿名评论那条会在结尾自己删掉（靠 ownerKey）。
+# 匿名那一档不写库、不删数据；匿名评论那条会在结尾自己删掉（靠 ownerKey）。
+# 给了 ADMIN_COOKIE 时多两步真写入：建一篇临时文章（点赞收藏要有真文章可点），
+# 结尾用 DELETE /api/admin/content/file 删掉它（带 build=0，不请求站点重建）。
 # ============================================================
 set -uo pipefail
 
@@ -16,10 +18,16 @@ API="${API:-http://127.0.0.1:8787}"
 ADMIN_COOKIE="${ADMIN_COOKIE:-}"
 PASS=0
 FAIL=0
+SKIP=0
+SKIPPED=()
 FAILED=()
 BODY_TEXT=''
 # 每轮用一个独立的文章标识，绕开「同 IP + 同文章每小时 10 条」的评论限流
 SMOKE_SLUG="/posts/smoke-$(date +%s)-$((10000+RANDOM))/"
+# 点赞/收藏要文章在站上真的存在（接口会去仓库核对），所以有后台 Cookie 时先建一篇临时文章，
+# 结尾删掉；没有 Cookie 就只能退回示例站那篇 /posts/nowork/，它不在就跳过（见下面那一节）。
+SMOKE_POST_PATH=""
+REACT_SLUG="/posts/nowork/"
 
 CURL=(curl -sS --max-time 20 -H 'accept: application/json' -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36')
 
@@ -48,6 +56,9 @@ req() {
 
 field() { printf '%s' "$BODY_TEXT" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" | head -1; }
 section() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
+# 跳过：这条需要脚本拿不到的条件（没后台 Cookie、没配图床），既不算通过也不算失败。
+# 冒烟脚本的目的是「真问题报红」，把没法判定的情形硬算成失败会让人直接忽略整个输出。
+skip() { SKIP=$((SKIP + 1)); SKIPPED+=("$1 <- $2"); printf '  \033[33m•\033[0m %-56s \033[33m跳过：%s\033[0m\n' "$1" "$2"; }
 
 # ---------------------------------------------------------------- 公开接口
 section '公开：配置与内容'
@@ -86,9 +97,32 @@ printf '%s' "$SUBMIT_BODY" | grep -qF 'z***@qq.com' \
 printf '%s' "$SUBMIT_BODY" | grep -qE '"browser":"(Chrome|Firefox|Safari|Edge|Opera)"' \
   && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '评论带浏览器/系统/设备信息'; } \
   || { FAIL=$((FAIL + 1)); FAILED+=("评论缺浏览器信息: $SUBMIT_BODY"); printf '  \033[31m✗\033[0m %-56s\n' '评论带浏览器/系统/设备信息'; }
-printf '%s' "$SUBMIT_BODY" | grep -qE '"avatar":"https://(cravatar\.cn|q1\.qlogo\.cn)' \
-  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '邮箱头像走 Cravatar / QQ 头像'; } \
-  || { FAIL=$((FAIL + 1)); FAILED+=('邮箱头像未按服务生成'); printf '  \033[31m✗\033[0m %-56s\n' '邮箱头像走 Cravatar / QQ 头像'; }
+# 头像：内置链第一级是 Gravatar、第二级是 Cravatar（同一个邮箱 MD5），
+# 后台「头像与媒体」填了 avatarTemplate 才会把模板顶到第一级。
+# 所以匿名模式能验的不变量是「这两档是同一个 hash 的逐级退化」；
+# 拿不到模板就没法判「按站点自己配的图床走」这种情况 —— 那种跳过，不判成失败。
+AVATAR_URL=$(printf '%s' "$SUBMIT_BODY" | sed -n 's/.*"avatar":"\([^"]*\)".*/\1/p' | head -1)
+AVATAR_MD5=$(printf '%s' "$AVATAR_URL" | sed -n 's|.*/avatar/\([0-9a-f]\{32\}\).*|\1|p')
+GRAVATAR_URL=$(printf '%s' "$SUBMIT_BODY" | sed -n 's/.*"gravatar":"\([^"]*\)".*/\1/p' | head -1)
+if printf '%s' "$AVATAR_URL" | grep -qE '^https://www\.gravatar\.com/avatar/[0-9a-f]{32}\?' \
+  && printf '%s' "$GRAVATAR_URL" | grep -qF "avatar/$AVATAR_MD5" \
+  && printf '%s' "$GRAVATAR_URL" | grep -qE '^https://cravatar\.cn/'; then
+  PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '邮箱头像走 Gravatar→Cravatar 同一 hash 逐级退化'
+elif [ -n "$ADMIN_COOKIE" ]; then
+  # 有后台就读 avatarTemplate：填了就必须以它为准（等于整条链换图床）
+  TPL=$(curl -sS --max-time 20 -H "cookie: $ADMIN_COOKIE" -H 'accept: application/json' "$API/api/admin/config" \
+    | sed -n 's/.*"avatarTemplate":"\([^"]*\)".*/\1/p' | head -1)
+  TPL_HEAD=$(printf '%s' "$TPL" | sed 's/{.*$//')
+  if [ -z "$TPL" ]; then
+    skip '邮箱头像走后台配置的图床' "后台没配 avatarTemplate，而这条拿到的不是内置链（avatar=${AVATAR_URL:-空}）"
+  elif printf '%s' "$AVATAR_URL" | grep -qF "$TPL_HEAD"; then
+    PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' "邮箱头像走后台配置的图床（$(printf '%s' "$TPL_HEAD" | cut -d/ -f3)）"
+  else
+    FAIL=$((FAIL + 1)); FAILED+=("avatarTemplate 已配但没生效：模板 $TPL / 实际 $AVATAR_URL"); printf '  \033[31m✗\033[0m %-56s\n' '邮箱头像走后台配置的图床'
+  fi
+else
+  skip '邮箱头像走后台配置的图床' "匿名模式读不到 avatarTemplate（当前 avatar=${AVATAR_URL:-空}）"
+fi
 
 req POST /api/comments 400 "{\"postSlug\":\"${SMOKE_SLUG}noemail/\",\"content\":\"缺邮箱必须被拒\"}" '缺邮箱 → 400'
 req POST /api/comments 400 "{\"postSlug\":\"${SMOKE_SLUG}badmail/\",\"content\":\"邮箱格式错\",\"email\":\"not-a-mail\"}" '邮箱格式错 → 400'
@@ -106,9 +140,25 @@ fi
 
 # ---------------------------------------------------------------- 点赞与收藏
 section '反应：点赞与收藏'
-req POST /api/reactions 200 '{"slug":"/posts/nowork","kind":"like"}' '匿名点赞（toggle）'
-req POST /api/reactions 200,403 '{"slug":"/posts/nowork","kind":"star"}' '匿名收藏（关掉则 403）'
-req GET '/api/reactions?slugs=/posts/nowork&kind=like' 200 '' '计数查询'
+# 这两个接口会去内容仓库核对「这篇在不在」（不在就 404，防止给任意地址刷计数），
+# 所以点赞收藏要有真文章可点。有后台 Cookie 就先建一篇临时文章、结尾删掉；
+# 匿名模式建不出来，这三项只能跳过 —— 新站上没有 /posts/nowork/，以前每轮必红 3 项，
+# 看着像功能坏了，其实是脚本自己的假设。
+if [ -n "$ADMIN_COOKIE" ]; then
+  SMOKE_POST_PATH="content/zh/posts/smoke-$(date +%s)-$((10000+RANDOM)).md"
+  SMOKE_POST_TITLE="${SMOKE_POST_PATH##*/}"; SMOKE_POST_TITLE="${SMOKE_POST_TITLE%.md}"
+  req POST /api/admin/content/batch 200 \
+    "{\"files\":[{\"path\":\"$SMOKE_POST_PATH\",\"content\":\"---\\ntitle: \\\"$SMOKE_POST_TITLE\\\"\\ndate: \\\"$(date +%Y-%m-%dT%H:%M:%S+08:00)\\\"\\ndraft: false\\n---\\n\\n冒烟测试临时文章，跑完即删。\\n\"}],\"triggerBuild\":false}" \
+    '建临时文章（点赞收藏要有真文章可点）' "$ADMIN_COOKIE"
+  REACT_SLUG="/posts/${SMOKE_POST_TITLE}/"
+  req POST /api/reactions 200 "{\"slug\":\"$REACT_SLUG\",\"kind\":\"like\"}" '匿名点赞（toggle）'
+  req POST /api/reactions 200,403 "{\"slug\":\"$REACT_SLUG\",\"kind\":\"star\"}" '匿名收藏（关掉则 403）'
+  req GET "/api/reactions?slugs=${REACT_SLUG}&kind=like" 200 '' '计数查询'
+else
+  skip '匿名点赞（toggle）' '没有 ADMIN_COOKIE，建不出临时文章'
+  skip '匿名收藏（关掉则 403）' '没有 ADMIN_COOKIE，建不出临时文章'
+  skip '计数查询' '没有 ADMIN_COOKIE，建不出临时文章'
+fi
 
 # ---------------------------------------------------------------- 守卫：未登录必须 401
 section '守卫：管理员接口未登录必须 401'
@@ -229,9 +279,18 @@ else
   printf '想跑全量：ADMIN_COOKIE=\x27zero_session=…\x27 bash scripts/smoke.sh\n'
 fi
 
+# 自洁：删掉这一轮建的临时文章（build=0 不请求站点重建）
+if [ -n "$SMOKE_POST_PATH" ]; then
+  req DELETE "/api/admin/content/file?path=$SMOKE_POST_PATH&build=0" 200 '' '删掉临时文章（脚本自洁）' "$ADMIN_COOKIE"
+fi
+
 # ---------------------------------------------------------------- 汇总
 printf '\n\033[1m== 汇总 ==\033[0m\n'
-printf '  通过 %s / 失败 %s\n' "$PASS" "$FAIL"
+printf '  通过 %s / 失败 %s / 跳过 %s\n' "$PASS" "$FAIL" "$SKIP"
+if [ "$SKIP" -gt 0 ]; then
+  printf '\n跳过明细（这些需要脚本当前拿不到的条件，不是功能坏了）：\n'
+  for s in "${SKIPPED[@]}"; do printf '  · %s\n' "$s"; done
+fi
 if [ "$FAIL" -gt 0 ]; then
   printf '\n失败明细：\n'
   for f in "${FAILED[@]}"; do printf '  · %s\n' "$f"; done

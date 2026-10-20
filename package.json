@@ -17,7 +17,7 @@
     "build:comment": "pnpm --filter zero-comment build",
     "mock:translate": "node scripts/mock-translate.mjs",
     "repo:bridge": "node scripts/local-repo-bridge.mjs",
-    "dev:api": "pnpm --filter zero-api dev",
+    "dev:api": "pnpm --filter zero-api exec wrangler dev",
     "dev:cms": "pnpm --filter zero-cms dev",
     "db:migrate:local": "pnpm --filter zero-api db:migrate:local",
     "db:migrate:remote": "pnpm --filter zero-api db:migrate:remote",

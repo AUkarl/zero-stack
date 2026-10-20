@@ -22,7 +22,7 @@ import { purgePageUrls, type PurgeResult } from '../services/cf-purge';
 import { postWebPath } from '../services/frontmatter';
 import { writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild } from '../services/git';
-import { deleteRepoFile, repoBackend } from '../services/repo';
+import { deleteRepoFile, listRepoDir, repoBackend } from '../services/repo';
 import { sendDraftReviewResult } from '../services/review-mail';
 import { clientIp } from '../lib/http';
 import { canonHandle } from '../lib/slug';
@@ -146,19 +146,69 @@ function parseTags(raw: string): string[] {
   }
 }
 
-/** 文章落盘目录：以后台「设置 → 内容仓库 → 文章目录」为准；没配就退回 <内容目录>/<语言>/posts */
-async function postPath(env: Env, row: typeof postDrafts.$inferSelect): Promise<string> {
+/**
+ * 文章落盘目录与文件名：以后台「设置 → 内容仓库 → 文章目录」为准；没配就退回 <内容目录>/<语言>/posts。
+ *
+ * 文件名用「发布那天 + 当天顺序号」（20261020001.md），不是标题的拼音或译文 ——
+ * 中文标题直接当文件名时，Hugo 会把全角标点整段丢掉，生成出来的是
+ * `/posts/命名测试标题含冒号/` 这种既长又要 percent-encode 的地址。
+ * 序号是从仓库里那一天已有的文件名数出来的（`listRepoDir`），
+ * 不新增表、不新增写入，也不会有两篇拿到同一个号（同一天并发通过两篇才会撞，
+ * 而后台的通过按钮是一篇一篇点的）。当天超过 999 篇自动进四位（202610201000.md）。
+ *
+ * 两条边界：
+ *  - 只在「这篇还没写过文件」时分配 —— 已发布的沿用 `published_path` 里那个名字，
+ *    改地址会让评论、统计、收藏的 key 与仓库里的文件对不上（见 PATCH /:id 那段注释）。
+ *  - 写仓库失败时不把新名字落库（下一次「补发布」重新数一个号），
+ *    否则这个号既没被占用、又会被别的文章拿走。
+ */
+async function postPath(env: Env, row: typeof postDrafts.$inferSelect): Promise<{ path: string; slug: string }> {
   const configured = (await getConfig(env, 'githubPostsDir'))?.trim();
   const base = normalizeDir((await getConfig(env, 'githubContentDir')) ?? 'content');
   const dir = configured ? normalizeDir(configured) : `${base}/${row.lang || 'zh'}/posts`;
-  const path = `${dir}/${row.slug}.md`;
+  let slug = row.slug;
+  if (!String(row.publishedPath ?? '').trim() && !isDatedSlug(slug)) slug = (await datedSlug(env, dir)) ?? slug;
+  const path = `${dir}/${slug}.md`;
   // 与后台文章保存同一套判法：目录穿越与控制/保留字符才拒，中文与全角标点放行
   const segs = path.split('/');
   if (segs.some((s) => s === '' || s === '.' || s === '..') || segs[0] !== 'content') {
     fail(400, '投稿的文件名不合法，无法写入仓库');
   }
   if (/[\u0000-\u001f<>:"|?*]/.test(path)) fail(400, '投稿的文件名含有系统保留字符，无法写入仓库');
-  return path;
+  return { path, slug };
+}
+
+/** 已经是「日期 + 序号」那种名字（补发时不要再换号） */
+function isDatedSlug(slug: string): boolean {
+  return /^\d{8}\d{3,}$/.test(String(slug ?? ''));
+}
+
+/**
+ * 发布那天的键（YYYYMMDD）。日子按站点自己的时区算 —— 复用统计那套 `statsUtcOffsetHours`
+ * （默认东八区），不然北京时间早上七点发的那篇会被算进前一天，文件名和站点显示的日期不一致。
+ */
+async function dayKey(env: Env): Promise<string> {
+  const raw = Number(await getConfig(env, 'statsUtcOffsetHours'));
+  const offset = Number.isFinite(raw) ? Math.min(14, Math.max(-12, Math.trunc(raw))) : 8;
+  const d = new Date(Date.now() + offset * 3600 * 1000);
+  return d.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+/** 数出「今天这个目录里最大的序号 + 1」；列目录失败（没配仓库等）就返回 null，让调用方退回原标题名 */
+async function datedSlug(env: Env, dir: string): Promise<string | null> {
+  const day = await dayKey(env);
+  let names: string[];
+  try {
+    names = (await listRepoDir(env, dir)).map((e) => String(e.name ?? ''));
+  } catch {
+    return null;
+  }
+  let max = 0;
+  for (const name of names) {
+    const hit = new RegExp(`^${day}(\\d{3,})\\.md$`).exec(name);
+    if (hit) max = Math.max(max, Number(hit[1]));
+  }
+  return `${day}${String(max + 1).padStart(3, '0')}`;
 }
 
 function normalizeDir(dir: string): string {
@@ -249,7 +299,7 @@ draftsAdmin.post('/:id/approve', async (c) => {
   if (!parsed.success) fail(400, '参数有误');
 
   const now = Math.floor(Date.now() / 1000);
-  const path = await postPath(c.env, row);
+  const { path, slug } = await postPath(c.env, row);
   const authorRows = await db
     .select({
       role: users.role,
@@ -298,6 +348,8 @@ draftsAdmin.post('/:id/approve', async (c) => {
       status: 'approved',
       reviewerId: admin.id,
       reviewNote: parsed.data.note || null,
+      // 新名字只在真写进仓库那一刻落库：写失败时留着原标题名，补发会重新数一个号
+      slug: synced ? slug : row.slug,
       publishedPath: synced ? path : null,
       publishedAt: synced ? now : null,
       updatedAt: now,
@@ -312,7 +364,7 @@ draftsAdmin.post('/:id/approve', async (c) => {
     actor: admin,
     action: 'draft',
     target: row.id,
-    detail: { event: 'approve', slug: row.slug, path, synced, syncError, commit },
+    detail: { event: 'approve', slug: synced ? slug : row.slug, path, synced, syncError, commit },
     ip: clientIp(c),
   });
   // 结论已经落库，邮件只是补一句告知：发不出去也照样算通过
@@ -329,7 +381,7 @@ draftsAdmin.post('/:id/publish', async (c) => {
   if (!row) fail(404, '投稿不存在');
   if (row.status !== 'approved') fail(400, '只有已通过的投稿可以补发布');
 
-  const path = await postPath(c.env, row);
+  const { path, slug } = await postPath(c.env, row);
   const authorRows = await db
     .select({
       role: users.role,
@@ -354,11 +406,11 @@ draftsAdmin.post('/:id/publish', async (c) => {
   if (!result.success) fail(502, result.error ?? '提交失败');
   await db
     .update(postDrafts)
-    .set({ publishedPath: path, publishedAt: row.publishedAt ?? now, updatedAt: now })
+    .set({ slug, publishedPath: path, publishedAt: row.publishedAt ?? now, updatedAt: now })
     .where(eq(postDrafts.id, row.id));
   await rememberSubmitterAuthor(c.env, row.userId, admin);
   await triggerPagesBuild(c.env);
-  await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', path, commit: result.sha }, ip: clientIp(c) });
+  await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', slug, path, commit: result.sha }, ip: clientIp(c) });
   return ok({ id: row.id, synced: true, path, commit: result.sha ?? null });
 });
 

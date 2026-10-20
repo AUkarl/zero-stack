@@ -7,7 +7,7 @@ import { getConfig, getConfigBool } from '../services/config';
 import { newId, randomToken } from '../lib/crypto';
 import { fail, ok } from '../lib/errors';
 import { clientIp } from '../lib/http';
-import { rateLimit } from '../lib/rate-limit';
+import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
 import { renderEmail, sendEmail } from '../services/email';
 import type { AppEnv } from '../lib/app';
 
@@ -150,8 +150,9 @@ app.get('/status', async (c) => {
   const env = c.env;
   const email = (c.req.query('email') ?? '').trim().toLowerCase();
   if (!email) return ok({ status: 'none' });
-  // 该接口会透露某个邮箱是否在名单里，限流把枚举成本抬高
-  await rateLimit(c, 'subscribe-status', 10, 600, clientIp(c));
+  // 该接口会透露某个邮箱是否在名单里，限流把枚举成本抬高。
+  // 键只按 IP（rateLimitLocal 内部已经带了 clientIp），计数走 isolate 内存，不占 KV 写额度。
+  rateLimitLocal(c, 'subscribe-status', 10, 600);
   const rows = await createDb(env).select({ status: subscribers.status }).from(subscribers).where(eq(subscribers.email, email)).limit(1);
   return ok({ status: rows[0]?.status ?? 'none' });
 });

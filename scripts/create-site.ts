@@ -176,6 +176,10 @@ defaultContentLanguage = "zh"
 defaultContentLanguageInSubdir = false
 hasCJKLanguage = true
 
+# robots.txt：主题的 layouts/robots.txt 要这一项才会产出文件。
+# 不开它，新建的站根本没有 /robots.txt（沙箱实测 404），爬虫只能靠自己猜。
+enableRobotsTXT = true
+
 # 内容目录：站点只有中文，但内容一律放在 content/zh/ 下面（后台写文章与时刻也是这个路径）。
 # 这一段声明就是让 Hugo 把 content/zh/posts 映射成 /posts/ 的关键 ——
 # 不写它，content/zh/ 会被当成一个叫「zh」的栏目，所有地址前面凭空多出一层 /zh/，

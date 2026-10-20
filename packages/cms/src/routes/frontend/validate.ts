@@ -7,9 +7,32 @@
  *   notes  —— 只提示，不拦（比如「有空白条目会被忽略」）。
  */
 
-import { CAP, LIMIT, payloadOf, type Forms, type Issue, type SectionKey } from './types';
+import { CAP, LIMIT, payloadOf, type Forms, type Issue, type NavItem, type SectionKey } from './types';
 
 export type { Issue };
+
+/**
+ * 导航栏是整段覆盖：存进去的就是整份 nav.json，少掉的项前台立刻少一条。
+ * 所以条数对不上、或有项不见了 / 多出来时，先算出差异让人确认再落盘
+ * —— 以前是点保存就把整段换掉，读到空列表再存一次就等于清空导航。
+ * 只是改名字、改顺序（条数一样、没有增删）时返回 null，不打扰。
+ */
+export function navOverwriteDiff(before: NavItem[], after: NavItem[]): string | null {
+  /** 认「还是同一条」的依据：链接（站内路径或外链）最稳；父项只有标识；再退回名称 */
+  const key = (it: NavItem) =>
+    it.url.trim() || (it.identifier.trim() ? `id:${it.identifier.trim()}` : `name:${it.name.trim()}`);
+  const afterKeys = new Set(after.map(key));
+  const dropped = before.filter((it) => !afterKeys.has(key(it)));
+  if (!dropped.length && before.length === after.length) return null;
+  const beforeKeys = new Set(before.map(key));
+  const added = after.filter((it) => !beforeKeys.has(key(it)));
+  const label = (it: NavItem) => it.name.trim() || it.url.trim() || it.identifier || '(空项)';
+  const lines = [`导航栏要整段覆盖：现有 ${before.length} 项 → 新 ${after.length} 项。`];
+  if (dropped.length) lines.push(`会去掉 ${dropped.length} 项：${dropped.map(label).join('、')}`);
+  if (added.length) lines.push(`会新增 ${added.length} 项：${added.map(label).join('、')}`);
+  lines.push('确定这样保存吗？');
+  return lines.join('\n');
+}
 
 export function validateSection(key: SectionKey, form: Forms[SectionKey]): Issue[] {
   // 校验清洗后的值：和真正提交出去的内容一致（payloadOf 已经 trim / 丢空行 / 收敛枚举）
@@ -39,6 +62,12 @@ export function validateSection(key: SectionKey, form: Forms[SectionKey]): Issue
       if (it.parent.length > LIMIT.short) push(`${at}：父项（parent）超过 ${LIMIT.short} 字`);
       if (!it.name.trim()) push(`${at}：没填名称。只显示图标时名称也会用作鼠标提示和无障碍标签，也要填`);
       if (!it.url && !it.identifier) push(`${at}：没填链接，也不是父项 —— 要么填链接，要么填标识（identifier）并添加 parent 指向它的子项`);
+      /** 与后端 navUrl 同一条规则：站内以 / 开头，站外给完整协议。
+          javascript: 不会变成 XSS（Hugo 把它消毒成 #ZgotmplZ），但存进去就是一条谁都点不开的死角链。 */
+      const link = it.url.trim();
+      if (link && !link.startsWith('/') && !/^https?:\/\//i.test(link)) {
+        push(`${at}：链接「${link}」点不开 —— 站内路径要以 / 开头，站外要写成 http:// 或 https:// 开头的完整地址`);
+      }
       if (it.parent && !identifiers.has(it.parent)) {
         push(`${at}：父项 parent="${it.parent}" 在本段里找不到对应的标识（identifier），保存后这一项会挂不上去`);
       }

@@ -324,7 +324,7 @@ async function localRead(target: RepoTarget, path: string): Promise<RepoFile | n
   } catch (e) {
     const code = (e as { code?: string }).code;
     if (code === 'ENOENT') return null;
-    throw e;
+    throw new Error(explainLocalFsError(e));
   }
 }
 
@@ -347,9 +347,25 @@ async function localWrite(target: RepoTarget, path: string, content: string): Pr
     await fs.writeFile(abs, content, 'utf8');
     return { success: true, path, backend: 'local', sha: await contentSha(content), committedAt: new Date().toISOString() };
   } catch (e) {
-    return { success: false, path, backend: 'local', error: e instanceof Error ? e.message : String(e) };
+    return { success: false, path, backend: 'local', error: explainLocalFsError(e) };
   }
 }
+
+/**
+ * workerd 里没有真实文件系统：`node:fs` 被 unenv 打成空壳，一调用就报英文的
+ * `[unenv] fs.readFile is not implemented yet!`。这句对使用者毫无意义
+ * （看着像「代码坏了」，其实是少起了一个本地进程，而且失败是静默的），所以翻译成人话再回出去。
+ * 只有本地这条分支会走到这里 —— 线上走 GitHub 后端，不经过这段。
+ */
+function explainLocalFsError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  /** 本地写之前会先读一遍（比内容有没有变），读那步翻过一次的话这里不能再套第二层 */
+  if (raw.includes(LOCAL_FS_HINT)) return raw;
+  if (!/not implemented/i.test(raw)) return raw;
+  return `${LOCAL_FS_HINT}（原文：${raw}）。原因：只配了 GIT_LOCAL_DIR、没起桥接进程，回写会静默失败。解法：把 \`pnpm repo:bridge\` 起着，并在 packages/api/.dev.vars 里同时设 GIT_LOCAL_DIR 与 GIT_LOCAL_HTTP`;
+}
+
+const LOCAL_FS_HINT = '本地 Worker 里没有文件系统';
 
 /**
  * 本地开发专用：把这篇在构建产物里的那一份删掉（public/<分类>/<目录>）。
@@ -413,7 +429,7 @@ async function localDelete(target: RepoTarget, path: string): Promise<RepoFileRe
     }
     return { success: true, path, backend: 'local' };
   } catch (e) {
-    return { success: false, path, backend: 'local', error: e instanceof Error ? e.message : String(e) };
+    return { success: false, path, backend: 'local', error: explainLocalFsError(e) };
   }
 }
 

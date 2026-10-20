@@ -492,7 +492,12 @@
 
     <section class="card">
       <h4>仓库正则文件{pfPath ? ` ${pfPath}` : ''}</h4>
-      <p class="muted small">站点仓库里那份共享正则清单，读写走 <code>GET / PUT /api/admin/spam/pattern-file</code>。</p>
+      <p class="muted small">
+        站点仓库里那份共享正则清单，落在仓库根的 <code>.zero/spam-patterns.txt</code>，读写走
+        <code>GET / PUT /api/admin/spam/pattern-file</code>。别把它挪进 <code>data/</code>：
+        Hugo 会把 <code>data/</code> 下任何未知扩展名都当数据文件解析，那份文件一进去整站构建就报
+        <code>unmarshal of format "" is not supported</code>。
+      </p>
       {#if pfLoading}
         <p class="muted small">读取中…</p>
       {:else}

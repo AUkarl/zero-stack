@@ -8,7 +8,7 @@ import { getConfigBool, getConfigInt } from '../services/config';
 import { hashIp, lifetimeStats, recordPageview, statsMeta, visitorDistinctSql } from '../services/stats';
 import { ok, fail } from '../lib/errors';
 import { clientIp, country, isBot, parseUserAgent, referrerHost, userAgent } from '../lib/http';
-import { rateLimit } from '../lib/rate-limit';
+import { rateLimitLocal } from '../lib/rate-limit';
 import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
@@ -54,8 +54,10 @@ app.post('/beat', async (c) => {
   // 爬虫与监控探针不入库，否则浏览量与热门页 Top 会被机器流量抬虚高
   if (isBot(ua)) return ok({ tracked: false });
   /* 频控：一个 IP 一小时 240 次（约每分钟翻 4 页），正常人逛站碰不到这条线。
-     放在 UA 判断之后，爬虫已经不入库，别为它们白写 KV。 */
-  await rateLimit(c, 'beat', 240, 3600);
+     放在 UA 判断之后，爬虫已经不入库，别为它们白记一次。
+     计数记在 isolate 内存里：这条是每个页面加载都打一次的高频口，
+     用 KV 就是「访问量 = KV 写次数」，免费额度（1000 写/天）第一天就见底。 */
+  rateLimitLocal(c, 'beat', 240, 3600);
   const { device, browser, os } = parseUserAgent(ua);
 
   // 访客指纹 sha256(salt|ip)：明文 IP 只在这一步存在于内存，入库的只有哈希
@@ -97,6 +99,14 @@ app.post('/heartbeat', async (c) => {
   const sessionId = String(merged.s || merged.session || '');
   const seconds = Number(merged.d ?? merged.duration ?? 0);
   if (!sessionId || !Number.isFinite(seconds) || seconds <= 0) return ok({ tracked: false });
+
+  /* 这条接口不需要任何凭据，而每一次命中都是一行 D1 写（duration 累加），
+     所以两层内存限流：会话桶挡「同一个页面失控狂发」，IP 桶挡「换个会话接着刷」。
+     正常访客碰不到这两条线 —— 主题按 beat_seconds（默认 300 秒）兜底结算，
+     一小时最多 12 次，加上切后台/关页面那几次，离 60 还远；600/小时/IP 同理。
+     单次 d 的口径没动：仍然是 SQL 里的 min(duration + ?, 86400)。 */
+  rateLimitLocal(c, 'heartbeat-ip', 600, 3600);
+  rateLimitLocal(c, 'heartbeat', 60, 3600, sessionId);
 
   // 访客指纹 sha256(salt|ip)，只用来给缺哈希的老行补数据，新行由 /beat 写入
   const ipHash = await hashIp(env, clientIp(c));

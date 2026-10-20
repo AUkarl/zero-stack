@@ -9,7 +9,7 @@ import { hashIp } from '../lib/ua';
 import { readRepoFile } from '../services/repo';
 import { fail, ok } from '../lib/errors';
 import { clientIp } from '../lib/http';
-import { rateLimit } from '../lib/rate-limit';
+import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
 import { canonSlug } from '../lib/slug';
 import type { AuthUser } from '../services/auth';
 import type { AppEnv } from '../lib/app';
@@ -192,7 +192,8 @@ app.post('/', async (c) => {
   const user = c.get('user');
   if (!user && !(await getConfigBool(env, 'likeAllowAnonymous', true))) fail(403, '需登录后才能点赞');
 
-  await rateLimit(c, 'reaction', 60, 3600, slug);
+  // 点赞收藏是前台高频口，计数走 isolate 内存，不占 KV 写额度
+  rateLimitLocal(c, 'reaction', 60, 3600, slug);
   const db = createDb(env);
   const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c));
 

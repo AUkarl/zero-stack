@@ -21,7 +21,8 @@ Hugo 主题之外的**全套动态后端**：评论、点赞 / 收藏、邮件�
 - **时刻页**：卡片模式混合时间线（Git 里的 Markdown + D1 里的动态），地点 / 音乐 / 图片 / 音视频，评论按需展开。
 - **友链**：在线申请 → 后台通过 → 同时写进 D1 与 `data/links.yaml`，自动存活检测、
   30 天不可访问或 90 天无动态自动进「迷失的小船」，RSS 聚合出「朋友动态」。
-- **统计**：按 IP 去重的 PV / UV、累计访客、热门页面、来源与设备，可导出 CSV。
+- **统计**：按 IP 去重的 PV / UV、累计访客、热门页面、来源与设备；每篇的阅读 / 评论 / 点赞 / 收藏
+  可一键导出成站点的 `data/poststats.json`（构建期给首页精选与「最热」排序用，不是 CSV）。
 - **后台**：文章结构化编辑（含短代码面板、封面从媒体库选、本地暂存 + 批量保存到 Git）、
   媒体多桶上传、评论 / 投稿 / 认证 / 注销四类审核、用户组与权限、邀请码、站点设置、
   前端管理（导航 / 首页 / 页脚 / 关于 / 工坊 / 时刻 / 友链申请 / SEO 九个子页写进 `data/*.json`）、
@@ -65,7 +66,8 @@ Hugo 主题之外的**全套动态后端**：评论、点赞 / 收藏、邮件�
 - **R2**：后台上传的媒体对象，多桶配置，可挂自定义域名直链。`pnpm setup` 建两个桶 —— 私有的 `zero-media`（只有 Worker 读得到）与公开的 `zero-media-public`；
   公开桶填了 Zone ID（域名的 DNS 就在当前账户）就自动绑好自定义域名并把这条桶追加进 `mediaBuckets`，
   没填或绑不上就只打印该做的事，绝不把还没生效的域名写进配置。两个桶都已存在时只跳过，不动里面的文件。
-- **KV**：`CACHE` 存只读热点（文章列表等），`SESSION` 存会话与滑动限流计数。
+- **KV**：`CACHE` 存只读热点（文章列表等），`SESSION` 存会话与敏感口的滑动限流计数；
+  前台每个页面都会打的那几条（统计埋点、点赞收藏、订阅状态）限流计数记在 Worker 的 isolate 内存里，不写 KV。
 - **Queue**：`zero-email` 异步出站邮件，最多重试 3 次。
 - **Git**：文章与时刻 Markdown、作者表 `data/authors.yaml`、友链数据 `data/links.yaml`、
   前端参数 `data/*.json` —— 后台写的都是这些文件，静态站点仍由 Hugo 构建。
@@ -94,7 +96,9 @@ pnpm install
 cp packages/api/wrangler.jsonc.example packages/api/wrangler.jsonc
 ```
 
-`wrangler.jsonc` 与 `.dev.vars` 都被 gitignore，仓库只提供 `.example`。
+`wrangler.jsonc` 与 `.dev.vars` 都被 gitignore。仓库只带 `packages/api/wrangler.jsonc.example` 这一份模板，
+**`.dev.vars` 没有 `.example`** —— 按下一节的键名自己建一个（`AUTH_SECRET` / `SESSION_SECRET` 两条必须有，
+其余按功能选填）。
 本地要改的一般只有 `name`（避免和线上 worker 撞名）与 `vars.SITE_URL`。
 
 ### 2. 起 API 并建库
@@ -103,6 +107,13 @@ cp packages/api/wrangler.jsonc.example packages/api/wrangler.jsonc
 pnpm dev:api                 # http://127.0.0.1:8787
 pnpm db:migrate:local        # 在另一个终端执行，应用 migrations/0000…0010
 ```
+
+8787 被占用时想换个端口：`pnpm dev:api --port 8790`（实测参数直接传到 wrangler，启动行就是 8790）。
+两个细节：① 别写成 `pnpm dev:api -- --port 8790` —— 中间那个 `--` 会原样带给 wrangler，
+它的解析在 `--` 处停下、把端口当成位置参数忽略掉，于是又退回 8787；
+② 以启动行 `Ready on http://127.0.0.1:<端口>` 为准，端口被占而参数没生效时它会静默换一个随机端口。
+换端口时以启动行 `Ready on http://127.0.0.1:<端口>` 为准 —— 端口被占而参数没生效时，
+wrangler 会静默换一个随机端口，只有这一行说真话。
 
 迁移必须在 `packages/api` 目录下由 wrangler 执行（`pnpm db:migrate:local` 已经帮你切好目录，
 在仓库根直接 `npx wrangler d1 execute` 会报 `Couldn't find a D1 DB with the name 'zero-db'`）。
@@ -114,6 +125,16 @@ pnpm dev:cms                 # http://127.0.0.1:5173，/api 由 vite 代理到 8
 ```
 
 后台登录页的 API 地址留空即可（同源代理，Cookie 不会被浏览器当成跨站丢掉）。
+
+代理目标默认是 8787；自己的台架把 API 起了在别的端口时，用环境变量指过去（不设时行为不变）：
+
+```powershell
+$env:VITE_API_PROXY = "http://127.0.0.1:8790"; pnpm dev:cms     # PowerShell
+```
+
+```bash
+VITE_API_PROXY=http://127.0.0.1:8790 pnpm dev:cms               # bash
+```
 
 **第一个注册的账号自动成为 `admin`**，之后注册的都只能是普通用户。想重来就把
 `packages/api/.wrangler/state` 删掉再跑一次第 2 步（`.wrangler/tmp` 是 workerd 二进制缓存，别删）。
@@ -133,27 +154,51 @@ hugo server --disableFastRender --port 1315 --bind 127.0.0.1
 - 主题改了要重新同步进 `themes/zero` 并**重启 hugo**：同步是整目录替换，
   跑着的服务会留着旧的 shortcode 注册表，轻则 500，重则直接退出。
 
-### 5. 两个本地替身（可选，但要测「回写」就得开）
+### 5. 两个本地替身（`repo:bridge` 是**必选**，不是可选）
 
 ```bash
 pnpm repo:bridge       # 127.0.0.1:8792：把后台的 Git 写入落到本地站点目录
 pnpm mock:translate    # 127.0.0.1:8791：假的翻译服务，用来验证整篇翻译链路
 ```
 
-`GIT_LOCAL_DIR` 指向站点目录时，后台的文章 / 时刻 / 作者表 / 友链文件都直接写文件，
-不碰 GitHub；线上**不要**设 `GIT_LOCAL_DIR`。同一件事在线上的路径是
+**本地只要发文、改时刻、改前端管理那九段、改作者表或友链文件，就必须把 `repo:bridge` 起着**，
+并在 `packages/api/.dev.vars` 里**同时**设这两条、指向同一个目录：
+
+```toml
+GIT_LOCAL_DIR  = "E:/…/zero-site"        # 站点目录（桥接进程往这里写）
+GIT_LOCAL_HTTP = "http://127.0.0.1:8792" # 桥接进程地址（Worker 通过它写）
+```
+
+只设 `GIT_LOCAL_DIR` 时，Worker 里那次 `node:fs` 调用会报：
+
+```
+[unenv] fs.readFile is not implemented yet!
+```
+
+这句人话是：**workerd 里没有真实文件系统**（`wrangler dev` 跑的是浏览器化的隔离环境，
+`node:fs` 只是个空壳），所以文件读写必须由 `repo:bridge` 这个 Node 进程代做。
+它最坑的地方是**失败完全静默** —— 后台显示保存成功、`git status` 干干净净、什么都没写进去，
+而备份导出里凡是走仓库的那几区（文章 / 时刻 / 前端设置 / 友链 / 作者）全是 0。
+桥接进程本身在目录不存在时会直接拒绝启动并把它算出来的路径打给你看，
+想指向别处就显式给 `LOCAL_REPO_DIR=<站点绝对路径>`（默认值是按仓库位置猜的，猜错很危险）。
+
+`GIT_LOCAL_DIR` 只在本机用，线上**不要**设。同一件事在线上的路径是
 「fine-grained PAT（`Contents: write`）提交 → Pages 构建 Hook 重建」，
 代码里两条路径都在 `packages/api/src/services/repo.ts`，行为一致。
 
-### 6. 冒烟测试（71 项）
+### 6. 冒烟测试（匿名 37 项 + 3 跳过；带 Cookie 96 项）
 
 ```bash
 bash scripts/smoke.sh                                   # 公开接口 + 「未登录必须 401」守卫
 ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh     # 追加后台接口
 ```
 
-`ADMIN_COOKIE` 从浏览器登录后台后复制。脚本不写库、不删数据，
-匿名评论那条结尾自己用 `ownerKey` 删掉。全绿输出是 `通过 71 / 失败 0`。
+`ADMIN_COOKIE` 从浏览器登录后台后复制。匿名那一档不写库、不删数据，
+匿名评论那条结尾自己用 `ownerKey` 删掉；给了 Cookie 会先建一篇临时文章
+（点赞与收藏要核对文章在站上真的存在），跑完删掉。全绿输出是
+`通过 37 / 失败 0 / 跳过 3`（匿名）与 `通过 96 / 失败 0 / 跳过 0`（带 Cookie）。
+「跳过」是这条需要脚本当前拿不到的条件（比如没 Cookie 就建不出文章、
+匿名读不到后台的 `avatarTemplate`），既不算通过也不算失败 —— 汇总里会逐条写明原因。
 
 ### 7. 端口一览
 
@@ -296,7 +341,7 @@ pnpm setup -- --no-deploy      # 只建资源、跑迁移、写配置：不部�
 11. **翻译**（后台「翻译」）：整篇翻译工作台，可接真模型也可先用 `pnpm mock:translate` 自测；
     译稿先落进表单，确认后才写仓库。
 12. **统计**（后台「访问统计」）：口径是按 IP 去重的 UV + PV，累计访客单独存；
-    想不统计自己可以在「设置」里排除。导出 CSV。
+    想不统计自己可以在「设置」里排除。每篇的数可以导出成站点的 `data/poststats.json`。
 13. **备份**（后台「备份」）：一键导出 D1（评论 / 订阅 / 用户 / 友链 / 统计）成 JSON，
     也能导入恢复。导出文件含邮箱等个人信息，属敏感数据，别提交进仓库。
 
@@ -308,15 +353,15 @@ pnpm setup -- --no-deploy      # 只建资源、跑迁移、写配置：不部�
 | --- | --- |
 | `/login` | 管理员登录；API 地址优先取这里填的，其次取构建时内置的值，本地开发两者都不填走同源代理。按登录方式可能要动态码或邮箱验证码 |
 | `/` | 仪表盘：待办数量、最近评论 / 申请 / 任务、快捷入口 |
-| `/stats` | 访问统计：趋势、热门页面、来源、设备、CSV 导出 |
+| `/stats` | 访问统计：趋势、热门页面、来源、设备，以及「导出 `data/poststats.json`」（没有 CSV） |
 | `/content` | 文章结构化编辑：字段 + 正文 + 短代码面板 + 封面选图、本地暂存与「保存到 Git（N）」批量推送、删除会连构建产物一起清 |
 | `/moments` | 时刻发布与编辑（Git 里的 Markdown） |
 | `/media` | 媒体库：多桶浏览、上传、复制绝对地址 |
 | `/comments` | 评论管理：搜索、审核、删除（连带子树）、按文章聚合 |
-| `/spam` | 评论审核：正则规则文件、命中记录、第三方审核服务配置 |
+| `/spam` | 评论审核：正则规则文件（落在内容仓库根的 `.zero/spam-patterns.txt`，不在 `data/` 里 —— Hugo 会把 `data/` 下任何未知扩展名当数据文件解析，放进去整站构建就炸）、命中记录、第三方审核服务配置 |
 | `/friends` | 友情链接 + 待审申请两个 tab：分组、排序、失联阈值、同步 `data/links.yaml` |
 | `/users` | 用户与邀请码：权限勾选（投稿 / 认证）、封禁、重置密码、删除账号（级联清理） |
-| `/drafts` | 投稿审核：编辑、直接发布进仓库、驳回并邮件通知 |
+| `/drafts` | 投稿审核：编辑、直接发布进仓库、驳回并邮件通知。落盘文件名按「发布那天 + 当天顺序号」（`20261020001.md`，同一天接着仓库里已有的最大号往下排，过了 999 进四位），不是标题 —— 中文标题当文件名时 Hugo 会把全角标点丢掉，生成又要 percent-encode 的长地址；**已经发布过的不换名**（评论、统计、收藏的 key 都是那个地址） |
 | `/author-verify` | 作者认证申请：通过后写 `data/authors.yaml`，自动进「共创」组 |
 | `/subscribers` | 订阅者：状态、确认时间、导出 |
 | `/broadcast` | 邮件群发：任务列表、分批发送、失败重发、每日上限提示 |
@@ -395,6 +440,14 @@ pnpm migrate:waline        # 导出 JSON → D1 comments 表，详见 docs/DEPLO
 Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 
 - **统计**：按 IP 去重 + 会话键缓存，同一次浏览不重复写 D1；累计访客单独存计数。
+- **限流计数分两处**：一次 KV 限流 = 一读一写，而免费额度只有 **1000 次写/天**，5000 访问/天的站
+  光埋点就超。所以 `/api/analytics/beat`、`/api/analytics/heartbeat`、`/api/reactions`、
+  `/api/subscribe/status` 这四条前台高频口在 isolate 内存里计数（一次 KV 都不写，代价是冷启动重新计数、
+  多 isolate 之间不共享，挡的是「同一会话/同一 IP 无节制地打」）；注册、发码、找回密码、登录、
+  评论、评论点赞、友链申请、群发、翻译这些低频或敏感口继续用 KV，跨 isolate 生效。
+- **停留时长结算有上限**：`heartbeat` 一个会话一小时 60 次、一个 IP 一小时 600 次，单次结算仍夹在
+  `min(duration + ?, 86400)`（最长 24 小时）—— 这条接口不需要任何凭据，没有限流时一个脚本就能把
+  D1 的行写入额度打满。
 - **配置**：只读热点进 KV（60 秒），`/api/config` 不打 D1。
 - **前台请求**：`/api/auth/me` 全站只问一次（主题侧共用同一在途请求），`/api/config` 同理。
 - **批量**：后台「保存到 Git（N）」一次推送多篇 → 一条审计、一次缓存清理、**一次**构建请求；
@@ -455,7 +508,7 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 | `pnpm build:comment` | 产出 `packages/comment/dist/zero-comment.js`，再由主题 `scripts/sync-comment.mjs` 复制过去 |
 | `pnpm db:migrate:local` / `:remote` | 单独应用迁移 |
 | `pnpm check` | `typecheck:scripts` → `-r typecheck` → `-r build`，与 `ci.yml` 一致 |
-| `bash scripts/smoke.sh` | 接口冒烟（71 项），带 `ADMIN_COOKIE` 时追加后台用例 |
+| `bash scripts/smoke.sh` | 接口冒烟（匿名 37 项 + 3 跳过；带 `ADMIN_COOKIE` 96 项），结尾自清临时文章 |
 
 更细的生产步骤、故障排查与 GitHub Actions 模板见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。
 

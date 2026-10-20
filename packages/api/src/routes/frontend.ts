@@ -23,22 +23,40 @@ const short = z.string().max(200);
 const long = z.string().max(4000);
 const href = z.string().max(600);
 
-const navItem = z.object({
-  name: short,
-  url: href,
-  weight: z.number().int().min(-9999).max(9999).default(0),
-  icon: short.optional().default(''),
-  image: href.optional().default(''),
-  iconOnly: z.boolean().optional().default(false),
-  external: z.boolean().optional().default(false),
-  /** '' = 主菜单；'controls' = 右侧图标区 */
-  position: z.enum(['', 'controls']).optional().default(''),
-  /** 有子项时必填，子项用 parent 指回来 */
-  identifier: short.optional().default(''),
-  parent: short.optional().default(''),
-  /** 主题据此把这一项渲染成账号入口（登录后换头像），而不是普通链接 */
-  zeroAccount: z.boolean().optional().default(false),
-});
+/**
+ * 导航项的地址：站内路径以 / 开头，站外要给完整的 http(s)://。
+ * javascript: 这类不会变成 XSS（Hugo 渲染时把它消毒成 #ZgotmplZ），但会存成一条谁都点不开的死角链，
+ * 而且要到前台才发现 —— 所以在入库这一层就拒掉。空值在这里是允许的，
+ * 「没链接又没有标识」这种整项无用的情况由下面的 refine 管（下拉分组只有标识，没有地址）。
+ */
+const navUrl = z
+  .string()
+  .max(600)
+  .transform((v) => v.trim())
+  .refine((v) => !v || v.startsWith('/') || /^https?:\/\//i.test(v), '链接要嘛以 / 开头（站内路径），要嘛写成 http:// 或 https:// 开头的完整地址');
+
+const navItem = z
+  .object({
+    /** 名称是这一项唯一的可读文字（也是 iconOnly 时的鼠标提示与 aria-label），空着存进去前台就是一条没有名字的菜单 */
+    name: short
+      .pipe(z.string())
+      .transform((v) => v.trim())
+      .refine((v) => v.length > 0, '名称不能为空'),
+    url: navUrl,
+    weight: z.number().int().min(-9999).max(9999).default(0),
+    icon: short.optional().default(''),
+    image: href.optional().default(''),
+    iconOnly: z.boolean().optional().default(false),
+    external: z.boolean().optional().default(false),
+    /** '' = 主菜单；'controls' = 右侧图标区 */
+    position: z.enum(['', 'controls']).optional().default(''),
+    /** 有子项时必填，子项用 parent 指回来 */
+    identifier: short.optional().default(''),
+    parent: short.optional().default(''),
+    /** 主题据此把这一项渲染成账号入口（登录后换头像），而不是普通链接 */
+    zeroAccount: z.boolean().optional().default(false),
+  })
+  .refine((it) => !!it.url || !!it.identifier.trim(), '这一项既没有链接也没有标识：只有下拉分组（填了 identifier、子项用 parent 指回来）才允许链接留空');
 
 const navSchema = z.object({ items: z.array(navItem).max(60) });
 
