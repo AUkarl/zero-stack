@@ -274,7 +274,7 @@ pnpm create:site
   `/links/`（`friendsEnabled`）、`/moments/`（`momentsEnabled`）、`/subscribe/`（`subscribeEnabled`）、
   `/account/`（`accountSystemEnabled`）、`/work/`（`workEnabled`）、
   `/about/`（`aboutEnabled`）。`GATED` 表加一行就能多管一个页面，但后台「设置」里得真有那个键，
-  否则判不到关、页面照旧正常出。开关状态在边缘缓存 60 秒 —— 后台改完最迟一分钟后生效，不用重建站点；
+  否则判不到关、页面照旧正常出。开关状态缓在 isolate 内存 30 秒，且后台写入那一下会立刻作废缓存 —— 改完最迟 30 秒全网生效，不用重建站点；
   读不到配置时一律按「默认开」放行，绝不会因为接口抖动把整站变 404。模板在
   `zero-stack/scripts/site-template/functions/_middleware.ts`，生成时只替换 `__ZERO_API_BASE__` 一个占位。
 - 脚本只在本地生成与提交，**不会替你推送远端**，推送指令会打印出来由你自己执行；
@@ -355,7 +355,7 @@ setx GOPRIVATE "github.com/AUkarl/*"
 | `githubAuthorsFile` | 作者数据文件 | `data/authors.yaml` | 同左 |
 | `githubDataDir` | 前端数据目录 | `data` | 同左 |
 
-改完不用重新部署 Worker（这些值存在 D1，约 60 秒缓存刷新）；只有 `wrangler.jsonc` 里的 vars 与代码改动才需要 `pnpm deploy:api`。
+改完不用重新部署 Worker（这些值存在 D1，isolate 缓存 30 秒，写入即作废）；只有 `wrangler.jsonc` 里的 vars 与代码改动才需要 `pnpm deploy:api`。
 
 > 文章地址由 Hugo 按 `contentDir` 折算：`content/zh/posts/foo.md` 发布成 `/posts/foo/`，**地址里不会多出一层 `/zh/`**。
 > 少了 `contentDir` 那段声明，`content/zh/` 会被当成一个叫 `zh` 的分区，页面全跑到 `/zh/posts/…` 底下，
