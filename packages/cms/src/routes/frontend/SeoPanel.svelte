@@ -74,9 +74,13 @@
 <section class="card blk">
   <h3>描述与标题</h3>
   <label>
-    默认描述（页面自己没写描述时用它）
+    默认描述（全站 meta description 的首选）
     <textarea rows="3" bind:value={seo.defaultDescription} maxlength={LIMIT.long}></textarea>
     <span class="muted small cnt">{seo.defaultDescription.length}/{LIMIT.long} 字</span>
+    <span class="muted small">
+      取数顺序：这一页写的页面描述 → <strong>这里的默认描述</strong> → 「基本信息 → 站点简介」。
+      单篇文章自己填了描述就用文章那句；两者都空时前台不出 description 标签（不拿站点名冒充）。
+    </span>
   </label>
   <label>
     默认关键词（一行一个；页面没写关键词时用它）

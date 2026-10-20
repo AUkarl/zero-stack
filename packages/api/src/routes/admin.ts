@@ -23,7 +23,7 @@ import {
 import { deleteCommentSubtree } from '../services/comment-tree';
 import { notifySelfTest } from '../services/comment-notify';
 import { linksFilePath } from '../services/friends-file';
-import { setSiteDefaultAuthor } from './frontend';
+import { setSiteDefaultAuthor, writeSwitchSnapshot } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
 import { clientIp } from '../lib/http';
@@ -145,8 +145,15 @@ app.patch('/config', async (c) => {
     detail: { event: 'patch', changed, failed },
     ip: clientIp(c),
   });
+
+  /* 动过任何 *Enabled 开关就顺手把快照烘进站点的 data/switches.json：
+     主题首屏靠它决定区块露不露，不必再等 /api/config（线上实测那次调用串在 LCP 关键路径上 4.8 秒）。
+     写不进仓库不影响设置本身已经生效 —— 运行期那一路照旧，所以这里只报状态，绝不把整次保存说成失败。 */
+  let switchSnapshot: { written: boolean; path?: string; keys?: number; error?: string } | undefined;
+  if (changed.some((x) => /Enabled$/.test(x.key))) switchSnapshot = await writeSwitchSnapshot(c.env);
+
   /* 写失败要说成写失败：以前整批只在最后 ok，中间某条 D1 出错时界面照样显示「已保存」 */
-  return ok({ updated: changed.length, keys: changed.map((x) => x.key), changed, failed });
+  return ok({ updated: changed.length, keys: changed.map((x) => x.key), changed, failed, switchSnapshot });
 });
 
 /* ---------------- 评论审核 ---------------- */

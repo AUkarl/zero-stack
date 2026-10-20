@@ -1,8 +1,17 @@
 <script lang="ts">
   import MediaPicker from '../content/MediaPicker.svelte';
+  import { frontUrl } from '#lib/session.svelte';
   import { LIMIT, type SiteSection } from './types';
 
   let { site }: { site: SiteSection } = $props();
+
+  /** 预览图地址：站内相对路径（/img/bj.png）在后台自己的域名下没有这些文件，
+      必须拼站点前台地址；拼不出（siteUrl 没配）就退回文字，不给一张碎图。 */
+  function previewSrc(v: string): string {
+    const s = v.trim();
+    if (!s) return '';
+    return /^https?:\/\//i.test(s) ? s : frontUrl(s);
+  }
 
   let pickLogo = $state(false);
   let pickFavicon = $state(false);
@@ -81,7 +90,8 @@
     <span class="muted small cnt">
       只影响 <code>/index</code> 那一屏的背景，首页 <code>/home/</code> 与文章页都不读它。
       {#if site.landingImage.trim()}
-        当前背景图：<img class="thumb" src={site.landingImage.trim()} alt="落地页背景图预览" />
+        {@const pv = previewSrc(site.landingImage)}
+        当前背景图：{#if pv}<img class="thumb" src={pv} alt="落地页背景图预览" />{:else}<code>{site.landingImage.trim()}</code>（没配站点地址，拼不出预览）{/if}
       {:else}
         留空时前台用主题自带的 <code>img/bj.png</code>。
       {/if}
@@ -90,7 +100,8 @@
   <p class="muted small">
     填站内路径（<code>/img/xxx.webp</code>，对应站点 static 目录）或完整 <code>https://</code> 外链都行。
     {#if site.logo.trim()}
-      当前 Logo：<img class="thumb" src={site.logo.trim()} alt="logo 预览" />
+      {@const pv = previewSrc(site.logo)}
+      当前 Logo：{#if pv}<img class="thumb" src={pv} alt="logo 预览" />{:else}<code>{site.logo.trim()}</code>（没配站点地址，拼不出预览）{/if}
     {:else}
       当前没填 Logo，前台用主题自带的 img/logo-nav.webp。
     {/if}
@@ -100,9 +111,13 @@
 <section class="card blk">
   <h3>简介与关键词</h3>
   <label>
-    站点简介（搜索引擎与分享卡片的默认描述）
+    站点简介（兜底描述）
     <textarea rows="3" bind:value={site.description} maxlength={LIMIT.long}></textarea>
     <span class="muted small cnt">{site.description.length}/{LIMIT.long} 字</span>
+    <span class="muted small">
+      只有「前端管理 → SEO → 默认描述」留空时，它才成为全站 meta description；
+      两处都填了的话以 SEO 那格为准。
+    </span>
   </label>
   <label>
     关键词（逗号分隔，最多 40 个）

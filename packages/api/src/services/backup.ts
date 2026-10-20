@@ -167,9 +167,76 @@ export interface BackupPayload {
 
 /* -------------------------------------------------------------------- 导出 */
 
+/**
+ * 四列「拿到就能直接冒用」的数据，默认不进备份文件：
+ *   users.passwordHash      口令散列（pbkdf2$迭代数$盐$串，格式自己就把参数交代了）
+ *   users.totpSecret        验证器密钥（库里是密文，但密文和 SESSION_SECRET 常常一起搬家）
+ *   subscribers.token       退订令牌（拿到就能替别人退订）
+ *   comments.ownerKey       评论的自删自改凭证（等同于「谁拿到谁能改那条评论」）
+ * 与 SECRET_KEYS 的分工：那拦的是「配置里的密钥」，这四列是「数据表里的凭证」。
+ * 换机恢复其实用不上它们 —— 口令到新站本来就该让人重设，所以默认剔除，
+ * 真要整库迁移时在导出面板勾「包含登录与凭证数据」。
+ */
+const CREDENTIAL_COLUMNS: Record<string, string[]> = {
+  users: ['passwordHash', 'totpSecret'],
+  subscribers: ['token'],
+  comments: ['ownerKey'],
+};
+
+/** 剔除凭证列，返回剥掉的单元格数；每一张被剥过的表在「未包含」里记一条 */
+function stripCredentialColumns(sections: BackupSection[], omitted: BackupPayload['omitted']): number {
+  let stripped = 0;
+  for (const section of sections) {
+    for (const [table, rows] of Object.entries(section.tables ?? {})) {
+      const cols = CREDENTIAL_COLUMNS[table];
+      if (!cols?.length || !Array.isArray(rows)) continue;
+      let hit = 0;
+      for (const row of rows as Record<string, unknown>[]) {
+        for (const col of cols) {
+          if (col in row) {
+            delete row[col];
+            hit++;
+          }
+        }
+      }
+      if (!hit) continue;
+      stripped += hit;
+      omitted.push({
+        key: `${table}.${cols.join('、')}`,
+        reason: '可直接冒用的凭证或口令散列，默认不进备份文件（要整库搬家就在导出时勾「包含登录与凭证数据」）',
+        value: '',
+      });
+    }
+  }
+  return stripped;
+}
+
+/**
+ * 反向补偿：导出的时候剔掉了这几列，恢复回来这些字段就是缺的。
+ * passwordHash 是 NOT NULL，不给值整张 users 表就写不进去；给了又不能是能用的口令。
+ * 所以填一个 verifyPassword 见了一定返回 false 的形状（crypto.ts:125 只认 pbkdf2$…），
+ * 恢复出来的账号一律「密码未知，请走找回密码」，而不是悄悄沿用源站的散列。
+ * token / ownerKey 同理给新随机值：老邮件里的退订链接与读者本地的编辑凭证就此失效，
+ * 这是剔掉凭证的必然代价，必须在导入结果里明说，别让人以为还能续上。
+ */
+function fillMissingCredentials(table: string, row: Record<string, unknown>): boolean {
+  const cols = CREDENTIAL_COLUMNS[table];
+  if (!cols) return false;
+  let filled = false;
+  for (const col of cols) {
+    if (row[col] === undefined || row[col] === null) {
+      if (col === 'passwordHash') row[col] = `imported-without-password$${crypto.randomUUID()}`;
+      else if (col === 'totpSecret') continue;
+      else row[col] = crypto.randomUUID().replace(/-/g, '');
+      filled = true;
+    }
+  }
+  return filled;
+}
+
 export async function exportBackup(
   env: Env,
-  opts: { note?: string } = {},
+  opts: { note?: string; includeCredentials?: boolean } = {},
 ): Promise<{ payload: BackupPayload; warnings: string[] }> {
   const db = createDb(env);
   const warnings: string[] = [];
@@ -402,6 +469,11 @@ export async function exportBackup(
   }
 
   const siteNameRow = configRows.find((r) => r.key === 'siteName');
+  /* 默认剔掉凭证列；勾了「包含登录与凭证数据」才整份带走（路由那边显式传 true）。 */
+  if (!opts.includeCredentials) {
+    const stripped = stripCredentialColumns(sections, omitted);
+    if (stripped) warnings.push(`这份备份剔掉了 ${stripped} 个可直接冒用的凭证/口令字段（见「未包含」列表）；要整库搬家请勾选「包含登录与凭证数据」`);
+  }
   return {
     payload: {
       version: BACKUP_VERSION,
@@ -816,13 +888,25 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
 /** 表类分区：主键已存在就跳过，绝不覆盖本站已有记录 */
 async function mergeTable(db: ReturnType<typeof createDb>, table: any, name: string, rows: Record<string, unknown>[], dryRun: boolean): Promise<SectionTableResult> {
   const columns = new Set(Object.keys(getTableColumns(table)));
-  const prepared = rows.map((r) => pickKnown(r, columns)).filter((r) => Object.keys(r).length);
+  let credentialFilled = 0;
+  const prepared = rows
+    .map((r) => {
+      const picked = pickKnown(r, columns);
+      if (fillMissingCredentials(name, picked)) credentialFilled++;
+      return picked;
+    })
+    .filter((r) => Object.keys(r).length);
+  /** 剔过凭证的备份恢复回来必须交代清楚，别让人以为读者的密码还在 */
+  const withNote = (base: string | null) => [base, credentialNote].filter(Boolean).join('；') || null;
+  const credentialNote = credentialFilled
+    ? `${credentialFilled} 行缺口令/凭证（这份导出没勾「包含登录与凭证数据」）：账号密码已置为不可用，读者要走「找回密码」；老邮件里的退订链接与读者本地的评论编辑凭证同时失效`
+    : null;
   if (!prepared.length) {
     return { name, rows: rows.length, inserted: 0, skipped: rows.length, note: rows.length ? '字段与当前表结构不匹配' : null };
   }
   if (dryRun) {
     const pk = singlePk(table);
-    if (!pk) return { name, rows: prepared.length, inserted: prepared.length, skipped: 0, note: '演习无法核对主键，实际以确认导入为准' };
+    if (!pk) return { name, rows: prepared.length, inserted: prepared.length, skipped: 0, note: withNote('演习无法核对主键，实际以确认导入为准') };
     const values = [...new Set(prepared.map((r) => r[pk.prop]).filter((v) => v !== undefined && v !== null))] as unknown[];
     let existing = 0;
     for (let i = 0; i < values.length; i += 100) {
@@ -835,7 +919,7 @@ async function mergeTable(db: ReturnType<typeof createDb>, table: any, name: str
       }
     }
     const skip = Math.min(existing, prepared.length);
-    return { name, rows: prepared.length, inserted: prepared.length - skip, skipped: skip, note: skip ? `${skip} 行主键已存在，会被跳过` : null };
+    return { name, rows: prepared.length, inserted: prepared.length - skip, skipped: skip, note: withNote(skip ? `${skip} 行主键已存在，会被跳过` : null) };
   }
 
   let inserted = 0;
@@ -855,7 +939,7 @@ async function mergeTable(db: ReturnType<typeof createDb>, table: any, name: str
       errors.push(briefError(e));
     }
   }
-  return { name, rows: prepared.length, inserted, skipped, note: errors.length ? `写入出错：${errors[0]}` : null };
+  return { name, rows: prepared.length, inserted, skipped, note: withNote(errors.length ? `写入出错：${errors[0]}` : null) };
 }
 
 function labelOf(id: SectionId): string {

@@ -99,6 +99,8 @@
   let lastExport = $state<ArchiveResult | null>(null);
   /** 最近一次「导出到本地」带回来的隐患：空备份必须当场看得见，不能等导入才发现 */
   let exportWarn = $state<string[]>([]);
+  /** 默认关：备份不带口令散列 / TOTP 密钥 / 退订令牌 / 评论编辑凭证（服务端同样默认剔） */
+  let includeCreds = $state(false);
 
   let picked = $state<{ name: string; payload: Payload } | null>(null);
   /** 勾选要恢复的分区：默认全选，但可以只挑「文章」或只挑「评论」 */
@@ -174,16 +176,26 @@
     URL.revokeObjectURL(url);
   }
 
+  /** 勾了「包含登录与凭证数据」就要再确认一次：这份文件等同于整库的登录能力 */
+  function confirmCredentials() {
+    if (!includeCreds) return true;
+    return confirm(
+      '这份备份会带上口令散列、验证器密钥、退订令牌与评论编辑凭证。' +
+        '文件离开这台机器（传盘、贴聊天、放进公开仓库）就等于把这些一起交出去。确认仍然包含？',
+    );
+  }
+
   /** 导出到浏览器。必须走 #lib/api：Pages 部署没有 /api 代理，手写相对地址会打到 SPA 自己 */
   async function download() {
+    if (!confirmCredentials()) return;
     busy = 'download';
     error = '';
     exportWarn = [];
     try {
-      const payload = await get<Payload>('/api/admin/backup/export');
+      const payload = await get<Payload>(`/api/admin/backup/export${includeCreds ? '?credentials=1' : ''}`);
       saveAs(`zero-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(payload, null, 2));
       exportWarn = payload.warnings ?? [];
-      notice = `已导出全站备份：${payload.sections.length} 个分区；未写回的绑定项与密钥 ${payload.omitted.length} 条只列在文件里供人工对照`;
+      notice = `已导出全站备份：${payload.sections.length} 个分区；未写回的绑定项与密钥 ${payload.omitted.length} 条只列在文件里供人工对照${includeCreds ? '（这份含登录与凭证数据）' : ''}`;
     } catch (e) {
       error = e instanceof Error ? e.message : '导出失败';
     } finally {
@@ -191,12 +203,13 @@
     }
   }
 
-  /** 存档到 R2，保留最近 10 份 */
+  /** 存档到 R2，保留最近 10 份。存进去的每一份同样能被下载回来，所以勾选也要确认 */
   async function archive() {
+    if (!confirmCredentials()) return;
     busy = 'archive';
     error = '';
     try {
-      const d = await get<{ data: ArchiveResult }>('/api/admin/backup/export?save=1');
+      const d = await get<{ data: ArchiveResult }>(`/api/admin/backup/export?save=1${includeCreds ? '&credentials=1' : ''}`);
       lastExport = d.data;
       notice = `已存档 ${d.data.key}${d.data.pruned ? `，清理旧备份 ${d.data.pruned} 份` : ''}`;
       await load();
@@ -645,6 +658,10 @@
   </p>
 
   <div class="row actions">
+    <label class="row" style="gap:6px;align-items:center;margin-right:8px">
+      <input type="checkbox" bind:checked={includeCreds} />
+      <span class="small">包含登录与凭证数据（口令散列 / 验证器密钥 / 退订令牌 / 评论编辑凭证）</span>
+    </label>
     <button onclick={() => void download()} disabled={busy !== ''}>{busy === 'download' ? '导出中…' : '导出到本地'}</button>
     <button class="primary" onclick={() => void archive()} disabled={busy !== ''}>
       {busy === 'archive' ? '存档中…' : '存档到 R2'}

@@ -1,16 +1,19 @@
 /**
  * security.ts — 账号安全（挂在 /api/auth 下，会话走 Cookie）
  *
- * 覆盖三件事，全部只对「本人」开放（管理员代管别人的账号在 /api/admin/*）：
- *   GET  /api/auth/security          安全概览：策略、已启用凭据、可选登录方式
- *   GET  /api/auth/totp/status       验证器状态（密钥是密文，这里不回明文）
- *   POST /api/auth/totp/setup        生成验证器密钥（只暂存 KV，不落库）
- *   POST /api/auth/totp/enable       用一个动态码确认绑定
- *   POST /api/auth/totp/disable      关闭绑定（要动态码或密码）
- *   GET|POST /api/auth/github/start  拿 authorizeUrl
- *   GET  /api/auth/github/callback   换 token → 写 accounts 表 → 登录或绑定
- *   POST /api/auth/github/unbind     解绑
- *   GET  /api/auth/github/status     是否配置、是否已绑
+ * 覆盖三件事，全部只对「本人」开放（管理员代管别人的账号在 /api/admin/*）。
+ * 这一组挂在 app.route('/api/security', security) 下，所以对外路径前缀是 /api/security，
+ * 不是 /api/auth —— 早前这段注释和几处默认值都写成 /api/auth/*，那是 404（GitHub 回调
+ * 尤其致命：默认值拼错时，站长不设 GITHUB_REDIRECT_URI 就永远收不到授权回跳）。
+ *   GET  /api/security/              安全概览：策略、已启用凭据、可选登录方式
+ *   GET  /api/security/totp/status   验证器状态（密钥是密文，这里不回明文）
+ *   POST /api/security/totp/setup    生成验证器密钥（只暂存 KV，不落库）
+ *   POST /api/security/totp/enable   用一个动态码确认绑定
+ *   POST /api/security/totp/disable  关闭绑定（要动态码或密码）
+ *   GET|POST /api/security/github/start   拿 authorizeUrl
+ *   GET  /api/security/github/callback    换 token → 写 accounts 表 → 登录或绑定
+ *   POST /api/security/github/unbind      解绑
+ *   GET  /api/security/github/status      是否配置、是否已绑
  *
  * GitHub 凭据没配时一律 501 + 中文说明缺哪个环境变量，不静默退回。
  */
@@ -383,7 +386,7 @@ async function githubStart(c: Context): Promise<Response> {
   if (!oauth.redirectUri) {
     httpError(
       501,
-      `GitHub 回调地址未配置：请设置环境变量 GITHUB_REDIRECT_URI，值为 ${requestOrigin(c)}/api/auth/github/callback`,
+      `GitHub 回调地址未配置：请设置环境变量 GITHUB_REDIRECT_URI，值为 ${requestOrigin(c)}/api/security/github/callback`,
       { githubConfigured: true },
     );
   }
@@ -401,7 +404,7 @@ async function githubStart(c: Context): Promise<Response> {
   return ok({ authorizeUrl: githubAuthorizeUrl(oauth, state), intent, state, callbackUrl: oauth.redirectUri });
 }
 
-/** POST /api/auth/github/start { intent?, redirect? } —— 同时支持 GET，方便前端直接放链接 */
+/** POST /api/security/github/start { intent?, redirect? } —— 同时支持 GET，方便前端直接放链接 */
 app.post('/github/start', githubStart);
 app.get('/github/start', githubStart);
 

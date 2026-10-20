@@ -140,8 +140,12 @@ export function githubOAuth(env: Env, requestOrigin = ''): GithubOAuthConfig {
   const clientId = (env.GITHUB_CLIENT_ID ?? '').trim();
   const clientSecret = (env.GITHUB_CLIENT_SECRET ?? '').trim();
   const configured = Boolean(clientId && clientSecret);
+  /* 回调地址的路径只有这一种写法是对的：路由挂在 app.route('/api/security', security) 下，
+   * 处理器是 security.get('/github/callback')，所以线上可用的是 /api/security/github/callback。
+   * 老默认值拼的是 /api/auth/github/callback，那条实测 404 —— 站长只要没显式设
+   * GITHUB_REDIRECT_URI，GitHub 授权完就跳到一个不存在的地址，绑定与登录永远走不完。 */
   const redirectUri =
-    (env.GITHUB_REDIRECT_URI ?? '').trim() || (configured && requestOrigin ? `${requestOrigin.replace(/\/+$/, '')}/api/auth/github/callback` : '');
+    (env.GITHUB_REDIRECT_URI ?? '').trim() || (configured && requestOrigin ? `${requestOrigin.replace(/\/+$/, '')}/api/security/github/callback` : '');
   const missing: string[] = [];
   if (!clientId) missing.push('GITHUB_CLIENT_ID');
   if (!clientSecret) missing.push('GITHUB_CLIENT_SECRET');

@@ -33,11 +33,21 @@ const app = new Hono<AppEnv>();
 
 /* ---------------- CORS：白名单来自 vars，未配置则只允许同源与本地 ---------------- */
 
-/** 这个来源能不能带凭据来：白名单写了 * 、就是本站自己、或是本地开发端口 */
+/**
+ * 这个来源能不能带凭据来：白名单写了 * 、就是本站自己、或是本地开发端口。
+ *
+ * 环回那条分支只在「本站自己也是环回地址」时才放行。以前它不分环境，
+ * 于是线上 Worker 也对 http://localhost:任意端口 回 ACAO + Access-Control-Allow-Credentials: true
+ * —— 访客本机只要跑着一个页面，就能带着 cookie 跨源打这个站。
+ * 用 self 的 host 判断而不是读 ENVIRONMENT：真实部署的 self 是 https://api 域，自然不满足；
+ * 本地 wrangler dev 的 self 是 http://127.0.0.1:8795，本地后台与前台跨端口带凭据照样能用，
+ * 不需要谁再去设一个环境变量开关。
+ */
+const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 function isAllowedOrigin(origin: string, allowed: string[], self: string): boolean {
   if (allowed.includes('*')) return true;
   if (origin === self) return true;
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  if (LOOPBACK.test(origin) && LOOPBACK.test(self)) return true;
   return allowed.includes(origin);
 }
 

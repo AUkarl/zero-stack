@@ -9,8 +9,12 @@
  *   POST /import          按分区演习 / 恢复
  *   POST /comments        第三方评论系统（Waline / Twikoo …）的历史评论导入
  *
- * 上一版的 scope=core|full 两档、includeSecrets 开关与「最近 N 条高频表」的截断都删了：
- * 备份只有一种（全站），密钥永不进文件，被备份的表一律整表。
+ * 备份只有一种（全站），被备份的表一律整表；scope=core|full 两档与「最近 N 条高频表」的
+ * 截断都删了 —— 恢复一个半套的备份比不恢复更难查。
+ * credentials=1 这一档是 2026-10-20 加回来的，别再当冗余删掉：默认的「全站备份」会剔掉
+ * users.passwordHash / users.totpSecret / subscribers.token / comments.ownerKey
+ * 这四列「拿到就能直接冒用」的数据（上一版这里写的是「密钥永不进文件」，实际只做到了配置侧，
+ * 数据表侧整份带着）。真要整库搬家才显式勾选，勾了会在响应与审计里点名。
  */
 
 import { Hono } from 'hono';
@@ -58,13 +62,21 @@ app.get('/export', async (c) => {
   const admin = requireAdmin(c);
   const save = c.req.query('save') === '1';
   const note = c.req.query('note') ?? '';
+  /** 默认 false：口令散列 / TOTP 密钥 / 退订令牌 / 评论 ownerKey 不进文件。见 services/backup.ts 的 CREDENTIAL_COLUMNS */
+  const includeCredentials = c.req.query('credentials') === '1';
 
-  const { payload, warnings } = await exportBackup(c.env, { note });
+  const { payload, warnings } = await exportBackup(c.env, { note, includeCredentials });
   await writeAudit(c.env, {
     actor: admin,
     action: 'backup',
     target: 'export',
-    detail: { sections: payload.sections.map((s) => ({ id: s.id, counts: s.counts })), warnings, saved: save },
+    detail: {
+      sections: payload.sections.map((s) => ({ id: s.id, counts: s.counts })),
+      warnings,
+      saved: save,
+      includeCredentials,
+      未包含: payload.omitted.map((o) => o.key),
+    },
     ip: clientIp(c),
   });
 

@@ -36,10 +36,10 @@ interface Env {
   /** 允许 zero-cms 通过 API 提交内容到 Git */
   GITHUB_TOKEN?: string;
   /**
-   * GitHub OAuth 登录 / 账号绑定（/api/auth/github/*）。
+   * GitHub OAuth 登录 / 账号绑定（/api/security/github/*，注意前缀不是 /api/auth）。
    * 三项缺一，接口就返回 501 并说明缺哪一项，不会静默退回密码登录。
    *   GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET：GitHub OAuth App 的凭据
-   *   GITHUB_REDIRECT_URI：形如 https://你的域名/api/auth/github/callback，
+   *   GITHUB_REDIRECT_URI：形如 https://你的域名/api/security/github/callback，
    *                        必须与 OAuth App 里登记的回调地址完全一致
    */
   GITHUB_CLIENT_ID?: string;

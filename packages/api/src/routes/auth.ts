@@ -31,7 +31,7 @@ import {
 } from '../services/account-shared';
 import { fail, ok } from '../lib/errors';
 import { clientIp, userAgent } from '../lib/http';
-import { rateLimit } from '../lib/rate-limit';
+import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
 import { hashPassword, verifyPassword } from '../lib/crypto';
 import type { AppEnv } from '../lib/app';
 
@@ -198,12 +198,19 @@ app.post('/register', async (c) => {
    * 注册时不再自动发验证邮件：很多人注册完就关掉页面，那封信既花 SMTP 额度又没人点。
    * 要验证邮箱的人自己到「账号安全 → 邮箱验证」点发送，验证码登录 / 找回密码那条路
    * 仍然走同一套 send-code 接口（POST /api/auth/send-code、/api/auth/verify-email）。
+   *
+   * 但注册当场要给会话。前台 account.js 的注册分支写的就是「注册成功即已登录，和登录走同
+   * 一条分流」（zero-theme/assets/js/account.js:355），而这里以前只回 id 不发 Cookie，
+   * 于是读者点完「注册」看到的仍是登录表单，像没注册上一样——实测无 zero_session、
+   * 登录表单重现、控制台还不报错，用户只能再自己登一遍。邮箱验证照旧是自愿的，不影响登录。
    */
-  const base = { id, role: 'reader', verified: false, account_slug: slug, accountSlug: slug, slug, user_group: 'friend' };
+  const { token, expiresAt } = await issueSession(env, id, { ip: clientIp(c), userAgent: userAgent(c) });
+  sessionHeaders(c, token, expiresAt);
+  const base = { id, role: 'reader', isAdmin: false, verified: false, account_slug: slug, accountSlug: slug, slug, user_group: 'friend' };
   return ok({
     ...base,
     mailSent: false,
-    message: `注册成功，账号标识 ${slug}。现在就能用密码登录；要绑定邮箱验证，登录后到「账号安全 → 邮箱验证」点发送。`,
+    message: `注册成功，账号标识 ${slug}，已经帮你登录了。要绑定邮箱验证，到「账号安全 → 邮箱验证」点发送。`,
   });
 });
 
@@ -373,9 +380,28 @@ app.post('/login', async (c) => {
   if (!parsed.success) fail(400, '请输入邮箱和密码');
   const { email, password, code, totp } = parsed.data;
 
-  await rateLimit(c, 'login', 10, 900, email);
+  /* 三道闸，顺序有意义：
+     ① 先查用户再决定用哪几把桶 —— 管理员必须绕开 IP 桶，理由见 ②。
+     ② IP 桶 30/小时（isolate 内存，不吃 KV 写额度）：补的是「换个邮箱接着试」这条路。
+        以前只有邮箱桶（10/15 分钟），实测同一个出口 IP 打 14 个不同邮箱的错误密码，
+        一次 429 都不触发。弱点必须讲明白：换到一个新 isolate 就重新计数，
+        所以它是「抬高撞库成本」而不是铁门；要焊死得回 KV，而那正是从心跳上摘下来的额度。
+        还有件事更得讲明白：**管理员邮箱不参与这把桶**。同一出口 IP 下的人（合用 NAT 的同事、
+        CGNAT、机房）能把这 30 次吃满，站长要是也算在里面，任何人都能拿别人的失败把站长
+        锁在门外一小时 —— 比原来 15 分钟更糟。站长自有邮箱桶 30/15 分钟兜着，
+        而撞库横扫的目标本来也不会是站长那一个邮箱。
+     ③ 邮箱桶按角色分叉：管理员 30/15 分钟、其他 10/15 分钟。合用一把桶时，
+        任何自动化（监控探活、备份脚本、别人跑的测试）都能替站长把 10 次用光 ——
+        本轮体检就被自己的脚本咬过两次，一次锁 10 分钟。
+     两把桶回的是同一句 429 文案，不给账号存在性多泄漏一点信号。 */
   const rows = await createDb(env).select().from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
   const row = rows[0];
+  if (row?.role === 'admin') {
+    await rateLimit(c, 'login-admin', 30, 900, email);
+  } else {
+    rateLimitLocal(c, 'login-ip', 30, 3600);
+    await rateLimit(c, 'login', 10, 900, email);
+  }
   if (!row) fail(401, '邮箱或密码不正确');
   if (row.status === 'banned') fail(403, '账号已被封禁');
 
@@ -385,7 +411,8 @@ app.post('/login', async (c) => {
   if (plan.githubOnly) {
     failExtra(403, '当前登录策略只允许 GitHub 登录，请用「GitHub 登录」按钮完成验证', {
       next: 'github',
-      authorizePath: '/api/auth/github/start?intent=login',
+      // 这条路径是给客户端直接 goto 用的，必须指向真实挂载点（security 挂在 /api/security 下）
+      authorizePath: '/api/security/github/start?intent=login',
     });
   }
 

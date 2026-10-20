@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { deleteRepoFile, readRepoFile, repoBackend, writeRepoFile } from '../services/repo';
-import { getConfig, setConfig } from '../services/config';
+import { getAllConfig, getConfig, setConfig } from '../services/config';
 import { requireAdmin } from '../middleware/auth';
 import { buildReceipt, triggerPagesBuild } from '../services/git';
 import { clientIp } from '../lib/http';
@@ -387,6 +387,43 @@ export async function setOwnerProfile(
   if (existing?.content.trim() === next.trim()) return { ok: true, changed: false, detail: `${path} 本来就是这份内容` };
   const res = await writeRepoFile(env, path, next, 'zero-cms: 同步站长账号资料到关于页', { action: 'params' });
   return { ok: res.success, changed: res.success, detail: res.success ? path : res.error ?? '写入失败' };
+}
+
+/**
+ * 开关快照：把「凡是 *Enabled 的布尔配置」烘一份写进站点的 data/switches.json。
+ *
+ * 为什么要有这份文件：主题的 zero-switches.js 原本只能等 /api/config 回来才决定
+ * 带 data-zero-switch 的区块露不露（构建期先写 hidden，免得关闭态闪一下）。
+ * 线上实测 /about/ 的依赖链是 HTML → zero-switches.js → /api/config（4.8 秒），
+ * 而 LCP 那段正文本来就在 HTML 里 —— 等于让一次网络往返拖住了已经在手的内容。
+ * 有了这份快照，模板把它烘成 window.__zeroSwitches，脚本在 DOMContentLoaded 就定状态；
+ * 运行期那路 /api/config 照样保留并覆盖它，所以后台改开关仍然当场生效，不会晚。
+ *
+ * 键按后缀自动收（不写死清单）：以后新增 xxxEnabled 开关不用两头改。
+ * 值缺失或空串一律当「开」，与 zero-switches.js 的 isOn() 和 config 默认值同一口径。
+ */
+export const SWITCH_SNAPSHOT_FILE = 'switches.json';
+
+export async function writeSwitchSnapshot(
+  env: Env,
+): Promise<{ written: boolean; path?: string; keys?: number; error?: string }> {
+  if ((await repoBackend(env)) === 'none') return { written: false, error: '未配置内容仓库，开关快照没处写' };
+  const dir = await dataDir(env);
+  const all = await getAllConfig(env);
+  const snap: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(all)) {
+    if (!/Enabled$/.test(key)) continue;
+    snap[key] = !(value === 'false' || value === '0' || value === '');
+  }
+  const path = dataPath(dir, SWITCH_SNAPSHOT_FILE);
+  const next = JSON.stringify(snap, null, 2) + '\n';
+  /** 内容一样就不提交：后台每次存设置都插一条 commit 会淹掉仓库历史 */
+  const existing = await readRepoFile(env, path).catch(() => null);
+  if (existing && existing.content.trim() === next.trim()) return { written: false, path, keys: Object.keys(snap).length };
+  const res = await writeRepoFile(env, path, next, 'zero-cms: 同步开关快照（首屏不必等 /api/config）', { action: 'params' });
+  return res.success
+    ? { written: true, path, keys: Object.keys(snap).length }
+    : { written: false, path, error: res.error ?? '写入失败' };
 }
 
 app.get('/', async (c) => {
