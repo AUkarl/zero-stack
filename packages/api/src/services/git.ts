@@ -53,10 +53,19 @@ export async function listDir(input: GitFileInput): Promise<RepoEntry[]> {
   return listDirViaTarget(targetFromInput(input), input.path);
 }
 
-/** Pages 构建 Hook 是可选加速路径：没配或失败都不影响提交已成功的事实 */
-export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean; error?: string }> {
+/**
+ * Pages 构建 Hook 是可选加速路径：没配或失败都不影响提交已成功的事实。
+ *
+ * 内容仓库接了 Pages 的 Git 集成（或仓库里自带部署工作流）时，这次提交本身就是构建
+ * 触发器，所以「没配 Hook」不是失败。以前这里回一句「未配置 Pages 构建 Hook」，
+ * 被 buildReceipt 拼成「已推送 N 篇，但站点重建没起来：未配置 Pages 构建 Hook」，
+ * 站主每次发文都看到一句吓人的话，而站点其实照常重建了。
+ * viaCommit 就是把这个区别说清楚：没去调 Hook，但提交会自己触发。
+ */
+export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean; viaCommit?: boolean; error?: string }> {
   const hook = await getConfig(env, 'cloudflarePagesBuildHook');
-  if (!hook) return { triggered: false, error: '未配置 Pages 构建 Hook' };
+  // error 仍然给一句短原因：后台有几处是直接打印它的，留空会退化成「接口没回结果」这种更吓人的话
+  if (!hook) return { triggered: false, viaCommit: true, error: '没配 Pages 构建 Hook' };
   try {
     const res = await fetch(hook, {
       method: 'POST',
@@ -76,7 +85,14 @@ export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean;
  * 以前不管 Hook 有没有真的调起来都写「站点构建已请求」，前台就一直是旧页面 ——
  * 静态站不重建等于什么都没发生，这句必须按实际结果拼。
  */
-export function buildReceipt(build: { triggered?: boolean; error?: string } | null, savedText: string): string {
+export function buildReceipt(
+  build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null,
+  savedText: string,
+): string {
   if (!build) return `${savedText}，没请求站点重建（前台要等下次自动构建）`;
-  return build.triggered ? `${savedText}，已请求站点重建` : `${savedText}，但站点重建没起来：${build.error ?? '未知原因'}`;
+  if (build.triggered) return `${savedText}，已请求站点重建`;
+  if (build.viaCommit) {
+    return `${savedText}，站点按 Git 集成随这次提交重建（若前台几分钟内没变，说明你的 Pages 不是 Git 集成构建，需在后台填「Pages 构建 Hook」）`;
+  }
+  return `${savedText}，但站点重建没起来：${build.error ?? '未知原因'}`;
 }
