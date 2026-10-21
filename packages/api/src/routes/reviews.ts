@@ -317,7 +317,7 @@ draftsAdmin.post('/:id/approve', async (c) => {
 
   let synced = false;
   let syncError: string | null = null;
-  let commit: string | null = null;
+  let contentSha: string | null = null;
   /*
    * 点「通过」就把文章写进仓库并触发构建 —— 以前这里还要先看设置里的「投稿通过后自动写入仓库」
    * （默认关着），于是站长点了通过、文章却还在库里没上线，得再点一次「补发」才对，
@@ -333,7 +333,7 @@ draftsAdmin.post('/:id/approve', async (c) => {
         const result = await writeFile({ ...settings, path, content: markdown, message: `zero-cms: 投稿发布 ${row.title}` });
         synced = result.success;
         syncError = result.success ? null : result.error ?? '提交失败';
-        commit = result.success ? result.sha ?? null : null;
+        contentSha = result.success ? result.sha ?? null : null;
       }
     } catch (e) {
       syncError = e instanceof Error ? e.message : String(e);
@@ -364,7 +364,7 @@ draftsAdmin.post('/:id/approve', async (c) => {
     actor: admin,
     action: 'draft',
     target: row.id,
-    detail: { event: 'approve', slug: synced ? slug : row.slug, path, synced, syncError, commit },
+    detail: { event: 'approve', slug: synced ? slug : row.slug, path, synced, syncError, contentSha },
     ip: clientIp(c),
   });
   // 结论已经落库，邮件只是补一句告知：发不出去也照样算通过
@@ -410,8 +410,8 @@ draftsAdmin.post('/:id/publish', async (c) => {
     .where(eq(postDrafts.id, row.id));
   await rememberSubmitterAuthor(c.env, row.userId, admin);
   await triggerPagesBuild(c.env);
-  await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', slug, path, commit: result.sha }, ip: clientIp(c) });
-  return ok({ id: row.id, synced: true, path, commit: result.sha ?? null });
+  await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', slug, path, contentSha: result.sha }, ip: clientIp(c) });
+  return ok({ id: row.id, synced: true, path, contentSha: result.sha ?? null });
 });
 
 draftsAdmin.post('/:id/reject', async (c) => {

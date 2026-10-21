@@ -127,8 +127,11 @@ export async function writeFile(input: CommitInput): Promise<CommitResult> {
   });
 
   if (!res.ok) return { success: false, error: await readError(res, input) };
-  const body = (await res.json()) as { commit: { sha: string }; content: { path: string } };
-  return { success: true, sha: body.commit.sha, path: body.content.path };
+  const body = (await res.json()) as { commit: { sha: string }; content: { path: string; sha: string } };
+  /* 回 content.sha（这一版内容的 blob 号），不是 commit.sha：读文件与乐观锁比对的都是 blob 号
+     （见 readFile 与 admin.ts 的冲突判定）。把提交号当成「这篇的新版本号」回给后台，后台带着它
+     再保存一次，与读到的 blob 号永远不等 —— 同一篇第二次保存必被误判「在你编辑期间已被改动」。 */
+  return { success: true, sha: body.content.sha, path: body.content.path };
 }
 
 export async function deleteFile(input: { owner: string; repo: string; path: string; message: string; branch: string; token: string }): Promise<CommitResult> {

@@ -325,7 +325,8 @@ interface ApproveResult {
   kind: FriendKind;
   synced: boolean;
   syncError: string | null;
-  commit: string | null;
+  /** 写进仓库后那一版 links.yaml 的 blob 号（不是提交号，见 adapters/github.ts writeFile） */
+  contentSha: string | null;
 }
 
 /**
@@ -377,7 +378,7 @@ async function approve(
 
   let synced = false;
   let syncError: string | null = null;
-  let commit: string | null = null;
+  let contentSha: string | null = null;
   const autoPublish = await getConfigBool(env, 'friendApplyAutoPublish', true);
   if (opts.publish !== false && autoPublish) {
     const res = await syncLinksYaml(env, {
@@ -391,7 +392,7 @@ async function approve(
     });
     synced = res.synced;
     syncError = res.error;
-    commit = res.commit;
+    contentSha = res.contentSha;
     if (synced) await triggerPagesBuild(env);
   }
 
@@ -399,18 +400,18 @@ async function approve(
     actor: admin,
     action: 'friendApp',
     target: row.url,
-    detail: { event: 'approve', friendId, kind, reused: Boolean(already), synced, syncError, commit },
+    detail: { event: 'approve', friendId, kind, reused: Boolean(already), synced, syncError, contentSha },
   });
-  return { friendId, kind, synced, syncError, commit };
+  return { friendId, kind, synced, syncError, contentSha };
 }
 
 /** 新站点写进仓库里的 data/links.yaml（文件还不存在时由 friends-file 顺手按骨架建出来） */
 async function syncLinksYaml(
   env: Env,
   entry: NewFriend & { email?: string | null },
-): Promise<{ synced: boolean; error: string | null; commit: string | null }> {
+): Promise<{ synced: boolean; error: string | null; contentSha: string | null }> {
   const res = await addFriendToLinksFile(env, entry);
-  return { synced: res.synced, error: res.error, commit: res.sha ?? null };
+  return { synced: res.synced, error: res.error, contentSha: res.sha ?? null };
 }
 
 export default adminApp;

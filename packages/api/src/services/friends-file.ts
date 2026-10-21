@@ -19,7 +19,7 @@ export interface LinksFileResult {
   synced: boolean;
   /** 没写成时给管理员看的原因 */
   error: string | null;
-  /** 这次提交的 commit sha（没提交时为 null） */
+  /** 这一版文件的 blob 号，下次乐观锁要比对的就是它（没提交时为 null） */
   sha?: string | null;
 }
 
