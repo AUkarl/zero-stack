@@ -235,7 +235,7 @@ VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
 |---|---|
 | 运行时与绑定 | `curl https://<worker-url>/api/health`，`ok: true` 且 `broken` 为空 |
 | 后台可用 | 库里还没有账号时，后台登录页会自动变成「建为站长并登录」表单（`GET /api/auth/init-status` 报 `pending: true`），填邮箱 + 两遍密码就完成初始化，第一个账号直接是 `admin` 且跳过邮箱验证，建完这表单就消失。等价的手动做法：`curl -X POST https://<worker 地址>/api/auth/register -H 'Content-Type: application/json' --data-binary '{"email":"你@域名","password":"至少 8 位","name":"站长"}'`，回 `role: "admin"` 即站长账号建好（表单会顺手帮你登录，直接进仪表盘） |
-| 邮件可用 | 后台「设置」填 `emailProvider` / `smtpHost` / `smtpPort` / `smtpUser` / `emailFrom` → 走一次找回密码或群发 |
+| 邮件可用 | 后台「设置」填 `emailProvider` / `smtpHost` / `smtpPort` / `smtpUser` / `emailFrom` → 走一次找回密码或群发。**端口选 465（隐式 TLS）才是验证过的路径**；587 / 2525 的 STARTTLS 路径本模板未在真实服务商上端到端验证过，原因见下面「排错」表那两行 |
 | 站点地址 | 后台「设置」填 `siteUrl`（正式域名）与 `mediaPublicUrl`（Worker 地址），前者决定后台列表里的链接与邮件里的落地页，后者决定图片的绝对地址 |
 | 媒体可用 | 后台「媒体」上传一张图，复制它给出的绝对地址直接打开应能出图：桶配了 `baseUrl` 就是桶域名直链，没配则是 `<mediaPublicUrl>/api/media/<桶>/<键>`（公开只读代理，无需登录） |
 | 管理员联系邮箱 | 后台「设置」填 `adminContactEmail`，前台 `/account/` 的「找回密码」会把这句话补全：「如密码遗失，可使用注册邮箱向管理员 xxx 发送邮件找回」 |
@@ -542,9 +542,10 @@ pnpm check   # 本地跑同一套校验
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |
 | 后台提示 `AUTH_EXPIRED` / 401 | Cookie 跨域丢失：检查 `ALLOWED_ORIGINS` 是否包含后台 origin；换域名后需重新登录 |
 | 后台能打开、接口却全部失败，控制台报 CORS | `ALLOWED_ORIGINS` 是**精确字符串**匹配，差一个字符就不放行。Pages 每次预览部署的地址都不同（`https://<hash>.<项目名>.pages.dev`），只有生产地址稳定 —— 白名单填生产地址，并用生产地址访问后台；前台站点、自定义域名 Worker 各自都要列进来，逗号分隔，改完必须 `pnpm deploy:api` 才生效 |
-| 邮件全部 `failed` | `SMTP_PASSWORD` 未写入，或后台 `smtpHost/smtpPort/smtpUser/emailFrom` 未填。465 一定走隐式 TLS（实测阿里 465 用明文连过去 6 秒收不到一个字节），587 / 2525 走 STARTTLS；`smtpSecure` 只在非 465 端口上才有意义 |
+| 邮件全部 `failed` | `SMTP_PASSWORD` 未写入，或后台 `smtpHost/smtpPort/smtpUser/emailFrom` 未填。465 一定走隐式 TLS（实测阿里 465 用明文连过去 6 秒收不到一个字节），587 / 2525 走 STARTTLS；`smtpSecure` 只在非 465 端口上才有意义 —— 但请注意：**587 / 2525 这条 STARTTLS 路径本模板没有在真实服务商上端到端验证过**（本地只能用自签证书测到 TLS 握手层，Workers 运行时只信公共根证书），验证过的只有 465 隐式 TLS。 |
+| 587 / 2525 发不出去，报 `Network connection lost.` / `Stream was cancelled.` | 先按上一行的口径核对端口与「隐式 TLS」开关；再注意 `adapters/smtp.ts` 调 `socket.startTls()` 时**不传任何选项**——Workers 运行时（workerd）不认识 `expectedServerHostname`，传了只会打一行 `NOSENTRY` 然后把它丢掉（实测：调用本身不抛错，失败发生在其后的握手阶段），所以那一层没有主机名绑定可用。真要定位，请把「设置 → 发信方式 → 发一封测试信」的原文回执与 `email_logs` 那一条一起贴给服务商。 |
 | 群发/订阅推送显示「整批未发送」，任务仍留在排队 | 当日发信额度不够这次收件人数（`emailDailyLimit`，默认 100 封/天）。第二天 Cron 会自动续跑；要当天发完就把上限调到 ≥ 订阅人数，或分批发 |
-| QQ / 163 邮箱收不到信 | 必须用「授权码」而不是登录密码，且发件人地址要与 SMTP 账号一致；`smtpSecure` 对 465 没有意义（那端口只有隐式 TLS），587 / 2525 留 `false` 走 STARTTLS —— 在非 465 端口勾上它等于要求那个端口直接上 TLS，握手会谈不拢 |
+| QQ / 163 邮箱收不到信 | 必须用「授权码」而不是登录密码，且发件人地址要与 SMTP 账号一致；`smtpSecure` 对 465 没有意义（那端口只有隐式 TLS），587 / 2525 留 `false` 走 STARTTLS —— 在非 465 端口勾上它等于要求那个端口直接上 TLS，握手会谈不拢（这条同样**没在真实服务商上验证过**，写在这里是按协议应然，不是实测结论） |
 | 上传成功但图片 403 / 前台不显示 | 桶未开启公开访问且 `mediaPublicUrl` 没填；或 Markdown 里存的还是站内相对路径 —— 站点与 Worker 不同源时相对地址会指回站点。改 `mediaPublicUrl` 后重新插入一次即可，旧文章里的地址要手动替换 |
 | 后台「前端管理」保存报「未配置内容仓库」 | 这一页写的是站点的 `data/*.json`，需要仓库写回通道：`GITHUB_TOKEN` + `githubOwner/githubRepo`，或本地的 `GIT_LOCAL_DIR`（本地开发还要 `GIT_LOCAL_HTTP` 指向 `pnpm repo:bridge`） |
 | 后台保存文章成功、仓库没有变化 | 未配置 `GITHUB_TOKEN`，或 `githubOwner/githubRepo/githubBranch/githubContentDir` 与实际不符；看 worker 日志 |
