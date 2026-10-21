@@ -330,7 +330,7 @@
   }
   nav .grp {
     font-size: 0.7rem;
-    color: #7d8f70;
+    color: #5a6b4f;
     letter-spacing: 0.08em;
     padding: 0.7rem 0.7rem 0.2rem;
   }

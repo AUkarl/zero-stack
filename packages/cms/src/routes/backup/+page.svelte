@@ -751,7 +751,7 @@
     </details>
   {/if}
 
-  <input type="file" accept="application/json,.json" onchange={(e) => void pickPackFile(e.currentTarget.files?.[0])} />
+  <input type="file" aria-label="选择要导入的图片（媒体本体）包" accept="application/json,.json" onchange={(e) => void pickPackFile(e.currentTarget.files?.[0])} />
   {#if pending}
     <div class="row actions">
       <button class="danger" onclick={() => void importPack()} disabled={packBusy !== '' || busy !== ''}>
@@ -802,7 +802,7 @@
     演习不写任何东西，只告诉你每区会写多少行、哪些文件同名、配置要改哪几项；确认过再「推送恢复」。
     改动勾选后上一份演习结果就作废，需要重跑一次。
   </p>
-  <input type="file" accept="application/json,.json" onchange={(e) => void pickFile(e.currentTarget.files?.[0])} />
+  <input type="file" aria-label="选择要恢复的备份 JSON 文件" accept="application/json,.json" onchange={(e) => void pickFile(e.currentTarget.files?.[0])} />
 
   {#if picked}
     <div class="meta">
@@ -956,7 +956,7 @@
   </p>
 
   <div class="row fields">
-    <input type="file" accept="application/json,.json,.csv,text/csv" onchange={(e) => void pickCommentFile(e.currentTarget.files?.[0])} />
+    <input type="file" aria-label="选择要导入的评论文件（JSON / CSV）" accept="application/json,.json,.csv,text/csv" onchange={(e) => void pickCommentFile(e.currentTarget.files?.[0])} />
     <label class="inline">
       来源格式
       <select bind:value={cFormat}>
