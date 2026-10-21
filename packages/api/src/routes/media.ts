@@ -28,7 +28,9 @@ app.get('/*', async (c) => {
   return new Response(object.data as BodyInit, {
     headers: {
       'Content-Type': type,
-      'Cache-Control': 'public, max-age=86400',
+      /* 对象键是 uploads/<日期>/<uuid>，写入后不覆盖 —— 和 R2 直链一样按不可变处理。
+         以前这里是 86400：同一张图每访客每天回源一次 Worker，桶流量与 CPU 时间都白花。 */
+      'Cache-Control': 'public, max-age=2592000, immutable',
       'X-Content-Type-Options': 'nosniff',
       'Content-Disposition': 'inline',
     },

@@ -304,7 +304,7 @@
         {#each rows as r (r.id)}
           <tr>
             <td>{r.title}</td>
-            <td class="mono">{r.slug}</td>
+            <td class="mono">{r.slug.startsWith('draft-') ? '发布时自动命名' : r.slug}</td>
             <td>{r.authorName || '—'}<span class="muted small">{r.authorEmail ?? ''}</span></td>
             <td class="clip">{[r.category, ...r.tags].filter(Boolean).join(' · ') || '—'}</td>
             <td><span class="badge {statusBadge(r)}">{statusText(r)}</span></td>

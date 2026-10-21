@@ -223,7 +223,12 @@ export async function putMediaObject(
   const key = fullKey(bucket, input.key);
   if (bucket.kind === 'r2') {
     await r2Bucket(env, bucket).put(key, input.data as ArrayBuffer | ArrayBufferView, {
-      httpMetadata: { contentType: input.contentType },
+      /**
+       * 键是 uploads/<日期>/<uuid>，写进去就不改（同名的恢复走「已存在就跳过」，见 admin 的 /media/import），
+       * 所以按不可变资源给一年 —— 自定义域上访客重复看图不必回源。
+       * 只对新上传的对象生效：R2 不能事后改历史对象的头。
+       */
+      httpMetadata: { contentType: input.contentType, cacheControl: 'public, max-age=31536000, immutable' },
     });
     const size = input.data instanceof Uint8Array ? input.data.length : 0;
     return { key, url: await objectUrl(env, bucket, key), size };

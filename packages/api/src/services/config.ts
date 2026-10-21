@@ -544,6 +544,29 @@ export function numericKeyBadValue(key: string, value: string): boolean {
   return value !== '' && !/^[-+]?\d+(\.\d+)?$/.test(value.trim());
 }
 
+/**
+ * 只有「枚举里那几个值」这一种读法的配置项：值来自后台的 <select>，代码按值分流。
+ *
+ * 为什么要拦：评论那两项存成枚举外的值时不会报错，但主题运行时会拿它去覆盖服务端已经渲染好的
+ * 评论区，而覆盖分支里没有这个值 —— 于是**每一篇文章页的评论区一起变成一句没有原因的
+ * 「该评论系统暂时不可用」**，不重新构建就生效，界面与控制台都不给任何线索（体检台架就这么红过一整轮）。
+ * 后台的框是 select，人手点不出非法值，但接口是公开的写入面，得自己站住。
+ */
+export const ENUM_CONFIG_KEYS: Record<string, string[]> = {
+  commentProvider: ['zero', 'waline', 'twikoo', 'giscus', 'artalk'],
+  momentCommentProvider: ['zero', 'waline', 'twikoo', 'giscus', 'artalk'],
+  emailProvider: ['smtp', 'resend', 'cloudflare'],
+};
+
+/** 返回一句能直接给人看的文案；null 表示这个值可用（留空 = 用默认，也算可用） */
+export function enumKeyBadValue(key: string, value: string): string | null {
+  const allowed = ENUM_CONFIG_KEYS[key];
+  if (!allowed) return null;
+  const v = value.trim().toLowerCase();
+  if (v === '' || allowed.includes(v)) return null;
+  return `${key} 只接受 ${allowed.join(' / ')}（留空表示用默认），现在送的是「${value.trim().slice(0, 40)}」`;
+}
+
 /** 后台列表用的脱敏视图与「服务端是否已有值」标记 */
 export function maskSecrets(all: Record<string, string>): { data: Record<string, string>; hasSecret: Record<string, boolean> } {
   const data: Record<string, string> = {};

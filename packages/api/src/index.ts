@@ -163,7 +163,16 @@ app.route('/api/authors', authorsPublic);
 app.route('/api/analytics', analytics);
 app.route('/api/media', publicMedia);
 
-app.get('/api/config', (c) => getPublicConfig(c.env).then((data) => Response.json({ data })));
+/**
+ * 整站公开配置：显式写死「不缓存」。
+ * 这一份决定评论区/各面板开不开，R31-9 的口径是「后台一改就生效」——以前靠 Cloudflare
+ * 对 API 响应默认不缓存（线上实测确实 DYNAMIC、没有 cache-control 头），但那属于「别人帮你不存」，
+ * 中间多一层代理就可能变成开关晚生效。写在自己的响应头上，行为不再取决于边缘默认值。
+ */
+app.get('/api/config', async (c) => {
+  const data = await getPublicConfig(c.env);
+  return Response.json({ data }, { headers: { 'Cache-Control': 'no-store' } });
+});
 
 /**
  * 站长联系邮箱：只在访客真打开「找回密码」面板时才给，不再混在整站公开配置里

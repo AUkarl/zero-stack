@@ -206,9 +206,10 @@
   }
 
   const pathPreview = $derived.by(() => {
-    const slug = canonSlug(newSlug || newTitle);
-    const date = new Date().toISOString().slice(0, 10);
-    return `${newDir}/${dated ? `${date}-` : ''}${slug || 'slug'}.md`;
+    /** 文件名口径与投稿同一条（`lib/postName.ts`）：填了按填的，没填用服务端数出来的「今天 + 当天序号」 */
+    const filled = canonSlug(newSlug);
+    if (filled) return `${newDir}/${filled}.md`;
+    return autoName ? `${newDir}/${autoName}.md` : `${newDir}/（读不到自动名，请自己填）.md`;
   });
 
   let loading = $state(false);
@@ -225,11 +226,31 @@
   let newDir = $state('content/zh/posts');
   /** 后台「设置 → 内容仓库 → 文章目录」的值；非空时新建文章默认落这里，不再猜语言段 */
   let postsDirCfg = $state('');
-  let dated = $state(false);
+  /** 服务端数出来的「今天 + 当天序号」自动文件名；读不到就是空串，此时必须自己填 */
+  let autoName = $state('');
+
+  /**
+   * 向服务端要「今天这篇该叫什么」。序号是从仓库里那一天已有的文件名数出来的，
+   * 只有服务端数得了 —— 让浏览器自己拼日期就会出现「投稿那边是 20261021001、
+   * 后台这边是 2026-10-21-标题」两种形状并存（P3-7 站长定的口径：两处一致）。
+   */
+  async function loadAutoName() {
+    try {
+      const d = await get<{ data: { name: string | null } }>(`/api/admin/content/next-name?dir=${encodeURIComponent(newDir)}`);
+      autoName = d.data.name ?? '';
+    } catch {
+      autoName = '';
+    }
+  }
+
+  $effect(() => {
+    if (!showNew) return;
+    newDir;
+    void loadAutoName();
+  });
 
   // 分类 / 标签输入
-  let catInput = $state('');
-  let tagInput = $state('');
+  let catInput = $state('');  let tagInput = $state('');
 
   // 封面图选择器
   let showCover = $state(false);
@@ -402,18 +423,41 @@
   }
 
   function newPost() {
-    const slug = canonSlug(newSlug || newTitle);
-    if (!newTitle.trim() || !slug) {
-      error = '标题与 slug 必填';
+    if (!newTitle.trim()) {
+      error = '标题必填';
       return;
     }
     if (isMomentPath(newDir)) {
       error = '文章页只写 posts 目录';
       return;
     }
-    const date = new Date().toISOString().slice(0, 10);
+    /** 填了文件名用填的；没填用服务端给的「今天 + 当天序号」，与投稿链路同一个口径 */
+    const filled = canonSlug(newSlug);
+    let slug = filled || autoName;
+    if (!slug) {
+      error = '读不到自动文件名（内容仓库列不出来），请在「文件名」框里自己填一个';
+      return;
+    }
+    /**
+     * 撞名保护：自动名是服务端按「仓库里今天已有几个」数出来的，
+     * 但本地暂存里那些**还没推上去**的稿子仓库看不见，同一天连建两篇就会拿到同一个名字，
+     * 而写接口对不带 sha 的新文件是直接覆盖 —— 所以在这儿自己让号。
+     * 作者手填的名字不自动让号（那是他有意起的），撞了就明确让他换一个。
+     */
+    const taken = (p: string) => drafts.some((d) => d.path === p) || entries.some((e) => e.path === p);
+    let candidate = `${newDir}/${slug}.md`;
+    if (taken(candidate)) {
+      if (filled) {
+        error = `${candidate} 已经存在（或在本地暂存里等着推），换一个文件名再创建`;
+        return;
+      }
+      const day = slug.slice(0, 8);
+      let seq = Number(slug.slice(8)) + 1;
+      while (seq < 10000 && taken(candidate)) candidate = `${newDir}/${day}${String(seq++).padStart(3, '0')}.md`;
+      slug = candidate.split('/').pop()!.replace(/\.md$/, '');
+    }
     const now = nowInput();
-    file = `${newDir}/${dated ? `${date}-` : ''}${slug}.md`;
+    file = candidate;
     doc = parseFront('');
     form = { ...emptyForm(), title: newTitle.trim(), date: now, updated: now };
     baseForm = emptyForm();
@@ -599,18 +643,17 @@
   <div class="card new">
     <div class="row">
       <input placeholder="标题" bind:value={newTitle} />
-      <input placeholder="slug（文件名，可中文）" bind:value={newSlug} />
+      <input placeholder="文件名（选填，可中文；留空自动用「今天+序号」）" bind:value={newSlug} />
       <select bind:value={newDir}>
         {#each postDirs as d (d)}<option value={d}>{d}</option>{/each}
         {#if !postDirs.includes(newDir)}<option value={newDir}>{newDir}</option>{/if}
       </select>
-      <label class="switch inline">
-        <input type="checkbox" bind:checked={dated} />
-        <span>文件名带日期</span>
-      </label>
       <button class="primary" onclick={newPost}>创建</button>
     </div>
-    <p class="muted">将生成 {pathPreview} 并打开结构化表单。文章页只写 posts 目录，时刻请在「时刻」页发布。</p>
+    <p class="muted">
+      将生成 {pathPreview} 并打开结构化表单。文件名留空时按「发布那天 + 当天序号」自动取（与读者投稿那条完全一致），
+      填了就用填的。文章页只写 posts 目录，时刻请在「时刻」页发布。
+    </p>
   </div>
 {/if}
 
@@ -935,9 +978,6 @@
     gap: 0.4rem;
     font-size: 0.86rem;
     color: var(--fg);
-  }
-  .switch.inline {
-    font-size: 0.8rem;
   }
   .switch input {
     width: 16px;

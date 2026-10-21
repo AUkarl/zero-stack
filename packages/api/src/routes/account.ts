@@ -58,6 +58,7 @@ import { deleteCommentSubtree } from '../services/comment-tree';
 import { parseFrontMatter, postsDir } from '../services/frontmatter';
 import { inspectComment, type Verdict } from '../services/moderation';
 import { listRepoDir, readRepoFile, type RepoEntry } from '../services/repo';
+import { PLACEHOLDER_PREFIX, fileNameProblem, normalizeFileName } from '../lib/postName';
 import { emailHash, hashPassword, newId, verifyPassword } from '../lib/crypto';
 import { clientIp, userAgent } from '../lib/http';
 import { hashIp } from '../lib/ua';
@@ -829,6 +830,9 @@ deletionsAdmin.post('/:id/reject', async (c) => {
 const draftSchema = z.object({
   title: z.string().trim().min(1).max(200),
   content: z.string().min(1).max(200000),
+  /** 选填：文章文件名（不带 .md）。填了发布时就用它，不填发布时自动用「发布那天 + 当天序号」。
+      这个字段就是个人中心投稿表单里那个「文件名」框送的东西。 */
+  slug: z.string().trim().max(120).nullable().optional(),
   category: z.string().trim().max(60).nullable().optional(),
   tags: z.array(z.string().trim().max(40)).max(12).optional(),
   summary: z.string().trim().max(500).nullable().optional(),
@@ -879,13 +883,20 @@ app.post('/drafts', async (c) => {
   if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '投稿内容有误');
   const d = parsed.data;
   const db = createDb(c.env);
-  const base = (d.title || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
   const id = newId();
-  const slug = base || `draft-${id.slice(-6)}`;
+  /**
+   * 文件名口径与后台「新建文章」同一条（`lib/postName.ts`）：**填了就按填的**
+   * （中文与全角标点放行，只拒目录穿越与控制/保留字符），**没填先挂 `draft-xxxxxx` 占位**，
+   * 审核通过那一刻换成「发布那天 + 当天序号」。
+   * 以前这里是把标题剔成 ASCII 当基名：中文标题整个被剔光、标题尾巴的数字串活下来，
+   * 提交时看不出任何问题，发布后地址却是一串 `1792596228706`。
+   */
+  const wanted = normalizeFileName(d.slug ?? '');
+  if (wanted) {
+    const bad = fileNameProblem(wanted);
+    if (bad) fail(400, bad);
+  }
+  const slug = wanted || `${PLACEHOLDER_PREFIX}${id.slice(-6)}`;
   await db.insert(postDrafts).values({
     id,
     userId: target.id,
@@ -922,11 +933,20 @@ app.patch('/drafts/:id', async (c) => {
   const parsed = draftSchema.partial().safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '投稿内容有误');
   const d = parsed.data;
+  /* 文件名与新建同一条口径（lib/postName.ts）：填了按填的、清空退回自动名。
+     这里只改还没发布的稿子，所以换 slug 不会牵动评论/统计/收藏的键（那些只在发布后才有）。 */
+  const wantedEdit = d.slug === undefined ? null : normalizeFileName(d.slug ?? '');
+  if (wantedEdit) {
+    const bad = fileNameProblem(wantedEdit);
+    if (bad) fail(400, bad);
+  }
+  const nextSlug = wantedEdit === null ? row.slug : wantedEdit || `${PLACEHOLDER_PREFIX}${row.id.slice(-6)}`;
   const backToPending = row.status === 'rejected' && (d.content || d.title);
   await db
     .update(postDrafts)
     .set({
       title: d.title ?? row.title,
+      slug: nextSlug,
       content: d.content ?? row.content,
       category: d.category === undefined ? row.category : d.category || null,
       tags: d.tags === undefined ? row.tags : JSON.stringify(d.tags),

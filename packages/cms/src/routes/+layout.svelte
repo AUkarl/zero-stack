@@ -174,12 +174,15 @@
     </div>
     <footer class="copy">{copyright}</footer>
   </div>
-{:else if isLogin || !session.user}
+{:else if isLogin}
   <div class="bare">
     <div class="bare-main">{@render children()}</div>
     <footer class="copy">{copyright}</footer>
   </div>
-{:else if !ready}
+{:else if !ready || !session.user}
+  <!-- 会话还没确认（或确认下来没登录）时不挂页面组件：后台只有 /login 是公开页，
+      而页面一挂上去就发自己那条管理接口请求 —— 匿名打开 /users 会先吃一次注定 401 的调用。
+      这一支只持续到 redirect 落地，界面上就是本来那句提示。 -->
   <div class="boot">正在验证登录状态…</div>
 {:else}
   <div class="shell">

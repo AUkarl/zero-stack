@@ -17,12 +17,12 @@ import { authorRequests, postDrafts, users } from '../db/schema';
 import { writeAudit } from '../services/audit';
 import { upsertAuthor, type AuthorSocialRow } from '../services/authors';
 import { withAdminAuthorBits } from '../services/admin-author';
-import { getConfig } from '../services/config';
 import { purgePageUrls, type PurgeResult } from '../services/cf-purge';
-import { postWebPath } from '../services/frontmatter';
+import { postWebPath, postsDir } from '../services/frontmatter';
 import { writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild } from '../services/git';
-import { deleteRepoFile, listRepoDir, repoBackend } from '../services/repo';
+import { deleteRepoFile, repoBackend } from '../services/repo';
+import { PLACEHOLDER_PREFIX, datedSlug } from '../lib/postName';
 import { sendDraftReviewResult } from '../services/review-mail';
 import { clientIp } from '../lib/http';
 import { canonHandle } from '../lib/slug';
@@ -149,12 +149,13 @@ function parseTags(raw: string): string[] {
 /**
  * 文章落盘目录与文件名：以后台「设置 → 内容仓库 → 文章目录」为准；没配就退回 <内容目录>/<语言>/posts。
  *
- * 文件名用「发布那天 + 当天顺序号」（20261020001.md），不是标题的拼音或译文 ——
- * 中文标题直接当文件名时，Hugo 会把全角标点整段丢掉，生成出来的是
+ * 文件名口径见 `lib/postName.ts`，与后台「新建文章」共用同一套：**填了文件名就按填的**
+ * （中文与全角标点放行，只拒目录穿越与保留字符），**没填就用「发布那天 + 当天顺序号」**（20261020001.md）。
+ * 没填时不拿标题当名字：中文标题直接当文件名时，Hugo 会把全角标点整段丢掉，生成出来的是
  * `/posts/命名测试标题含冒号/` 这种既长又要 percent-encode 的地址。
- * 序号是从仓库里那一天已有的文件名数出来的（`listRepoDir`），
- * 不新增表、不新增写入，也不会有两篇拿到同一个号（同一天并发通过两篇才会撞，
- * 而后台的通过按钮是一篇一篇点的）。当天超过 999 篇自动进四位（202610201000.md）。
+ * 序号是从仓库里那一天已有的文件名数出来的（`listRepoDir`），不新增表、不新增写入，
+ * 也不会两篇拿到同一个号（同一天并发通过两篇才会撞，而后台的通过按钮是一篇一篇点的）；
+ * 当天超过 999 篇自动进四位（202610201000.md）。
  *
  * 两条边界：
  *  - 只在「这篇还没写过文件」时分配 —— 已发布的沿用 `published_path` 里那个名字，
@@ -163,11 +164,12 @@ function parseTags(raw: string): string[] {
  *    否则这个号既没被占用、又会被别的文章拿走。
  */
 async function postPath(env: Env, row: typeof postDrafts.$inferSelect): Promise<{ path: string; slug: string }> {
-  const configured = (await getConfig(env, 'githubPostsDir'))?.trim();
-  const base = normalizeDir((await getConfig(env, 'githubContentDir')) ?? 'content');
-  const dir = configured ? normalizeDir(configured) : `${base}/${row.lang || 'zh'}/posts`;
+  const dir = await postsDir(env);
   let slug = row.slug;
-  if (!String(row.publishedPath ?? '').trim() && !isDatedSlug(slug)) slug = (await datedSlug(env, dir)) ?? slug;
+  /* 没填文件名的投稿挂着 `draft-xxxxxx` 占位（account.ts 的 /drafts 就是这么写的）；
+     这次改动之前建的旧草稿带着按标题剔出来的名字，那些按「作者填过」保留原样，不给已排队的稿子改名。 */
+  const notFilled = !slug || slug.startsWith(PLACEHOLDER_PREFIX);
+  if (notFilled && !String(row.publishedPath ?? '').trim()) slug = (await datedSlug(env, dir)) ?? slug;
   const path = `${dir}/${slug}.md`;
   // 与后台文章保存同一套判法：目录穿越与控制/保留字符才拒，中文与全角标点放行
   const segs = path.split('/');
@@ -176,44 +178,6 @@ async function postPath(env: Env, row: typeof postDrafts.$inferSelect): Promise<
   }
   if (/[\u0000-\u001f<>:"|?*]/.test(path)) fail(400, '投稿的文件名含有系统保留字符，无法写入仓库');
   return { path, slug };
-}
-
-/** 已经是「日期 + 序号」那种名字（补发时不要再换号） */
-function isDatedSlug(slug: string): boolean {
-  return /^\d{8}\d{3,}$/.test(String(slug ?? ''));
-}
-
-/**
- * 发布那天的键（YYYYMMDD）。日子按站点自己的时区算 —— 复用统计那套 `statsUtcOffsetHours`
- * （默认东八区），不然北京时间早上七点发的那篇会被算进前一天，文件名和站点显示的日期不一致。
- */
-async function dayKey(env: Env): Promise<string> {
-  const raw = Number(await getConfig(env, 'statsUtcOffsetHours'));
-  const offset = Number.isFinite(raw) ? Math.min(14, Math.max(-12, Math.trunc(raw))) : 8;
-  const d = new Date(Date.now() + offset * 3600 * 1000);
-  return d.toISOString().slice(0, 10).replace(/-/g, '');
-}
-
-/** 数出「今天这个目录里最大的序号 + 1」；列目录失败（没配仓库等）就返回 null，让调用方退回原标题名 */
-async function datedSlug(env: Env, dir: string): Promise<string | null> {
-  const day = await dayKey(env);
-  let names: string[];
-  try {
-    names = (await listRepoDir(env, dir)).map((e) => String(e.name ?? ''));
-  } catch {
-    return null;
-  }
-  let max = 0;
-  for (const name of names) {
-    const hit = new RegExp(`^${day}(\\d{3,})\\.md$`).exec(name);
-    if (hit) max = Math.max(max, Number(hit[1]));
-  }
-  return `${day}${String(max + 1).padStart(3, '0')}`;
-}
-
-function normalizeDir(dir: string): string {
-  const d = dir.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-  return d || 'content';
 }
 
 /* ================= 投稿审核 ================= */

@@ -3,7 +3,7 @@ import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
 import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
-import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, setConfig, type ConfigKey } from '../services/config';
+import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
 import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
 import { ensureAdminAuthorIdentity } from '../services/admin-author';
 import { avatarForEmail, emailMd5 } from '../lib/avatar';
@@ -27,6 +27,7 @@ import { setSiteDefaultAuthor, writeSwitchSnapshot } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
 import { clientIp } from '../lib/http';
+import { datedSlug } from '../lib/postName';
 import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { deleteFile, listDir, readFile, writeFile } from '../services/git';
@@ -112,9 +113,14 @@ app.patch('/config', async (c) => {
     const asText = typeof value === 'string' ? value : JSON.stringify(value);
     /** 数字键先在这儿拦住（整批不写）：让它落库就等于「存了但没用」，读的时候解析失败默默回落默认值 */
     if (numericKeyBadValue(key, asText)) fail(400, `${key} 只能填数字（现在送的是「${asText}」），留空表示用默认值`);
+    /** 枚举键先在这儿拦住：存进去一个代码不认识的值，比直接报错难查得多（评论那两项会静默换掉整站评论区） */
+    const enumBad = enumKeyBadValue(key, asText);
+    if (enumBad) fail(400, enumBad);
+    /** 枚举键统一按小写存：接口送 'SMTP' 也要归成 'smtp' —— 分流处（发信按通道、主题按 provider）认的是小写值 */
+    const stored = ENUM_CONFIG_KEYS[key] && typeof value === 'string' ? asText.trim().toLowerCase() : asText;
     writes.push({
       key,
-      value: asText,
+      value: stored,
       valueType: typeof value === 'string' ? 'string' : typeof value,
     });
   }
@@ -547,6 +553,26 @@ app.put('/content/file', async (c) => {
   });
   const build = await finishContentWrite(c.env, 1, body?.triggerBuild !== false);
   return ok({ ...outcome, note: outcome.futureDraft ? futureDraftNote(outcome.futureDraft) : null, build });
+});
+
+/**
+ * GET /api/admin/content/next-name —— 问服务端要「今天这篇文章该叫什么」。
+ *
+ * 口径与投稿那条完全一样（`lib/postName.ts`）：**没填文件名就用「发布那天 + 当天三位序号」**，
+ * 填了就用填的。序号是从仓库里那一天已有的文件名数出来的 —— 只有服务端能数，
+ * 所以后台「新建文章」面板打开时来问一次，预览与提交都用它给的那个名字，
+ * 不再由浏览器自己拼日期（那会跟投稿链路长成两种形状）。
+ * 列不到目录（仓库没配好、临时失败）时回 `name: null` 加原因，界面据此要求手填。
+ */
+app.get('/content/next-name', async (c) => {
+  requireAdmin(c);
+  /** 可以指定目录（后台新建文章面板上那个目录框可能就是别的目录）；不给就用设置里的文章目录 */
+  const asked = (c.req.query('dir') ?? '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const dir = asked || (await postsDir(c.env));
+  const segs = dir.split('/');
+  if (!dir || segs.some((s) => s === '' || s === '.' || s === '..')) fail(400, '目录不合法');
+  const name = await datedSlug(c.env, dir);
+  return ok({ name, dir, path: name ? `${dir}/${name}.md` : null });
 });
 
 /**

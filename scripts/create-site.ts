@@ -191,16 +191,15 @@ enableRobotsTXT = true
     contentDir = "content/zh"
     weight = 1
 
-# 分类法：主题的 layouts/taxonomy/author.html 与文章页署名都要 author 这一项，
+# 分类法：主题的 layouts/taxonomy/*.html 与文章页署名都要这几项，
 # 而 Hugo 不会读主题里的 [taxonomies] —— 只能在站点这份配置声明。
-# 少了 author，文章页顶部的作者昵称就点不进 /author/<标识>/。
-# 这里刻意不声明 category / tag：Hugo 只为声明过的分类法生成聚合页，
-# 所以站不会长出 /categories/ 与 /tags/；文章里的分类、标签照常显示为文字。
-# 想要那两个页面时把下面两行注释去掉即可（主题有现成模板）。
+# 少了 author，文章页顶部的作者昵称就点不进 /author/<标识>/；
+# 少了 category / tag，站里就没有 /categories/ 与 /tags/ 这两个聚合页（模板主题一直带着）。
+# Hugo 只为声明过的分类法生成聚合页，不想要哪一个就把那一行注释掉。
 [taxonomies]
   author = "author"
-  # category = "categories"
-  # tag = "tags"
+  category = "categories"
+  tag = "tags"
 
 # 文章列表页 /posts/ 不生成：导航里已经有「归档」承担列表职责。
 # 想恢复就删掉 content/zh/posts/_index.md 里那三行 build。
@@ -307,6 +306,33 @@ jobs:
           command: pages deploy public --project-name=${a.repoName}
 `;
 }
+
+/**
+ * Cloudflare Pages 的响应头规则，写在站点根的 static/_headers（Hugo 原样拷进产物根目录）。
+ *
+ * 只给「改内容就会换名字」的资源上长缓存；HTML 一律回源校验 —— 后台发了文、改了开关，
+ * 访客下一跳就该看到新页面，不能让 CDN 拿着旧的顶几天（这是站长的硬口径：不许让开关晚生效）。
+ * Pages 会把多条命中规则的同名头**拼接**，所以下面几条刻意互不重叠。
+ */
+const SITE_HEADERS = `# 带内容指纹的样式与脚本：文件名带 hash，内容一变名字就变，可以放心存一年
+/css/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/js/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Hugo 的图片处理产物在 /images/<指纹>/ 下，同一张图同一个目录，同样按不可变处理
+/images/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# static 里的原始图片（图标、头像等）：文件名不保证唯一，只给 7 天
+/img/*
+  Cache-Control: public, max-age=604800
+
+# HTML 本身：始终回源校验，文章删除或改名后立即生效
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+`;
 
 const SAMPLE_POST = `---
 title: "Hello World"
@@ -620,6 +646,8 @@ async function main(): Promise<void> {
   // 而前端登录成功后普通用户正是跳这里
   write(rel('content/zh/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
   write(rel('static/images/.gitkeep'), '');
+  /** 缓存规则：生成时就带上，省得站长发第一个月才发现 CDN 把 CSS 存了三天、改名后还在吐旧的 */
+  write(rel('static/_headers'), SITE_HEADERS);
   /**
    * 边缘 404 中间件：后台把某个功能关掉时，那个页面直接 404 且带 noindex（旧链接与搜索引擎都拦掉）。
    * 只有配了后端才有意义（开关在 /api/config 里），纯静态站不生成这个文件。
