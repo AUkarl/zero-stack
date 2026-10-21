@@ -32,6 +32,7 @@ import { requireAdmin } from '../middleware/auth';
 import { deleteFile, listDir, readFile, writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
+import { checkRepoFileSyntax } from '../services/repo-syntax';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, type MediaBucket } from '../services/media';
 import {
   buildMarkdown,
@@ -759,6 +760,11 @@ app.put('/repo/file', async (c) => {
   /* 这几份文件写空 = 前台立刻坏（params.toml 空 → apiBaseURL 没了，整站退回纯静态；
      links.yaml 空 → 友链整页没了）。误删全选再保存就是这种后果，所以在入口拦住。 */
   if (!content.trim()) fail(400, `${path} 的内容是空的：这几份文件写空会直接把前台对应的那块弄没，要恢复默认请到仓库里删掉这个文件`);
+  /* 语法体检放在 sha 之前：写坏 config/_default/*.toml 是「整站一个页面都不产出」，
+     写坏 links.yaml 是「友链整页没了」，而接口当时照样回 200「已保存」—— 表现是站点静默停止更新。
+     见 services/repo-syntax.ts 的说明。 */
+  const syntax = checkRepoFileSyntax(path, content);
+  if (syntax) fail(400, syntax);
   if (sha && current && current.sha !== sha) {
     fail(409, '这份文件在你编辑期间已被改动，请重新读取后再保存，不要直接覆盖');
   }

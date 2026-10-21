@@ -151,7 +151,12 @@ export async function sendViaSmtp(o: SmtpOptions): Promise<SmtpResult> {
       await write(socket, `STARTTLS${EOL}`);
       const tls = await readReply(socket);
       if (!tls.startsWith('220')) return { success: false, error: `STARTTLS 被拒绝：${tls}` };
-      data = socket.startTls({ expectedServerHostname: o.host });
+      /* 不传 expectedServerHostname：workerd 不认识这个选项，传了只是打一行
+         「NOSENTRY startTls called with unsupported expectedServerHostname option」把它静默丢掉，
+         看起来像做了主机名校验、其实什么都没做（实测：插桩后 A/B 两条日志都打，说明调用本身没抛错，
+         失败发生在其后的握手阶段）。证书链该不该信仍由运行时判断 —— 本地那台自签证书就是被拒的一方。
+         想在这层再绑一次主机名，只能在拿到连接后自行比对，别指望这个选项。 */
+      data = socket.startTls();
     }
     await write(data, helo);
     await readReply(data);

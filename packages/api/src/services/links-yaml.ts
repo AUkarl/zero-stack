@@ -320,6 +320,85 @@ function chunkUrl(chunk: string[]): string {
 }
 
 /**
+ * 语法体检：只认「Hugo（go-yaml）一定会拒绝」的那几种写法，宁可放过也不要误拒。
+ *
+ * 为什么要有这一份：后台「前端管理 → 主题配置文件」能把 data/links.yaml 整份覆盖成任意文本，
+ * 而这份文件一旦坏了 Hugo 是 `failed to load data: [1:3] sequence end token ']' not found`，
+ * **友链整页没了对应前台还是 200**，接口当时回的是「已保存」。与 params.toml 那三条同一类事故。
+ *
+ * 这里不试图做一个 YAML 解析器（那要引一个 119KB gzip 的依赖，而本文件的写入方就是我们自己，
+ * 见上面 parseLinksYaml 的注释），但必须挡住实测会炸的这几类（每类都真跑过 hugo --gc --minify）：
+ *  ① 整份被粘成散文 —— Hugo 回 `unexpected data type string in file links.yaml`，构建 exit=1；
+ *     （第一版只挡了 `[[[`/`{` 起始，漏了这一类，是第 15 套那条红把它揪出来的）
+ *  ② 已知段落（friends / alliance）的值写成一句话 —— Hugo 能过，但主题 `range` 时炸在友链页；
+ *  ③ 流式起始 `[[[` —— `sequence end token ']' not found`；
+ *  ④ Tab 缩进 —— go-yaml 直接 "found character that cannot start any token"；
+ *  ⑤ 值以引号开头却没闭合。
+ * 换句话说：认这份文件自己的固定形状（顶层键 + 下面缩进的条目行），行形状对不上就拒。
+ * 返回 null = 可以落盘；返回字符串 = 一句人话，直接当接口的 400 文案。
+ */
+const TOP_KEY_LINE = /^([A-Za-z_][\w-]*):(.*)$/;
+const ITEM_FIRST_LINE = /^\s+-\s+[A-Za-z_][\w-]*:.*$/;
+const ITEM_FIELD_LINE = /^\s{2,}[A-Za-z_][\w-]*:.*$/;
+
+export function validateLinksYaml(text: string): string | null {
+  const raw = String(text ?? '');
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const firstIndex = lines.findIndex((l) => l.trim() && !l.trim().startsWith('#'));
+  if (firstIndex < 0) return null; // 只有注释/空：交给入口那道「不许写空」管
+
+  const first = lines[firstIndex] ?? '';
+  // ①③ 顶层必须是个映射键；散文行、`[[[`、`{…}` 都在这里挡掉
+  if (!TOP_KEY_LINE.test(first)) {
+    return `第 ${firstIndex + 1} 行不是友链文件的写法：顶层要按「friends:」「alliance:」两段来写，每段下面用「  - name: …」列条目（现在开头是「${first.trim().slice(0, 40)}」）`;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    // ④ Tab 缩进：go-yaml 一律拒
+    if (/^\s*\t/.test(line)) return `第 ${i + 1} 行用了 Tab 缩进（YAML 只认空格）：${line.trim().slice(0, 40)}`;
+    // ⑤ 值以引号开头却没闭合。只看值起始位置 —— `name: it's fine` 这种裸值里的撇号是合法的，
+    //    拿整行引号奇偶去判会把它误杀（与 authors.ts 的 unclosedQuote 同一口径）。
+    if (unclosedValueQuote(line)) return `第 ${i + 1} 行的值以引号开头却没闭合：${line.trim().slice(0, 50)}`;
+
+    if (TOP_KEY_LINE.test(line)) {
+      // ② 已知段落必须是「键:」后面换行列条目（或写个空表 []），不能是一句话
+      const key = (line.match(TOP_KEY_LINE)?.[1] ?? '').toLowerCase();
+      const value = String(line.match(TOP_KEY_LINE)?.[2] ?? '').replace(/\s+#.*$/, '').trim();
+      if (SECTIONS[key] && value && value !== '[]') {
+        return `第 ${i + 1} 行：「${key}:」这一段得写成下面的条目列表（每行「  - name: …」），现在直接接了一句话，主题渲染友链页会炸`;
+      }
+      continue;
+    }
+    if (ITEM_FIRST_LINE.test(line) || ITEM_FIELD_LINE.test(line)) continue;
+    // 落到这里说明这行既不是顶层键也不是条目行 —— 就是混进来的散文/别的形状
+    return `第 ${i + 1} 行对不上友链文件的形状：顶层是「friends:」「alliance:」两段，段里每行写成「  - name: …」或「    url: …」（这一行是「${line.trim().slice(0, 40)}」）`;
+  }
+  return null;
+}
+
+
+/** 值从引号开始却没走到闭合引号 → go-yaml 一定报错；裸值里出现引号不算问题 */
+function unclosedValueQuote(line: string): boolean {
+  const idx = line.indexOf(':');
+  if (idx < 0) return false;
+  const v = line.slice(idx + 1).trim();
+  if (v.length < 1) return false;
+  const q = v[0];
+  if (q !== '"' && q !== "'") return false;
+  for (let i = 1; i < v.length; i++) {
+    const ch = v[i];
+    if (q === '"' && ch === '\\') { i++; continue; }
+    if (ch === q) {
+      if (q === "'" && v[i + 1] === "'") { i++; continue; }
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * 读 data/links.yaml 里已登记的站点。
  *
  * 友链的真实清单在这份文件（前台也用它渲染），D1 的 friends 表只装了后台经手的那几条。

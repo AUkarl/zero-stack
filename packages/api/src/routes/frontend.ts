@@ -21,19 +21,54 @@ const app = new Hono<AppEnv>();
 
 const short = z.string().max(200);
 const long = z.string().max(4000);
+/**
+ * 只被当纯文本拼进模板、不参与跳转的串（robots.txt 的各行、robots_host）。
+ * 地址类字段以前也共用这一条，于是「什么都查不出来」，见下面 linkUrl / imageUrl 的分法。
+ */
 const href = z.string().max(600);
 
 /**
- * 导航项的地址：站内路径以 / 开头，站外要给完整的 http(s)://。
- * javascript: 这类不会变成 XSS（Hugo 渲染时把它消毒成 #ZgotmplZ），但会存成一条谁都点不开的死角链，
- * 而且要到前台才发现 —— 所以在入库这一层就拒掉。空值在这里是允许的，
- * 「没链接又没有标识」这种整项无用的情况由下面的 refine 管（下拉分组只有标识，没有地址）。
+ * 「点了会跳过去」的地址：导航项、页脚与社交图标的 link、备案链接、poweredBy、联系方式、作品地址。
+ *
+ * 为什么要把老规矩 `startsWith('/')` 收紧：`//evil.example.com/x` 也以 / 开头，
+ * 可浏览器把它当**协议相对的站外地址**用 —— 提示语写着「站内路径」，实际放行的是跳到别人域名
+ * （还跟着站点的 http/https 走）。`/\host` 同理（部分浏览器会规范成 //host），一并拒掉。
+ * javascript: / vbscript: / data:text/html 这类原来就拒（Hugo 渲染时会消毒成 #ZgotmplZ，
+ * 不构成 XSS，但会存成一条谁都点不开的死链，而且要到前台才发现），现在照旧在入库这一层拒。
+ * 空串是允许的：「没链接又没有标识」那种整项无用的情况由 navItem 的 refine 管（下拉分组只有标识）。
  */
-const navUrl = z
+const linkUrl = z
   .string()
   .max(600)
   .transform((v) => v.trim())
-  .refine((v) => !v || v.startsWith('/') || /^https?:\/\//i.test(v), '链接要嘛以 / 开头（站内路径），要嘛写成 http:// 或 https:// 开头的完整地址');
+  .refine(
+    (v) =>
+      !v ||
+      /^https?:\/\//i.test(v) ||
+      /^mailto:/i.test(v) ||
+      (v.startsWith('/') && !/^\/\/|\/\\/.test(v) && !/[\s"'<>`]/.test(v)),
+    '地址要嘛是以 / 开头的站内路径（注意：以 // 或 /\\ 开头是跳到别人的域名，不算站内），要嘛写成 http:// 或 https:// 开头的完整地址，或者 mailto: 开头的邮箱',
+  );
+
+/**
+ * 只填进 `<img src>` 的地址：logo / favicon / ogImage / 落地页背景 / 时刻横幅 / 头像 / 图标。
+ *
+ * 这里**不能**套 linkUrl 的规矩：出厂的 data/site.json 与 data/moments.json 就写着不带前导斜杠的
+ * 相对路径（`landingImage: "img/bj2.png"`），一刀切会把每个新站的默认配置判成非法。
+ * 只挡「放进 src 里可能执行东西」的协议，其余（站内、相对、//CDN、http(s)、data:image/… 内联）照旧放行。
+ */
+const imageUrl = z
+  .string()
+  .max(600)
+  .transform((v) => v.trim())
+  .refine((v) => !/^(javascript|vbscript|livescript|data:text\/html|data:application)/i.test(v), '图片地址只能是站内/相对路径、http(s) 外链或 data:image/… 内联，不能是可执行协议');
+
+/** 站点根地址：邮件里的确认/退订链接与后台跳转都要它带协议，所以比 linkUrl 更严 */
+const absoluteUrl = z
+  .string()
+  .max(600)
+  .transform((v) => v.trim())
+  .refine((v) => !v || /^https?:\/\//i.test(v), '这里要写成带 http:// 或 https:// 的完整站点地址（邮件里的确认链接要在它前面拼）');
 
 const navItem = z
   .object({
@@ -42,10 +77,10 @@ const navItem = z
       .pipe(z.string())
       .transform((v) => v.trim())
       .refine((v) => v.length > 0, '名称不能为空'),
-    url: navUrl,
+    url: linkUrl,
     weight: z.number().int().min(-9999).max(9999).default(0),
     icon: short.optional().default(''),
-    image: href.optional().default(''),
+    image: imageUrl.optional().default(''),
     iconOnly: z.boolean().optional().default(false),
     external: z.boolean().optional().default(false),
     /** '' = 主菜单；'controls' = 右侧图标区 */
@@ -72,8 +107,8 @@ const footerIconItem = z.object({
   /** 这条链接唯一的可读名（title 与 aria-label 都用它），空着读屏就只念得出「链接」，所以不许为空 */
   name: short.pipe(z.string().transform((v) => v.trim()).refine((v) => v.length > 0, '名称不能为空')),
   icon: short.optional().default(''),
-  img: href.optional().default(''),
-  link: href,
+  img: imageUrl.optional().default(''),
+  link: linkUrl,
   /** 深色模式下要不要反色（图片 logo 常见需求） */
   invert: z.boolean().optional().default(false),
   /** 这一条要不要把名字显示在图标旁边；不写就跟着页脚那行的全站默认 */
@@ -84,9 +119,9 @@ const footerSchema = z.object({
   copyrightText: short,
   showPoweredBy: z.boolean(),
   poweredByText: short,
-  poweredByLink: href,
+  poweredByLink: linkUrl,
   icpItems: z
-    .array(z.object({ text: short, link: href }))
+    .array(z.object({ text: short, link: linkUrl }))
     .max(20)
     .default([]),
   /** 「支持服务」那行的全站默认：条目自己写了 showName 就以条目为准 */
@@ -105,7 +140,7 @@ const aboutSchema = z.object({
   declaration: z.array(long).max(60),
   site: z.array(long).max(60),
   contacts: z
-    .array(z.object({ label: short, text: short, url: href, external: z.boolean().optional().default(true) }))
+    .array(z.object({ label: short, text: short, url: linkUrl, external: z.boolean().optional().default(true) }))
     .max(60)
     .default([]),
 });
@@ -113,7 +148,7 @@ const aboutSchema = z.object({
 const worksSchema = z.object({
   desc: short,
   items: z
-    .array(z.object({ title: short, desc: long, status: short, url: href }))
+    .array(z.object({ title: short, desc: long, status: short, url: linkUrl }))
     .max(80)
     .default([]),
 });
@@ -159,13 +194,13 @@ const applySchema = z.object({
 const siteSchema = z.object({
   name: short.default(''),
   navName: short.default(''),
-  siteUrl: href.default(''),
+  siteUrl: absoluteUrl.default(''),
   description: long.default(''),
   keywords: z.array(short).max(40).default([]),
-  logo: href.default(''),
+  logo: imageUrl.default(''),
   showLogo: z.boolean().default(true),
   showName: z.boolean().default(true),
-  favicon: href.default(''),
+  favicon: imageUrl.default(''),
   /**
    * 作者署名与默认作者标识不在这一页编辑：作者资料只有一处真值，
    * 在「我的信息 → 站长作者资料」（写 data/authors.yaml）里维护。
@@ -175,9 +210,9 @@ const siteSchema = z.object({
    * 登记进 schema + 下面保存时带回旧值，免得改一次导航栏就把站长标识抹成空。
    */
   defaultAuthor: short.default(''),
-  ogImage: href.default(''),
+  ogImage: imageUrl.default(''),
   /** 落地页（/index，进站第一屏）的背景图：站内路径或完整外链都行，留空用主题自带的 img/bj.png */
-  landingImage: href.default(''),
+  landingImage: imageUrl.default(''),
 });
 
 /**
@@ -192,11 +227,11 @@ const momentsSchema = z.object({
   showLocation: z.boolean().default(true),
   defaultLocation: short.default(''),
   bannerShowBackground: z.boolean().default(true),
-  bannerImage: href.default(''),
+  bannerImage: imageUrl.default(''),
   showAvatar: z.boolean().default(true),
   showNickname: z.boolean().default(true),
   nickname: short.default(''),
-  avatar: href.default(''),
+  avatar: imageUrl.default(''),
 });
 
 /**
@@ -211,8 +246,8 @@ const seoSchema = z.object({
   description_length: z.number().int().min(40).max(400).default(160),
   title_separator: short.default('·'),
   site_author: short.default(''),
-  og_image_default: href.default(''),
-  publisher_logo: href.default(''),
+  og_image_default: imageUrl.default(''),
+  publisher_logo: imageUrl.default(''),
   enable_canonical: z.boolean().default(true),
   enable_robots: z.boolean().default(true),
   robots_default: short.default('index, follow'),

@@ -30,12 +30,22 @@ import {
   type UserRow,
 } from '../services/account-shared';
 import { fail, ok } from '../lib/errors';
+import { mailFailingRecently } from '../services/email';
 import { clientIp, userAgent } from '../lib/http';
 import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
 import { hashPassword, verifyPassword } from '../lib/crypto';
 import type { AppEnv } from '../lib/app';
 
 const OTP_TTL = 600;
+
+/**
+ * 验证码邮件没发出去时，访客只能看到这一句。
+ *
+ * 为什么不给更详细的原因：接口在未注册邮箱上是「假装已发出」的（码不落库、不发信，见 /send-code），
+ * 所以一旦已注册的那条回「通道没配」、未注册的回「已发出」，两者一比就成了一份可以批量验证的邮箱名单。
+ * 真实原因（缺哪几项键、服务商回了什么）走 email-logs 与后台「发信方式 → 测试发信」，那是站长自己的排查面。
+ */
+const SEND_CODE_FAILED = '验证邮件发送失败，请稍后再试或联系站主';
 const emailSchema = z.string().email().max(200);
 
 const app = new Hono<AppEnv>();
@@ -232,20 +242,28 @@ app.post('/send-code', async (c) => {
   await rateLimit(c, 'send-code-ip', 10, 3600);
   await rateLimit(c, 'send-code', 5, 3600, email);
   const user = await findUserByEmail(env, email);
+  /* 通道到底配没配好，这里一次查清（四项键齐不齐），因为下面的分支必须按它给同一种回包：
+     「已注册 → 发信失败 502、未注册 → 假装已发出 200」这个差别等于把这份站点的邮箱名单挂在公网上
+     让人批量验证哪个开过号，正是撞库与定向钓鱼要的输入。 */
+  const mailReady = await emailOtpAvailable(env);
   if (scene === 'register') {
     if (user) fail(409, '该邮箱已注册');
     // 首个账号不需要邮箱验证，其余场景一律受注册开关约束
     if (!(await isFirstUser(env)) && !(await registerPolicy(env)).allowRegister) fail(403, '站点当前关闭了注册');
   } else if (!user) {
-    /* 回 404「该邮箱尚未注册」等于把这份名单挂在公网上让人批量验证哪个邮箱开过号。
-       这里与「发信成功」回同一份结构：码不落库、不发信，外面看不出区别。 */
+    /* 邮箱没注册：码不落库、也不真发信。通道是好的时候，这里与「发信成功」回同一份结构，外面看不出区别。
+       但通道没配、或最近 15 分钟内发信失败过（sendEmail 里记的那个标记）时不能回 200 ——
+       那时已注册那条会回 502，「一个 200 一个 502」本身就是可以批量验证的邮箱名单，所以照样走同一句。 */
+    if (!mailReady || (await mailFailingRecently(env))) fail(502, SEND_CODE_FAILED);
     return ok({ sent: true, ttl: OTP_TTL });
   }
+  if (!mailReady) fail(502, SEND_CODE_FAILED);
 
   const otp = await sendEmailOtp(env, email, user?.id ?? null);
   if (!otp.sent) {
-    const ready = await emailOtpAvailable(env);
-    fail(502, ready ? '验证邮件发送失败，请稍后再试或联系站主' : '本站还没配好邮件通道（SMTP / Resend / Cloudflare 任一），无法发送验证码');
+    /* 原因（服务商回了什么、缺哪几项键）已经写进 email-logs，后台「发信方式 → 测试发信」也照样能查；
+       访客这一侧只给这一句 —— 站长定的口径：邮件配置对不对只在后台检测。 */
+    fail(502, SEND_CODE_FAILED);
   }
   return ok({ sent: true, ttl: OTP_TTL });
 });

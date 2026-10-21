@@ -83,8 +83,57 @@ export async function mailQuotaCheck(env: Env, count: number): Promise<{ ok: boo
 export async function sendEmail(env: Env, input: SendInput): Promise<EmailResult> {
   const logId = await openEmailLog(env, input);
   const result = humanize(await deliverEmail(env, input));
+  /* 成不成功都要给 /api/auth/send-code 留一个「最近通道在不在坏」的说法（见下面三个函数）：
+     那接口在邮箱没注册时是不发信的，只有靠这里记的标记，才能让两条分支回同一句。 */
+  if (result.success) await clearMailFailing(env);
+  else await markMailFailing(env, result.error ?? '未知原因');
   await closeEmailLog(env, logId, result);
   return logId ? { ...result, logId } : result;
+}
+
+/* ------------------------------------------------------------------ 「通道最近在坏」标记（KV，15 分钟） */
+
+const MAIL_FAILING_KEY = 'mail:failing';
+/** 记 15 分钟：够长到让外人从「502 / 200」的差异里问不出什么，又够短到通道恢复后不会把站锁住 */
+const MAIL_FAILING_TTL = 900;
+
+/**
+ * 为什么要有这个标记：/api/auth/send-code 对「没注册的邮箱」是**不发信**的（码不落库，回 200 装成已发出），
+ * 目的是不给外人一份能批量验证的邮箱名单。可通道真在坏的时候，已注册那条会回 502 ——
+ * 一个 502、一个 200，区别本身又把名单还回去了。这个标记让未注册那条也知道「现在发不出去」，两条回同一句。
+ *
+ * 只在失败时写一次、成功时顺带清（读 KV 不要钱，删除只在确实有过失败时才发生 ——
+ * KV 免费额度是每天 1000 次写，每封都清那点额度经不起）。
+ */
+async function markMailFailing(env: Env, reason: string): Promise<void> {
+  if (!env.SESSION) return;
+  try {
+    await env.SESSION.put(MAIL_FAILING_KEY, JSON.stringify({ at: Date.now(), reason: String(reason).slice(0, 300) }), {
+      expirationTtl: MAIL_FAILING_TTL,
+    });
+  } catch (err) {
+    console.warn('[mail] 写失败标记没写进去', err);
+  }
+}
+
+/** 这条不抛错：读不到就当作「最近没失败过」，宁可放行也别把人挡在门外 */
+export async function mailFailingRecently(env: Env): Promise<boolean> {
+  if (!env.SESSION) return false;
+  try {
+    return (await env.SESSION.get(MAIL_FAILING_KEY, { type: 'text' })) !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function clearMailFailing(env: Env): Promise<void> {
+  if (!env.SESSION) return;
+  try {
+    if ((await env.SESSION.get(MAIL_FAILING_KEY, { type: 'text' })) === null) return; // 没失败过就别白花一次写
+    await env.SESSION.delete(MAIL_FAILING_KEY);
+  } catch (err) {
+    console.warn('[mail] 清失败标记没清掉', err);
+  }
 }
 
 /**
@@ -93,6 +142,7 @@ export async function sendEmail(env: Env, input: SendInput): Promise<EmailResult
  */
 const MAIL_HINTS: [RegExp, string][] = [
   [/stream was cancelled|socket hang up|ECONNRESET|ECONNABORTED/i, '连接被中途断开：多数是端口与加密方式不匹配（465 只能隐式 TLS，587/25 走 STARTTLS），也可能是对方按 IP 直接掐线'],
+  [/network connection lost/i, '连接被运行时中断：多出现在 STARTTLS 握手没谈成（端口与「隐式 TLS」开关不一致、对方不接受这个端口，或证书没被信任）。先用本页「测试发信」复现，再按服务商文档核端口：465 要勾上隐式 TLS，587/2525/25 不勾'],
   [/timeout|timed out|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNREFUSED/i, '连不上邮件服务器：核对 smtpHost 与端口，注意 Workers 的出口 IP 不在对方白名单里也会被丢'],
   [/\b53[0-9]\b|authentication failed|invalid (?:login|credentials|user)|Username and Password/i, 'SMTP 登录被拒：用户名与密码/授权码不对（QQ、163、阿里云这类要填「授权码」，不是邮箱登录密码）'],
   [/handshake|certificate|SSL|TLS library|alert/i, 'TLS 握手失败：证书不受信任，或这个端口要的握手方式与设置不一致'],
