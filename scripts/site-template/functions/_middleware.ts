@@ -1,7 +1,7 @@
 /**
  * functions/_middleware.ts — 边缘这一层管两件事
  *   1. 后台关掉的功能，旧地址直接 404，并且不再出现在站点地图里
- *   2. 全站补上三个安全响应头（CSP 不在这里做，见下面第 4 条硬约束）
+ *   2. 全站补上安全响应头（含 CSP，策略在下面 CSP 那一段里逐条写了理由）
  *
  * 为什么要这一层：主题原本只在浏览器里按 /api/config 把入口 hidden 掉（js/zero-switches.js），
  * 于是旧地址照样能直接打开、搜索引擎也照旧收录。要同时做到「站内不显示、旧链接打不开、爬虫别收」，
@@ -17,9 +17,9 @@
  *   · 除 /sitemap.xml 以外，任何路径都不为了拿配置而多跑一次网络请求：
  *     只有「这条路径归 GATED 管」或「这是站点地图」才会去 fetch /api/config；
  *     图片、CSS、文章这些不归管的请求只是原样把响应递出去、顺手补三个头
- *   · 这里不加 Content-Security-Policy：主题用了 media=print + onload 的异步样式、
- *     正文里有各家播放器 iframe、还要放过 Cloudflare 自己注入的两段脚本，
- *     CSP 要一次写全才敢开，漏一项就是整站样式或评论挂掉 —— 单独排期，不顺手做
+ *   · CSP 里 connect-src 的那组域名是从上面的 API_BASE 推出来的：接口换成别的父域、
+ *     或者评论后端（waline/twikoo 的 serverUrl）放到另一个域上，就要在这里补一行域名 ——
+ *     漏补的现象是页面正常出、评论区一直转或统计一直零，浏览器控制台里能看到 CSP 拦的那条
  *
  * 想再多管一个页面：往 GATED 里加一行「路径前缀 → 开关键」，键必须真是 /api/config 暴露出来的那个
  * （后台「设置」里得有对应的开关，否则这里判不到关，页面照旧正常出）。
@@ -82,6 +82,62 @@ function offPrefixes(data: Record<string, unknown>): string[] {
 }
 
 /**
+ * CSP（分级硬策略）。两条来历写在这里，免得下次有人以为是偷懒：
+ *
+ * 为什么 script/style 还留着 'unsafe-inline'（实测出来的，不是嫌麻烦）：
+ *   · 主题每页都烘 9~13 段可执行内联脚本（功能开关、组件懒加载、图片备用链、播放器占位）；
+ *     静态站要禁内联，只能给每段脚本算 hash 写进头里（改一个模板就得重算），或在边缘改写每页 HTML 注 nonce。
+ *   · /links/ 一页有 62 个 onerror —— 朋友动态、左邻右舍、站点联盟那些徽章靠它换图床兜底，
+ *     写法在第三方自己的代码里，禁内联事件等于把这三块直接打断。
+ *   · Font Awesome 靠 media=print + onload 异步启用样式；Cloudflare 也会往页面里注一段同源脚本。
+ * 其余指令按硬来写：外部脚本注入、base 劫持、表单劫持、插件对象、被外站框住、把数据发往陌生域，都挡住。
+ *
+ * connect-src 从 API_BASE 推：接口本身 + 与接口同父域的一组子域
+ * （媒体桶、自托管的 waline/twikoo 后端通常挂在这组子域上）。localhost / IP 不生成通配。
+ */
+const API_ORIGIN = (() => {
+  try {
+    const u = new URL(API_BASE);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.origin : '';
+  } catch {
+    return '';
+  }
+})();
+
+const API_SIBLINGS = (() => {
+  if (!API_ORIGIN) return '';
+  const host = new URL(API_ORIGIN).hostname;
+  if (host === 'localhost' || /^[0-9.]+$/.test(host)) return '';
+  const apex = host.split('.').slice(-2).join('.');
+  return ` https://*.${apex} wss://*.${apex}`;
+})();
+
+/** 主题里写死的那几个外部脚本源（第三方评论、数学公式、404 页的寻人启事）；短代码再引别家 CDN 就来这里补一行 */
+const EXTERNAL_SCRIPTS =
+  'https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://gcore.jsdelivr.net https://unpkg.com https://giscus.app https://qzonestyle.gtimg.cn';
+const EXTERNAL_STYLES = 'https://cdn.jsdelivr.net https://unpkg.com';
+
+const CSP = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline' ${EXTERNAL_SCRIPTS}`,
+  `style-src 'self' 'unsafe-inline' ${EXTERNAL_STYLES}`,
+  // 图片放宽到整个 https：友链头像、各家联盟徽章、R2 直链域名都可能换
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  // API_BASE 还没填对（占位没换、地址不成形）时不能把评论与统计锁死：那一下是静默的，
+  // 页面照常出、只有评论区一直转圈，最难查。所以这一档退回 https:，等地址填对自动收紧。
+  `connect-src 'self'${API_ORIGIN ? ` ${API_ORIGIN}${API_SIBLINGS}` : ' https:'}`,
+  "media-src 'self' https: blob:",
+  // 正文允许嵌各家播放器（bilibili / 优酷 / 腾讯 / 网易云 / 酷狗 / YouTube…），域名清单堵不完；
+  // 框架里是另一份文档，读不到本站的 DOM 与 Cookie，放开这条不给注入脚本增加执行能力
+  "frame-src 'self' https:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self'",
+].join('; ');
+
+/**
  * 安全响应头。
  * X-Content-Type-Options: Cloudflare Pages 现在自己会补这一条（线上实测有），但那是平台行为、
  * 不是这份配置给的 —— 写明白，换主机或平台改掉默认行为时不会静默少一条。
@@ -97,6 +153,7 @@ function applySecurityHeaders(res: Response): Response {
     res.headers.set('X-Frame-Options', 'SAMEORIGIN');
     res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
+    res.headers.set('Content-Security-Policy', CSP);
     return res;
   } catch {
     const headers = new Headers(res.headers);
@@ -104,6 +161,7 @@ function applySecurityHeaders(res: Response): Response {
     headers.set('X-Frame-Options', 'SAMEORIGIN');
     headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
     headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
+    headers.set('Content-Security-Policy', CSP);
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   }
 }

@@ -34,7 +34,7 @@ import { deleteFile, listDir, readFile, writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
-import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, type MediaBucket } from '../services/media';
+import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
 import {
   buildMarkdown,
   contentWebPath,
@@ -867,12 +867,15 @@ app.post('/media', async (c) => {
   if (file.size > 20 * 1024 * 1024) fail(400, '单个文件不得超过 20MB');
 
   const bucket = await bucketFrom(c.env, c.req.url, form);
-  const ext = (file.name.split('.').pop() ?? 'bin').toLowerCase();
-  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${newId()}.${ext}`;
+  /* 类型白名单：白名单外一律拒，白名单内以表里的 Content-Type 入库（不信浏览器给的 file.type）。
+     图床直链域名不走那条「脚本类型降级」的代理，所以只能在这里拦。 */
+  const type = checkUploadType(file.name);
+  if (!type.ok) fail(400, type.error);
+  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${newId()}.${type.ext}`;
   const stored = await putMediaObject(c.env, bucket, {
     key,
     data: file.stream(),
-    contentType: file.type || 'application/octet-stream',
+    contentType: type.contentType,
   });
 
   // 默认 R2 桶还留着旧行为：配了 mediaBaseUrl 就直接给可外链的地址
@@ -920,10 +923,15 @@ app.post('/media/import', async (c) => {
     return ok({ key, bucket: bucket.id, skipped: true, reason: '本站已有同名对象，没覆盖' });
   }
 
+  /* 恢复口同样过白名单：备份里若真有 .svg/.html 这类对象，这一条会被跳过并说明原因，
+     而不是把它们重新放回一个能在图床域名下执行的键上。 */
+  const importType = checkUploadType(key);
+  if (!importType.ok) fail(400, importType.error);
+
   const stored = await putMediaObject(c.env, bucket, {
     key,
     data: file.stream(),
-    contentType: file.type || 'application/octet-stream',
+    contentType: importType.contentType,
   });
   await writeAudit(c.env, {
     actor: admin,

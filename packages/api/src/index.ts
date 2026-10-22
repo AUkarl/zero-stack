@@ -78,11 +78,22 @@ app.use('*', async (c, next) => {
   })(c, next);
 });
 
-/* ---------------- 安全响应头（CSP 暂不做：要先给 Font Awesome 的 onload、百度系
-   之外的第三方播放器等开白名单，配漏一项就是整站样式或评论挂掉，单独排期） ---------------- */
+/* ---------------- 安全响应头 ----------------
+ * CSP 分两档，按响应的 content-type 挑：
+ *   · 接口绝大部分回 JSON / 图片 / 文件流 —— default-src 'none'，什么都不许加载。
+ *     这一条挡的是「响应被当成页面打开」那一类：接口域名下永远不该有能取数据的脚本。
+ *   · 只有两页真出 HTML（订阅确认 donePage、后台的邮件预览），它们整页靠 style="…" 与 <style> 排版，
+ *     所以那一档放开 style-src 'unsafe-inline' 与图片，其余照旧全禁。
+ * 前端页面自己往这些地址发请求时，受的是页面那份 CSP 的 connect-src 管，不是这份 ——
+ * 接口回 default-src 'none' 不会拦下浏览器里对它的 fetch。
+ */
+const CSP_DATA = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP_HTML = "default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 app.use('*', async (c, next) => {
   await next();
+  const type = c.res.headers.get('content-type') ?? '';
+  c.res.headers.set('Content-Security-Policy', type.includes('text/html') ? CSP_HTML : CSP_DATA);
   c.res.headers.set('X-Content-Type-Options', 'nosniff');
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Worker 只出 JSON 与错误页，不该被任何页面框住，也不该拿到摄像头/定位这类能力

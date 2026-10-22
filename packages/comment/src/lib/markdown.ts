@@ -16,14 +16,20 @@
  */
 
 import { EMOJI_TOKEN_RE, emojiImageOf, emojiImgHtml } from './emoji-packs';
+import { sanitizeHtml } from './sanitize';
 
 export interface MdOptions {
   /** 短链前缀，默认 /post/ */
   shortBase?: string;
 }
 
+/**
+ * 转义给 HTML 用。引号也必须转：图片/链接语法把 alt、src 直接拼进 `attr="…"` 里，
+ * 只转 <>& 的话，一个 `"` 就能从属性里逃出去（实测能在评论区执行 onerror）。
+ * 文本里的引号转成 &quot; 后浏览器照常显示成 "，肉眼无差。
+ */
 function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 /** 只允许安全协议与站内路径，挡掉 javascript: / data: 这类注入 */
@@ -92,7 +98,10 @@ function inline(s: string, base: string): string {
   return out.replace(/\u0000(\d+)\u0000/g, (_m, i) => `<code>${esc(codes[Number(i)] ?? '')}</code>`);
 }
 
-/** 把 Markdown 渲染成 HTML 字符串（调用方用 {@html} 输出） */
+/** 把 Markdown 渲染成 HTML 字符串（调用方用 {@html} 输出）
+ *
+ * 出门口再过一层 sanitize.ts 的白名单：浏览器里等于「渲染器 + DOMPurify」两道，
+ * Worker 发邮件那条没有 DOM，直接原样返回（那份 HTML 也不会被浏览器当片段解析）。 */
 export function renderMarkdown(src: string, opts: MdOptions = {}): string {
   const base = opts.shortBase ?? '/post/';
   const lines = src.replace(/\r\n/g, '\n').split('\n');
@@ -217,6 +226,6 @@ export function renderMarkdown(src: string, opts: MdOptions = {}): string {
   closeQuote();
   if (inCode) out.push('</code></pre>');
 
-  return out.join('\n');
+  return sanitizeHtml(out.join('\n'));
 }
 

@@ -234,7 +234,7 @@
         <input placeholder="按文件名筛选" bind:value={q} />
         <button class="sm" onclick={() => void loadObjects(true)} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
         <button class="sm" onclick={pickLocal} disabled={uploading}>{uploading ? `上传中 ${uploadPct}%` : '上传本地文件'}</button>
-        <input type="file" class="fileinput" aria-label="选择要上传的本地文件" bind:this={fileEl} onchange={onFile} />
+        <input type="file" class="fileinput" aria-label="选择要上传的本地文件" bind:this={fileEl} onchange={onFile} accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon,image/tiff,image/heic,video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo,audio/mpeg,audio/mp4,audio/aac,audio/ogg,audio/wav,audio/flac,application/pdf" />
       </div>
 
       {#if uploading}<p class="upbar"><span style="width:{uploadPct}%"></span></p><p class="muted small">{uploadMsg}（{uploadPct}%）</p>{/if}

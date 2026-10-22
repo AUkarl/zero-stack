@@ -231,6 +231,58 @@ function s3TargetOf(bucket: MediaBucket) {
   };
 }
 
+/* ------------------------------------------------------------------ 上传类型白名单 */
+
+/**
+ * 允许进媒体库的类型：扩展名 → 入库时写的 Content-Type。
+ *
+ * 为什么必须在入库这一层拦：`/api/media/<桶>/<键>` 那条匿名代理会把 html/xml/svg/javascript 一律降级成
+ * text/plain（routes/media.ts 的 UNSAFE），**但配了直链域名的桶不走那条代理** ——
+ * `https://<桶的直链域名>/uploads/xxx.html` 就是 R2 直接吐出的一页 `text/html`，等于在自己域名下挂页面。
+ * 以前两个上传口只校验大小：扩展名取文件名后缀、Content-Type 用浏览器给的 `file.type`，传什么存什么。
+ * 现在白名单外一律拒；白名单内**以这张表为准写 Content-Type**，不信浏览器声明那一份
+ * （`.png` 配 `text/html` 也只会存成 image/png）。
+ */
+export const UPLOADABLE_TYPES: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jpe: 'image/jpeg', gif: 'image/gif',
+  webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon',
+  tif: 'image/tiff', tiff: 'image/tiff', heic: 'image/heic', heif: 'image/heif',
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+  mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg',
+  wav: 'audio/wav', flac: 'audio/flac',
+  pdf: 'application/pdf',
+};
+
+/** 明确点名的危险类型：报错时要说清「为什么这个不行」，而不是只丢一句「类型不对」 */
+const BLOCKED_TYPES = new Set(['svg', 'html', 'htm', 'xhtml', 'xml', 'js', 'mjs', 'cjs', 'jsx', 'css', 'swf', 'php', 'sh', 'bat', 'cmd', 'exe', 'msi', 'apk', 'zip', 'gz', 'tar', 'rar', '7z', 'json', 'csv', 'md', 'txt', 'rtf', 'woff', 'woff2', 'ttf', 'otf', 'eot']);
+
+export type UploadTypeCheck = { ok: true; ext: string; contentType: string } | { ok: false; error: string };
+
+/** 文件名或对象键 → 允许的话给出该写的 Content-Type，不允许就给一句能直接给人看的原因 */
+export function checkUploadType(name: string): UploadTypeCheck {
+  const base = String(name ?? '').split('/').pop() ?? '';
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0) {
+    return { ok: false, error: `文件名要带扩展名（现在这份是「${base || '（空）'}」）：媒体库按扩展名决定能不能存、以及存成什么类型` };
+  }
+  const ext = base.slice(dot + 1).toLowerCase();
+  const canonical = UPLOADABLE_TYPES[ext];
+  if (canonical) return { ok: true, ext, contentType: canonical };
+  if (BLOCKED_TYPES.has(ext)) {
+    return {
+      ok: false,
+      error: `.${ext} 不能传进媒体库：图床是自定义域名，这类文件存上去就能在图床域名下当页面或脚本执行`
+        + `（svg 里能带脚本，html/xml 直接渲染）。要放这类文件走站点仓库的 static/，或者先转成 png/webp。`,
+    };
+  }
+  return {
+    ok: false,
+    error: `.${ext} 不在允许的类型里。可上传：图片（png/jpg/jpeg/gif/webp/avif/bmp/ico/tiff/heic）、`
+      + `音视频（mp4/mov/webm/mkv/avi/mp3/m4a/aac/ogg/wav/flac）、pdf`,
+  };
+}
+
 /* ------------------------------------------------------------------ 读写动作 */
 
 export async function putMediaObject(

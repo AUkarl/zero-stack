@@ -129,14 +129,18 @@ export function emojiImageOf(key: string): EmojiImage | undefined {
  * 地址与 token 都被白名单限死在 [A-Za-z0-9_:-] 之内，拼进属性不会有引号。
  */
 const GIVE_UP = "var s=document.createElement('span');s.className='zc-emoji-tok';s.textContent=this.dataset.emoji;this.replaceWith(s)";
-const NEXT_SOURCE = "var l=(this.dataset.chain||'').split(' ');if(l[0]){this.dataset.chain=l.slice(1).join(' ');this.src=l[0]}else{" + GIVE_UP + '}';
+/**
+ * 表情图的那串 onerror 本体。净化层（lib/sanitize.ts）会让 DOMPurify 先把所有 on* 剥掉，
+ * 再按这个常量把表情图那一枚贴回去 —— 值不来自正文，所以「保留内联事件」这件事被限定在一处。
+ */
+export const EMOJI_ONERROR = "var l=(this.dataset.chain||'').split(' ');if(l[0]){this.dataset.chain=l.slice(1).join(' ');this.src=l[0]}else{" + GIVE_UP + '}';
 
 export function emojiImgHtml(img: EmojiImage): string {
   const token = img.token;
   const chain = img.srcs.slice(1).join(' ');
   return (
     `<img class="zc-emoji-img" src="${img.srcs[0]}" alt="${token}" title="${token}" data-emoji="${token}"` +
-    ` data-chain="${chain}" loading="lazy" decoding="async" onerror="${NEXT_SOURCE}">`
+    ` data-chain="${chain}" loading="lazy" decoding="async" onerror="${EMOJI_ONERROR}">`
   );
 }
 

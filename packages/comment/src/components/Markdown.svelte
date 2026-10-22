@@ -3,9 +3,9 @@
 
   let { text = '', shortBase = '/post/' }: { text?: string; shortBase?: string } = $props();
 
-  // 内容里的原始 HTML 会先被转义，只剩 Markdown 子集被渲染成标签，
-  // 所以这里可以安全地 {@html}。表情图的备选图床与退图都写在那枚 <img> 自己身上
-  // （见 lib/emoji-packs.ts 的 emojiImgHtml），这里不需要再补监听。
+  // 内容里的原始 HTML 会先被转义，只剩 Markdown 子集被渲染成标签，渲染完还过一次 DOMPurify
+  // 白名单（见 lib/sanitize.ts），所以这里可以安全地 {@html}。表情图的备选图床与退图都写在那枚
+  // <img> 自己身上（见 lib/emoji-packs.ts 的 emojiImgHtml），这里不需要再补监听。
   const html = $derived(renderMarkdown(text, { shortBase }));
 </script>
 
