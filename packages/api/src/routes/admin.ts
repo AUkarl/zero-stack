@@ -3,7 +3,7 @@ import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
 import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
-import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
+import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, jsonKeyBadValue, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
 import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
 import { ensureAdminAuthorIdentity } from '../services/admin-author';
 import { avatarForEmail, emailMd5 } from '../lib/avatar';
@@ -116,6 +116,9 @@ app.patch('/config', async (c) => {
     /** 枚举键先在这儿拦住：存进去一个代码不认识的值，比直接报错难查得多（评论那两项会静默换掉整站评论区） */
     const enumBad = enumKeyBadValue(key, asText);
     if (enumBad) fail(400, enumBad);
+    /** JSON 键同理：坏 JSON 不报错、只是让后台配的参数整组静默失效，那更查不动 */
+    const jsonBad = jsonKeyBadValue(key, asText);
+    if (jsonBad) fail(400, jsonBad);
     /** 枚举键统一按小写存：接口送 'SMTP' 也要归成 'smtp' —— 分流处（发信按通道、主题按 provider）认的是小写值 */
     const stored = ENUM_CONFIG_KEYS[key] && typeof value === 'string' ? asText.trim().toLowerCase() : asText;
     writes.push({
@@ -471,11 +474,25 @@ async function writeContentItem(env: Env, admin: { id?: string | null }, item: C
     return { ok: false, path, reason: 'invalid', error: e instanceof Error ? e.message : String(e) };
   }
 
-  // 带 sha 就是乐观锁：别人在你编辑期间改过就不覆盖（批量时这一条被跳过，其余照推）
+  // 带 sha 就是乐观锁：别人在你编辑期间改过就不覆盖（批量时这一条被跳过并单独报出来，其余照常推）
   if (item.sha) {
     const current = await readFile({ ...settings, path }).catch(() => null);
     if (current && current.sha && current.sha !== item.sha) {
       return { ok: false, path, reason: 'conflict', error: '这篇在你编辑期间已被改动，未覆盖' };
+    }
+  } else {
+    /* 不带 sha 而仓库里已经有这个文件 = 名字被占了。以前直接覆盖：两个人同时新建「今天第一篇」时
+       取到同一个号（取号是「列目录数最大序号 +1」，号本身没有锁），后写的那一笔把前一篇整篇盖掉，
+       两边都显示「保存成功」，后台毫无痕迹（T3 体检实测）。
+       现在按冲突报出去：单写回 409，批量时这一条被跳过并单独列出，其余照推。 */
+    const exists = await readFile({ ...settings, path }).catch(() => null);
+    if (exists) {
+      return {
+        ok: false,
+        path,
+        reason: 'conflict',
+        error: `${path} 在仓库里已经存在，而这次提交没带它的版本号，所以没有覆盖。两种可能：另一个人（或另一个标签页）刚用同一个文件名建过；或者你上一次保存其实成功了、只是回执没收到。请先打开这篇确认内容，或换一个文件名再存。`,
+      };
     }
   }
 

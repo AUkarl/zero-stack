@@ -53,11 +53,15 @@ app.post('/beat', async (c) => {
   const ip = clientIp(c);
   // 爬虫与监控探针不入库，否则浏览量与热门页 Top 会被机器流量抬虚高
   if (isBot(ua)) return ok({ tracked: false });
-  /* 频控：一个 IP 一小时 240 次（约每分钟翻 4 页），正常人逛站碰不到这条线。
+  /* 频控：一条会话一小时 240 次（约每分钟翻 4 页），正常人逛站碰不到这条线。
      放在 UA 判断之后，爬虫已经不入库，别为它们白记一次。
      计数记在 isolate 内存里：这条是每个页面加载都打一次的高频口，
-     用 KV 就是「访问量 = KV 写次数」，免费额度（1000 写/天）第一天就见底。 */
-  rateLimitLocal(c, 'beat', 240, 3600);
+     用 KV 就是「访问量 = KV 写次数」，免费额度（1000 写/天）第一天就见底。
+     键必须带会话：以前只按 IP（keyHint 传空），于是整栋楼/整个校园网/一个 CGNAT 出口共用一个桶，
+     第 241 次浏览起就 429 —— 而主题把失败吞了，结果只是「PV 比真实低」且无处可查（T3 体检实测精确 240）。
+     匿名访客没有 s 时退回「IP+UA」的指纹，与入库那一步用的是同一个口径。 */
+  const beatSession = payload.s || payload.session || hash(ip + '|' + ua);
+  rateLimitLocal(c, 'beat', 240, 3600, beatSession);
   const { device, browser, os } = parseUserAgent(ua);
 
   // 访客指纹 sha256(salt|ip)：明文 IP 只在这一步存在于内存，入库的只有哈希
@@ -67,7 +71,7 @@ app.post('/beat', async (c) => {
   await db.insert(visits).values({
     id: crypto.randomUUID(),
     // session_id 只表示「同一次会话」，用于实时在线；按人去重看 ip_hash
-    sessionId: payload.s || payload.session || hash(ip + '|' + ua),
+    sessionId: beatSession,
     ipHash,
     path,
     referrer: referrerHost(payload.r || payload.referrer || ''),

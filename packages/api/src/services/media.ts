@@ -33,6 +33,16 @@ export interface MediaBucket {
   prefix?: string;
   /** 强制路径风格寻址（MinIO 之类） */
   pathStyle?: boolean;
+  /**
+   * 这个桶的对象能不能被匿名走 `GET /api/media/<id>/<键>` 读走。
+   *
+   * 缺省（不写）= 能，等于这条代理口一直以来的行为，一个已有链接都不会变。
+   * 显式写 false = 只有后台（带管理员 Cookie 的 `/api/admin/media/*`）读得到，
+   * 匿名一律 403。之所以要有这个开关：代理只按 id 找桶，过去「登记进配置的桶」全都匿名可读，
+   * 私有性实际上只剩「键猜不到」——而带 accessKeyId/secretAccessKey 的第三方桶一旦登记，
+   * 里面任何东西都变成知道键就能读（T3 体检 T3-6）。
+   */
+  publicRead?: boolean;
 }
 
 export interface MediaObject {
@@ -104,6 +114,8 @@ function normalizeBucket(item: unknown): MediaBucket | null {
     baseUrl: normalizeBaseUrl(o.baseUrl),
     prefix: o.prefix ? String(o.prefix) : '',
     pathStyle: o.pathStyle === true ? true : undefined,
+    // 只有显式 false 才存下来；不写就等于「匿名可读」，与这条代理口以前的行为一致
+    publicRead: o.publicRead === false ? false : undefined,
   };
   if (bucket.kind === 's3' && !bucket.bucket) return null;
   return bucket;
@@ -135,6 +147,7 @@ export function maskBucket(b: MediaBucket): Record<string, unknown> {
     baseUrl: b.baseUrl ?? '',
     prefix: b.prefix ?? '',
     pathStyle: b.pathStyle ?? false,
+    publicRead: b.publicRead !== false,
   };
 }
 
@@ -145,6 +158,11 @@ export async function resolveBucket(env: Env, id?: string | null): Promise<Media
   const hit = buckets.find((b) => b.id === want);
   if (!hit) fail(404, `存储桶 ${want} 不存在，请从 /api/admin/media/buckets 里选一个 id`);
   return hit!;
+}
+
+/** 这个桶能不能被匿名走公开代理读走（缺省能 —— 见 MediaBucket.publicRead 那段注释） */
+export function bucketPubliclyReadable(bucket: MediaBucket): boolean {
+  return bucket.publicRead !== false;
 }
 
 /* ------------------------------------------------------------------ R2 绑定 */

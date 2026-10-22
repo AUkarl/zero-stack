@@ -329,6 +329,11 @@ const SITE_HEADERS = `# 带内容指纹的样式与脚本：文件名带 hash，
 /img/*
   Cache-Control: public, max-age=604800
 
+# 主题自带的 Font Awesome 在 /fa/ 下（css/all.min.css 与 webfonts/*）：文件名不带内容指纹，
+# 升级 FA 是同名替换，所以给 7 天、不给 immutable —— 锁一年会让访客拿旧字体整整一年，图标错位还刷不掉。
+/fa/*
+  Cache-Control: public, max-age=604800
+
 # HTML 本身：始终回源校验，文章删除或改名后立即生效
 /*.html
   Cache-Control: public, max-age=0, must-revalidate

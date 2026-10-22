@@ -132,6 +132,10 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
   站长自己加的 S3 桶原样保留，重复运行不会写第二份，也不会覆盖已经填好的 `baseUrl`；
 - 就算 `mediaBuckets` 里只写了公开桶，接口也会把 Worker 绑定的私有桶补回列表最前面
   （`services/media.ts` 的 `withBoundR2`）—— 配置一有值就顶掉默认桶是早期的坑；
+- 每个桶可以写 `"publicRead": false`（**不写 = 匿名可读**，等于这条代理口一直以来的行为）：
+  写了 false 的桶，访客走 `/api/media/<桶>/<键>` 一律 403，只有后台（`/api/admin/media/*`）读得到。
+  后台「媒体 → 管理存储桶」每行有这颗开关，取消勾选时界面会写明「正文里用这个桶的地址会全部点不开」；
+  只想内部用的桶（比如登记了带密钥的 OSS/S3）关掉它，公开的图请放有公开域名的桶；
 - 桶已存在就跳过创建，绝不删除、不动桶里已有的文件。
 
 > `packages/api/wrangler.jsonc` 已在 `.gitignore` 中，仓库只保留 `.example`。

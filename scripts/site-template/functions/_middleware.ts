@@ -83,6 +83,8 @@ function offPrefixes(data: Record<string, unknown>): string[] {
 
 /**
  * 安全响应头。
+ * X-Content-Type-Options: Cloudflare Pages 现在自己会补这一条（线上实测有），但那是平台行为、
+ * 不是这份配置给的 —— 写明白，换主机或平台改掉默认行为时不会静默少一条。
  * X-Frame-Options 用 SAMEORIGIN 而不是 DENY：正文里本来就允许嵌各家播放器 iframe，
  * 而「本站把本站框起来」这种用法不存在，SAMEORIGIN 已经够挡住点框架劫持。
  * Permissions-Policy 把摄像头/麦克风/定位/支付这类能力一次性关掉，
@@ -91,12 +93,14 @@ function offPrefixes(data: Record<string, unknown>): string[] {
 function applySecurityHeaders(res: Response): Response {
   try {
     // Pages 递出来的响应头是可以直接改的；万一哪天变成 immutable，也不能因此把页面搞挂
+    res.headers.set('X-Content-Type-Options', 'nosniff');
     res.headers.set('X-Frame-Options', 'SAMEORIGIN');
     res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
     return res;
   } catch {
     const headers = new Headers(res.headers);
+    headers.set('X-Content-Type-Options', 'nosniff');
     headers.set('X-Frame-Options', 'SAMEORIGIN');
     headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
     headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');

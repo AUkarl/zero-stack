@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getMediaObject, resolveBucket } from '../services/media';
+import { getMediaObject, resolveBucket, bucketPubliclyReadable } from '../services/media';
 import { fail } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
 
@@ -20,6 +20,8 @@ app.get('/*', async (c) => {
   const segments = path.split('/').filter(Boolean);
   if (segments.length < 2) fail(400, '缺少桶名或对象键');
   const bucket = await resolveBucket(c.env, segments[0]!);
+  // 后台「管理存储桶」里取消勾选「允许匿名读取」的桶，这条公开代理一律 403（要读走 /api/admin/media/*）
+  if (!bucketPubliclyReadable(bucket)) fail(403, `存储桶 ${bucket.id} 没开匿名读取，请到后台「媒体 → 管理存储桶」勾上，或改用带公开域名的桶`);
   const key = segments.slice(1).join('/');
   const object = await getMediaObject(c.env, bucket, key);
   if (!object) fail(404, '文件不存在');

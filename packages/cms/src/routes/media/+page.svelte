@@ -21,6 +21,8 @@
     secretAccessKey?: string;
     baseUrl?: string;
     prefix?: string;
+    /** 缺省 true（= 现有行为）：显式存成 false 才拒绝匿名走 /api/media/<id>/<键> 读 */
+    publicRead?: boolean;
   }
 
   interface Row {
@@ -36,6 +38,7 @@
     prefix: string;
     accessKeyId: string;
     secretAccessKey: string;
+    publicRead: boolean;
   }
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
@@ -76,6 +79,7 @@
       secretAccessKey: b?.secretAccessKey ?? '',
       baseUrl: b?.baseUrl ?? '',
       prefix: b?.prefix ?? '',
+      publicRead: b?.publicRead !== false,
     }));
   }
 
@@ -195,6 +199,7 @@
         region: b.region ?? '',
         baseUrl: b.baseUrl ?? '',
         prefix: b.prefix ?? '',
+        publicRead: b.publicRead !== false,
         accessKeyId: '',
         secretAccessKey: '',
       };
@@ -207,7 +212,7 @@
   }
 
   function addRow() {
-    rows = [...rows, { __k: `new#${Date.now()}`, id: '', label: '', kind: 'r2', binding: '', bucket: '', endpoint: '', region: '', baseUrl: '', prefix: '', accessKeyId: '', secretAccessKey: '' }];
+    rows = [...rows, { __k: `new#${Date.now()}`, id: '', label: '', kind: 'r2', binding: '', bucket: '', endpoint: '', region: '', baseUrl: '', prefix: '', accessKeyId: '', secretAccessKey: '', publicRead: true }];
   }
 
   function dropRow(k: string) {
@@ -234,6 +239,8 @@
       if (r.region.trim()) o.region = r.region.trim();
       if (r.baseUrl.trim()) o.baseUrl = r.baseUrl.trim();
       if (r.prefix.trim()) o.prefix = r.prefix.trim();
+      // 只在「显式关掉」时落这个键：默认（不写）= 匿名可读，等于现有线上行为，一个图都不会因此变 404
+      if (r.publicRead === false) o.publicRead = false;
       const ak = r.accessKeyId.trim() || secret.accessKeyId; // 留空即沿用已存密钥
       const sk = r.secretAccessKey.trim() || secret.secretAccessKey;
       if (ak) o.accessKeyId = ak;
@@ -391,6 +398,21 @@
             {/if}
             <label>baseUrl<input bind:value={r.baseUrl} placeholder="公开访问域名，选填" /></label>
             <label>prefix<input bind:value={r.prefix} placeholder="uploads/，选填" /></label>
+            <label>
+              <input type="checkbox" bind:checked={r.publicRead} />
+              允许匿名读取（走 {`/api/media/${r.id || '<id>'}/…`}）
+            </label>
+            {#if !r.publicRead}
+              <p class="warn">
+                关掉之后访客端拿到 403：正文、封面、头像里凡是用 <code>/api/media/{r.id || '这个桶'}/…</code> 的地址全部点不开
+                （有 <code>baseUrl</code> 直链的图不受影响）。内部用的桶才这样关；要公开的图请放到有公开域名的桶，或把这格重新勾上。
+              </p>
+            {:else}
+              <p class="muted">
+                勾着 = 任何人拿到对象键就能通过这个桶读到文件（键是 <code>uploads/日期/uuid</code>，猜不到，但出现在页面源码里的就等于公开的）。
+                只想内部用的桶，取消勾选。
+              </p>
+            {/if}
           </div>
         </div>
       {/each}

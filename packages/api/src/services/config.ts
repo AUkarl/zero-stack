@@ -567,6 +567,36 @@ export function enumKeyBadValue(key: string, value: string): string | null {
   return `${key} 只接受 ${allowed.join(' / ')}（留空表示用默认），现在送的是「${value.trim().slice(0, 40)}」`;
 }
 
+/** 主题侧认得这几家评论区（zero-comments.js 的 KNOWN_PROVIDERS 同一份口径） */
+export const PROVIDER_IDS = ['zero', 'waline', 'twikoo', 'giscus', 'artalk'];
+
+/**
+ * 「必须是合法 JSON、而且是固定形状」的配置键。
+ *
+ * 为什么要拦：后台那一格是 textarea，人手打漏一个逗号就是一份坏 JSON；而主题侧是
+ * `parseJson(cfg.commentProviders) || {}` —— 解析失败不报错，静默退回构建期 params，
+ * 于是「后台给 waline/giscus 配的参数」整个失效，界面却显示「已保存」，
+ * 查起来要从主题 JS 倒推回来（T3 体检实测：它不会打死评论区，但会白配一套参数）。
+ * 空串仍是「不改 / 用默认」，放行。
+ */
+export function jsonKeyBadValue(key: string, value: string): string | null {
+  if (key !== 'commentProviders') return null;
+  const v = value.trim();
+  if (!v) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(v);
+  } catch {
+    return 'commentProviders 要写成合法 JSON 对象，例如 {"waline":{"serverURL":"…"}}；现在这份解析不出来';
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return 'commentProviders 要写成「服务商名 → 参数」的对象（如 {"giscus":{"repo":"…"}}），不能是数组或纯字面量';
+  }
+  const bad = Object.keys(parsed as Record<string, unknown>).filter((k) => !PROVIDER_IDS.includes(k.toLowerCase()));
+  if (bad.length) return `commentProviders 里有代码不认识的键：${bad.join(' / ')}（可用：${PROVIDER_IDS.join(' / ')}）`;
+  return null;
+}
+
 /** 后台列表用的脱敏视图与「服务端是否已有值」标记 */
 export function maskSecrets(all: Record<string, string>): { data: Record<string, string>; hasSecret: Record<string, boolean> } {
   const data: Record<string, string> = {};

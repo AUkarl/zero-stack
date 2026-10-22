@@ -446,7 +446,11 @@
   {:else if !meta.commentEnabled}
     <p class="hint">{t('closed')}</p>
   {:else}
-    <h3 class="title">{t('commentsTitle')}{meta.total ? ` (${meta.total})` : ''}</h3>
+    <!-- 这颗是 h2 不是 h3：文章页的标题序列是 h1（文名）→ 正文小标题 h2 → 这里，
+         以前写 h3 会让「正文没有小标题」的文章出现 h1→h3 跳级（Lighthouse/axe 都报，T3-2）。
+         字号由下面那条 .title{font-size:1.05rem} 类名规则定，且在 shadowRoot 内，
+         主题全局的 h2 样式进不来 —— 换成 h2 视觉一个像素都不动。 -->
+    <h2 class="title">{t('commentsTitle')}{meta.total ? ` (${meta.total})` : ''}</h2>
 
     <div class="sorts">
       {#each [['oldest', t('sortOldest')], ['latest', t('sortLatest')], ['hot', t('sortHot')]] as [k, label] (k)}
