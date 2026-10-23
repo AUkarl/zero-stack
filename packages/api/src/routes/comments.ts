@@ -18,6 +18,12 @@ import { inspectComment, type Verdict } from '../services/moderation';
 import { deleteCommentSubtree } from '../services/comment-tree';
 import { notifyNewComment } from '../services/comment-notify';
 import { commentLikeStatsForSlug, toggleCommentLike } from './likes';
+/**
+ * 首字母色块的算法**只在 comment 包里存一份**（前端也要用同一个口径才能保住既有颜色），
+ * 所以这里是跨包引用源文件 —— 与 services/email-content.ts 引 markdown 渲染器是同一条路子。
+ * 该模块零依赖、不碰 DOM，Worker 侧可以直接用。
+ */
+import { avatarStyleFor } from '../../../comment/src/lib/avatar-style';
 import type { AuthUser } from '../services/auth';
 import type { AppEnv } from '../lib/app';
 
@@ -60,22 +66,20 @@ interface AvatarSet {
   gravatar: string;
   /** 第三级起继续往下试的地址，前端按顺序 onerror 降级 */
   fallbacks: string[];
-  emailDomain: string;
 }
 
 function avatars(email: string | null | undefined, template: string, image?: string | null): AvatarSet {
-  const domain = (mail: string) => (mail.includes('@') ? mail.split('@')[1] ?? '' : '');
   const override = (image ?? '').trim();
-  if (override) return { avatar: override, gravatar: '', fallbacks: [], emailDomain: domain((email ?? '').trim().toLowerCase()) };
+  if (override) return { avatar: override, gravatar: '', fallbacks: [] };
 
   const mail = (email ?? '').trim().toLowerCase();
-  if (!mail.includes('@')) return { avatar: '', gravatar: '', fallbacks: [], emailDomain: '' };
+  if (!mail.includes('@')) return { avatar: '', gravatar: '', fallbacks: [] };
   const t = (template ?? '').trim();
   const head = t ? t.replaceAll('{hash}', emailMd5(mail)).replaceAll('{email}', encodeURIComponent(mail)) : '';
   // 模板本身常就写成 cravatar 那条地址，去重免得同一个图白试两回
   const list = [head, ...avatarChainForEmail(mail)].filter(Boolean).filter((u, i, arr) => arr.indexOf(u) === i);
   const [first = '', second = '', ...rest] = list;
-  return { avatar: first, gravatar: second, fallbacks: rest, emailDomain: domain(mail) };
+  return { avatar: first, gravatar: second, fallbacks: rest };
 }
 
 /* ------------------------------------------------------------------
@@ -140,9 +144,10 @@ function authorGroup(isUser: boolean, profile?: Profile): string | null {
  * ownerKey：匿名评论的自删/自改凭证，也是「看得到自己待审评论」的通行证。
  * 前端在 localStorage 存 { [slug]: { [commentId]: ownerKey } }，取列表时带上。
  *
- * 优先用查询参数而不是自定义请求头：index.ts 里的 CORS allowHeaders 没有
- * X-Comment-Owners，跨域带自定义头会卡在预检上（那是别的模块的文件，这里不改）。
- * 两种都收，同域或 CMS 侧可以走头。
+ * R43 起前端优先走请求头（X-Comment-Owners / X-Comment-Owner），凭证不再留在 URL 里；
+ * index.ts 的 CORS allowHeaders 已加上这两个头 —— **部署顺序要先 Worker 后主题产物**，
+ * 反过来的话新产物对老 Worker 发自定义头会被预检拦住。
+ * 查询串与 body 两档继续收：老包、同域调用，以及「整篇凭证超过一个头装得下的长度」时的退回。
  * ----------------------------------------------------------------*/
 
 const OWNER_HEADER = 'x-comment-owners';
@@ -220,6 +225,12 @@ function makeShaper(avatarTemplate: string, profiles: Map<string, Profile>) {
          邮箱明明注册了 Gravatar 也拿不到图。评论行自己存过一份 authorEmail，先拿它，
          再兜账号那一份（改过邮箱的旧评论存的还是老地址，所以账号那份只作补充）。 */
       ...avatars(isUser ? row.authorEmail || profile?.email : row.authorEmail, avatarTemplate, isUser ? profile?.image : null),
+      /* 一张头像都取不到时那个「首字母色块」的色相与字母。
+         以前这里公开的是 emailDomain（每个人的邮箱域名），前端自己拿 `昵称|域名` 去散列颜色 ——
+         域名本不该出现在公开响应里，可要直接删掉字段，所有人的底色会集体换一遍（颜色由那串种子决定）。
+         所以改成服务端按**同一串种子、同一段算法**算好色相再发出去（算法只有一份，在 comment 包里），
+         既不再泄露域名，颜色也一格都没变。 */
+      ...avatarStyleFor(authorDisplayName(row, profiles), isUser ? row.authorEmail || profile?.email : row.authorEmail),
       isAuthor: isUser,
       /** 'admin'（站长）| 'coauthor'（共创）| 'friend'（朋友）| null（游客） */
       group: authorGroup(isUser, profile),

@@ -1083,7 +1083,16 @@ app.post('/email/test', async (c) => {
     detail: { to: parsed.data.to, kind, success: res.success, error: res.error ?? null },
     ip: clientIp(c),
   });
-  return ok({ sent: res.success, error: res.error ?? null, kind, to: parsed.data.to });
+  if (!res.success) {
+    /**
+     * 失败必须是非 2xx。公开口（注册/找回密码）那侧的防枚举口径是「通道没配」与「15 分钟内坏」
+     * 回同一句，那是给外人看的；这一条已经在 `requireAdmin` 之后，返回值是给站长自己看的。
+     * 体检实测它回 200 + `sent:false` —— 人在界面上看得见（后台标红），但接 Uptime/脚本测信
+     * 只看状态码，永远是绿的。
+     */
+    fail(502, `发信失败：${res.error ?? '通道没有返回原因'}`);
+  }
+  return ok({ sent: true, kind, to: parsed.data.to });
 });
 
 /**

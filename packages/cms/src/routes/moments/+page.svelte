@@ -133,9 +133,29 @@
     };
   }
 
+  /**
+   * 时刻以前只有 date/draft/images，一个 title 都不写 —— 于是标签页只剩「· 站名」，
+   * RSS 与分享卡片也拿不到这句话（C2/D-2，主题侧已补了退路，但源头该在这里写全）。
+   * 规则按「不打扰人」排：原来就写了 title 的一律照原样带回（绝不把谁手写过的标题改掉）；
+   * 没写过的才从正文第一行推一个（去掉 markdown 记号、最多 24 字）；
+   * 正文也空（纯图/纯音乐那种）就不写，让主题那边退到日期，比编一句「一张图片」更像人话。
+   */
+  function titleFromBody(raw: string): string {
+    const first = String(raw ?? '')
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find((s) => s && !/^[#!>*\-|`{%\[]/.test(s) && !/^{{</.test(s));
+    if (!first) return '';
+    const clean = first.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`~]/g, '').trim();
+    if (!clean) return '';
+    return clean.length > 24 ? `${clean.slice(0, 24)}…` : clean;
+  }
+
   /** 表单 → 时刻 front matter（未识别的原有键由 extras 原样带回） */
   function momentFront(): string {
     const lines: string[] = [];
+    const titleWanted = (baseDoc.scalars.title ?? '').trim() || titleFromBody(body);
+    if (titleWanted) lines.push(`title: ${yq(titleWanted)}`);
     lines.push(`date: ${fromDateInput(date) || date}`);
     lines.push(`draft: ${draft ? 'true' : 'false'}`);
     if (images.length) {
@@ -168,7 +188,7 @@
   /**
    * 本页会重写的键；其余键（link / 自定义字段…）原样带回，避免编辑一条时刻把没展示的字段弄丢。
    */
-  const MANAGED = new Set(['date', 'draft', 'images', 'image', 'video', 'video_poster', 'music', 'music_title', 'music_cover', 'tags', 'location', 'link']);
+  const MANAGED = new Set(['title', 'date', 'draft', 'images', 'image', 'video', 'video_poster', 'music', 'music_title', 'music_cover', 'tags', 'location', 'link']);
 
   function extrasFromDoc(doc: FrontDoc): string {
     const lines: string[] = [];
@@ -267,10 +287,14 @@
     error = '';
     const front = [momentFront(), extrasFromDoc(baseDoc)].filter(Boolean).join('\n');
     const path = editing || `${momentsDir}/${newSlug()}.md`;
+    /* 后端优先吃结构化的 `front`，`content` 只是给「只认整篇 markdown 的老后端」的兼容路径 ——
+       所以标题必须两处都给：只写在 momentFront() 那一串里，落盘时会被结构化那份顶掉。 */
+    const titleWanted = (baseDoc.scalars.title ?? '').trim() || titleFromBody(body);
     try {
       const res = await put<{ data: { sha?: string; note?: string | null } }>('/api/admin/content/file', {
         path,
         front: {
+          ...(titleWanted ? { title: titleWanted } : {}),
           date: fromDateInput(date) || date,
           draft,
           images,

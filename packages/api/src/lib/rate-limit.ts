@@ -80,7 +80,9 @@ function limitKey(name: string, c: Context, keyHint: string): string {
 /** 超出窗口时抛 429，提示给出真实等待秒数（两版共用这一句） */
 function tooOften(first: number, since: number): never {
   const wait = Math.max(1, Math.ceil((first - since) / 1000));
-  fail(429, `操作过于频繁，请 ${wait >= 60 ? `${Math.ceil(wait / 60)} 分钟` : `${wait} 秒`}后再试`);
+  /* 文案里那句「N 分钟」是算出来的（最早那条出窗的时间），但人读的是文字、脚本读的是头：
+     没有 Retry-After 时客户端只能瞎退避（体检实测 429 的 retry-after 是 null）。 */
+  fail(429, `操作过于频繁，请 ${wait >= 60 ? `${Math.ceil(wait / 60)} 分钟` : `${wait} 秒`}后再试`, { 'Retry-After': String(wait) });
 }
 
 type Bucket = { windowSeconds: number; hits: number[] };

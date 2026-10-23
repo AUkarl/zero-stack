@@ -29,7 +29,13 @@ export interface Comment {
   gravatar?: string;
   /** 第二级之后还要依次试的地址（Cravatar、QQ 号头像），img onerror 一路往下换 */
   fallbacks?: string[];
-  emailDomain?: string;
+  /**
+   * 首字母色块的色相与字母，由服务端按「昵称|邮箱域名」算好下发（见 comment/src/lib/avatar-style.ts）。
+   * R43 之前这里公开的是 `emailDomain` 本身 —— 那等于把每个人的邮箱域名连同昵称一起挂公开接口上。
+   * 换成色相之后：域名不再外流，而颜色一格都没变（服务端用的是同一段算法、同一串种子）。
+   */
+  avatarHue?: number;
+  avatarInitial?: string;
   isAuthor: boolean;
   group?: CommentGroup;
   /** 平铺回复才有：被回复者的昵称，顶层是空串 */

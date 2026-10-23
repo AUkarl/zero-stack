@@ -159,6 +159,13 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 `GITHUB_REDIRECT_URI`（OAuth 回调地址）与 `GIT_LOCAL_DIR`（未配 GitHub 时把后台写入落到本地目录）
 只在本地 `.dev.vars` 里用；线上不要设 `GIT_LOCAL_DIR`，否则 Worker 上会退化成无效的本地路径。
 
+还有两个 `vars`（不是 secret，写在 `wrangler.jsonc` 的 `[vars]` 或 `.dev.vars` 里都行），以前文档一个字没提，这里补上：
+
+| 变量 | 默认 | 必需 | 说明 |
+|---|---|---|---|
+| `CF_CLIENT_IP_FALLBACK` | `203.0.113.1` | 非 Cloudflare 部署要设 | 请求里没有 `cf-connecting-ip` 时用的兜底访客地址。**不设的后果很具体**：所有访客共用同一个假 IP，于是限流互相挤兑（第 241 次浏览起整栋楼一起 429）、统计里独立访客永远是 1 人、按 IP 的黑名单一拉黑全人类。跑在 Cloudflare 上不用管（边缘一定会带那个头）；跑在别处（Vercel、自建 nginx、本地）要么把这行设成真实取值来源，要么至少设成 `""` 以外的、能区分的值 |
+| `TRANSLATE_API_KEY` | 空 | 用「服务端配置的翻译密钥」时才设 | 与后台「翻译」面板里那一格是同一件事的两个来源：这里设了就用这里的，没设则退回后台存的 `translateKey`。两个都没有时翻译入口直接回「未配置」，不影响别的 |
+
 重跑 `pnpm setup` 会重新生成 `AUTH_SECRET` / `SESSION_SECRET`，已登录的会话会失效（评论者不受影响）。
 三个地址默认沿用 `wrangler.jsonc` 里现有的值（直接回车就是不改），但 `ALLOWED_ORIGINS` 仍是由
 「后台地址 + 前台地址」两答整段生成 —— 手加进去的第三个来源不在答案里就会被删掉，脚本会先打印警告。
@@ -238,11 +245,15 @@ VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
 | 检查 | 方法 |
 |---|---|
 | 安全响应头 | `curl -I https://<站点>/`、`curl -I https://<worker-url>/api/config`、`curl -I https://<后台域名>/login` 三处都应回带 `Content-Security-Policy`。三处策略不同：站点那份放过各家 CDN 的评论/数学脚本与所有 https 图片、框架；接口那份是 `default-src 'none'`（只有两页真出 HTML 才放开内联样式）；后台那份 `script-src` 只认自己构建的产物。**站点那份的 `connect-src` 是从 `functions/_middleware.ts` 里的 `API_BASE` 推出来的**：接口与评论后端（waline / twikoo 的 serverUrl）如果放在另一个父域上，要在那个文件的 `API_SIBLINGS` 旁边补一行域名。漏补的样子是页面照常出、评论区一直转圈或统计一直零，浏览器控制台写着 `Refused to connect ... because it violates the document's Content Security Policy` |
-| 运行时与绑定 | `curl https://<worker-url>/api/health`，`ok: true` 且 `broken` 为空 |
+| 运行时与绑定 | `curl https://<worker-url>/api/health`，`ok: true` 且 `broken` 为空。**`checks.d1` 现在不只数行数，还会探一条只有跑到较后迁移才存在的列（`email_logs.detail`）**：迁移只跑了一半时这一项会直接 `ok:false` 并写明「表结构比代码旧」，而不是等第一次注册/发信才 500 |
+| 迁移真的跑完了 | `pnpm --filter zero-api db:migrate:local`（或 `--remote`）的**退出码必须为 0**。`wrangler d1 migrations apply` 会偶发失败（实测报与 SQL 无关的 `bad port`），失败后再往下走就是一个「半迁移的库」：`/api/health` 从前照样绿、第一次写才炸。失败了重跑一次，两次都不过就去查那一条迁移的报错原文，不要继续部署 |
 | 后台可用 | 库里还没有账号时，后台登录页会自动变成「建为站长并登录」表单（`GET /api/auth/init-status` 报 `pending: true`），填邮箱 + 两遍密码就完成初始化，第一个账号直接是 `admin` 且跳过邮箱验证，建完这表单就消失。等价的手动做法：`curl -X POST https://<worker 地址>/api/auth/register -H 'Content-Type: application/json' --data-binary '{"email":"你@域名","password":"至少 8 位","name":"站长"}'`，回 `role: "admin"` 即站长账号建好（表单会顺手帮你登录，直接进仪表盘） |
 | 邮件可用 | 后台「设置」填 `emailProvider` / `smtpHost` / `smtpPort` / `smtpUser` / `emailFrom` → 走一次找回密码或群发。**端口选 465（隐式 TLS）才是验证过的路径**；587 / 2525 的 STARTTLS 路径本模板未在真实服务商上端到端验证过，原因见下面「排错」表那两行 |
 | 站点地址 | 后台「设置」填 `siteUrl`（正式域名）与 `mediaPublicUrl`（Worker 地址），前者决定后台列表里的链接与邮件里的落地页，后者决定图片的绝对地址 |
-| 媒体可用 | 后台「媒体」上传一张图，复制它给出的绝对地址直接打开应能出图：桶配了 `baseUrl` 就是桶域名直链，没配则是 `<mediaPublicUrl>/api/media/<桶>/<键>`（公开只读代理，无需登录） |
+| 本地也要过边缘头 | `hugo server` **不执行** `functions/_middleware.ts`，所以本地看到的页面既没 CSP 也没缓存头 —— 「本地好好的、推上去资源被自家 CSP 挡掉」就是这么来的。想在本地量真头：先 `hugo --gc --minify -d public`，再 `node <zero-stack>/scripts/preview-with-middleware.mjs <内容仓库目录> 8888`，浏览器开 `http://127.0.0.1:8888/`。**图片被 CSP 挡掉不会留任何可见痕迹**，所以要在 Console 里数一句 `Array.from(document.images).filter(i=>i.naturalWidth===0).length`（应当 0），光看控制台有没有报错会漏 |
+| 媒体可用 | 后台「媒体」上传一张图，复制它给出的绝对地址直接打开应能出图：桶配了 `baseUrl` 就是桶域名直链，没配则是 `<mediaPublicUrl>/api/media/<桶>/<键>`（公开只读代理，无需登录）。**本地跑一套时还要看缩略图真的出图**：在 `/media` 页的控制台执行 `Array.from(document.images).filter(i=>i.naturalWidth===0).length`，应当是 0 —— 图片被自家 CSP 挡掉时不会有任何可见提示，只有一句 violation |
+| 后台与接口不进索引 | `curl -I https://<后台域名>/login` 与 `curl -I https://<worker-url>/api/config` 都应带 `x-robots-tag: noindex, nofollow`。别指望 robots.txt：后台与接口是**另两个子域**，前台那份 `Disallow: /admin/` 管不到它们，而 Cloudflare 自动给这两个子域生成的 robots.txt 一条 Disallow 都没有 |
+| 匿名访客能改/删自己的评论 | 前台发一条匿名评论 → 该条上点「编辑」改一个字、点「删除」删掉，两次都应当成功。凭证自 R43 起走请求头（`X-Comment-Owner` / `X-Comment-Owners`），所以**升级顺序是先部署 Worker、再抬主题里的评论产物**：反过来的话新产物对老 Worker 发自定义头会被跨源预检拦住，表现是「点删除没反应、控制台一句 CORS」 |
 | 管理员联系邮箱 | 后台「设置」填 `adminContactEmail`，前台 `/account/` 的「找回密码」会把这句话补全：「如密码遗失，可使用注册邮箱向管理员 xxx 发送邮件找回」 |
 | Cron 在跑 | 后台「仪表盘」运行状况卡片，或 `SELECT * FROM job_runs ORDER BY started_at DESC LIMIT 10`。**新建的库这张表必然是 0 行，那不是故障**：只有定时任务真跑过（每天 02:00 UTC）才写行。不想等就本地 `wrangler dev --test-scheduled` 起服务，浏览器打开 `http://localhost:8787/__scheduled` 立刻跑一轮；线上只能等下一个整点，或者用后台对应按钮手动触发能手动触发的那几件（群发、友链检测） |
 | 队列在跑 | 后台「订阅」群发一次，观察 `email_logs` 表状态 |
@@ -673,6 +684,11 @@ pnpm check   # 本地跑同一套校验
   代价是冷启动清零、多 isolate 不共享，挡的是「同一会话/同一 IP 无节制地打」）；
   注册、发码、找回密码、登录、评论、评论点赞、友链申请、群发、翻译这些低频或敏感口继续用 KV，跨 isolate 生效。
   按 5,000 访问/天算，如果这四条也走 KV，光限流就要 5,000 次写，而免费额度只有 1,000 次/天。
+- **进入页面的记录 `/api/analytics/beat` 是两层桶**：一个会话一小时 240 次（约每分钟翻 4 页）+ 一个 IP 一小时 3000 次的兜底。
+  为什么要两层：会话那层的键里带着一个**客户端自己给的** `s`，换一串就换一个桶，单靠它挡不住「一台机器每次换个 s 来灌浏览量」
+  （体检实测：同一出口 IP 每次换 `s` 连打 250 次全过，灌出来的数直接进后台「热门页 Top」）。
+  IP 那层的阈值给到正常访客绝碰不到的量级（3000/小时 = 每分钟 50 页），所以不会重演「整栋楼共用一个桶、第 241 次起一起 429」。
+  两条 429 都带 `Retry-After`，脚本能照着自动退避。
 - **停留时长结算有双层限流**：`heartbeat` 一个会话一小时 60 次、一个 IP 一小时 600 次。
   这条接口不需要任何凭据，没限流时一个脚本就能把 D1 的 10 万次行写额度打满；
   单次结算仍夹在 `min(duration + ?, 86400)`，最长 24 小时。

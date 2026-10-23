@@ -3,7 +3,7 @@
   import type { Comment, CommentCtx } from './types';
   import { timeAgo } from '../lib/api';
   import { tr } from '../lib/i18n';
-  import { avatarSources, fallbackStyle, infoLine, initialOf, safeLink } from '../lib/meta';
+  import { avatarSources, avatarInitialFromNode, avatarStyleFromNode, infoLine, safeLink } from '../lib/meta';
   import { hasOwnerKey } from '../lib/owners';
   import { session } from '../lib/session.svelte';
   import CommentEditor from './CommentEditor.svelte';
@@ -96,16 +96,16 @@
         {#if avatarSrc}
           <img class="avatar" src={avatarSrc} alt="" loading="lazy" onerror={() => (step = step + 1)} />
         {:else}
-          <span class="avatar fallback" style={fallbackStyle(node.authorName, node.emailDomain)} aria-hidden="true">
-            {initialOf(node.authorName, node.emailDomain)}
+          <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">
+            {avatarInitialFromNode(node)}
           </span>
         {/if}
       </a>
     {:else if avatarSrc}
       <img class="avatar" src={avatarSrc} alt="" loading="lazy" onerror={() => (step = step + 1)} />
     {:else}
-      <span class="avatar fallback" style={fallbackStyle(node.authorName, node.emailDomain)} aria-hidden="true">
-        {initialOf(node.authorName, node.emailDomain)}
+      <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">
+        {avatarInitialFromNode(node)}
       </span>
     {/if}
   </div>

@@ -72,7 +72,13 @@ app.use('*', async (c, next) => {
       return isAllowedOrigin(origin, allowed, self) ? origin : null;
     },
     credentials: true,
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    /* 评论凭证这两个头是 R43 起前端改走请求头用的（以前挤在 ?owner= 查询串里，
+       于是凭证会进浏览器历史、代理日志与任何记录完整 URL 的地方）。
+       hono 的 cors 在预检里**只回这一份固定清单**，不在清单里的头会被浏览器拦下 ——
+       前台域与接口域不同是默认部署形状，漏掉这一行等于把匿名访客的「编辑/删除自己的评论」改死
+       （台架实测：带 X-Comment-Owner 的 DELETE 直接 Failed to fetch，而 ?owner= 那条 200）。
+       允许的来源仍然只有 isAllowedOrigin 那一份名单，这里只是让被允许的前端能把头带上。 */
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Comment-Owner', 'X-Comment-Owners'],
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     maxAge: 86400,
   })(c, next);
@@ -98,6 +104,10 @@ app.use('*', async (c, next) => {
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Worker 只出 JSON 与错误页，不该被任何页面框住，也不该拿到摄像头/定位这类能力
   c.res.headers.set('X-Frame-Options', 'DENY');
+  /* 接口域同样不进索引：它有两页真出 HTML（订阅确认的 donePage、后台的邮件预览），
+     而这两个地址都是「带一个 token/uuid 的一次性页面」，被收进搜索结果就是把订阅链接
+     与邮件内容摆到外人面前。JSON 那一路本来也没索引价值，一起挂上，省得以后又新增一页 HTML 忘了。 */
+  c.res.headers.set('X-Robots-Tag', 'noindex, nofollow');
   c.res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
 });
 
@@ -118,9 +128,17 @@ app.get('/api/health', async (c) => {
 
   try {
     const row = await env.DB.prepare('select count(*) as n from users').first<{ n: number }>();
+    /**
+     * 只数行数不够：`wrangler d1 migrations apply` 会偶发失败（实测报与 SQL 无关的 `bad port`），
+     * 而部署脚本常常打印完退出码就继续 —— 于是库停在前面几条迁移，`users` 少了 `can_publish`、
+     * `email_logs` 少了 `detail`，health 照样绿，直到第一次 `POST /api/auth/register` 才 500，
+     * 现场长得像产品崩了（第 5 轮整轮就是这么废的）。这里补探一条**只有跑到 0012 之后才存在**的列，
+     * 迁移没跑完就当场在 /api/health 里露出来。用 limit 0 是为了不读任何数据。
+     */
+    await env.DB.prepare('select detail from email_logs limit 0').all();
     checks.d1 = { ok: true, detail: `users=${row?.n ?? 0}` };
   } catch (e) {
-    checks.d1 = { ok: false, detail: errorMessage(e) };
+    checks.d1 = { ok: false, detail: `表结构比代码旧（大概率是迁移没跑完，缺 email_logs.detail 这类较新的列）：${errorMessage(e)}` };
   }
 
   try {
@@ -222,8 +240,24 @@ app.route('/api/security', security);
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return err.getResponse();
-  console.error('[zero-api]', err);
-  return Response.json({ error: 500, message: errorMessage(err) }, { status: 500 });
+  const traceId = crypto.randomUUID().slice(0, 8);
+  console.error(`[zero-api] 500 trace=${traceId}`, err);
+  /**
+   * 500 的回包不能原样带 `err.message`：实测里面是**完整 SQL 与列名清单**
+   * （`Failed query: insert into "users" ("id","name",…,"can_publish","can_author"…)`），
+   * 并发压测那次还带出 miniflare 的堆栈与本地绝对路径 —— 等于把表结构和内部路径公开。
+   * 只有显式 `ENVIRONMENT=development`（本地 wrangler dev）才回原文，那正是需要它的场合；
+   * 线上给人看的是日志里那同一个 trace。
+   */
+  const dev = c.env.ENVIRONMENT === 'development';
+  return Response.json(
+    {
+      error: 500,
+      message: dev ? errorMessage(err) : '服务内部异常，请联系站长并附上 trace',
+      trace: traceId,
+    },
+    { status: 500 },
+  );
 });
 
 app.notFound(() => Response.json({ error: 404, message: '接口不存在' }, { status: 404 }));

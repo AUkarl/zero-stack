@@ -21,6 +21,9 @@
     /** 明细保留天数 + 口径说明，statsMeta() 生成 */
     retentionDays?: number;
     retentionNote?: string;
+    /** 本 isolate 这一小时里被 isBot() 判掉、没入库的 /beat 条数（冷启动清零，不是全站累计） */
+    botFilteredThisHour?: number;
+    botFilteredNote?: string;
   }
   interface Point {
     day: string;
@@ -228,7 +231,13 @@
   <p class="muted small ipnote">
     访客口径：按加盐哈希后的访客 IP 去重（迁移前没有哈希的老记录退回会话指纹）。{summary.retentionNote || ''}
     其余「今日 / 明细」类数字只覆盖保留期内的明细。
-    浏览量为页面浏览次数（同一人刷新多次算多次），爬虫与监控探针的访问不入库；
+    浏览量为页面浏览次数（同一人刷新多次算多次），爬虫与监控探针的访问不入库
+    {#if typeof summary.botFilteredThisHour === 'number'}
+      （本实例这一小时里被判为机器人并丢弃的是 <b>{summary.botFilteredThisHour}</b> 条——
+      冷启动会清零，不是全站累计；「今天数字为什么少了一半」先看这一条再猜）
+    {:else}
+      ；
+    {/if}
     「今日」的日界按后台配置键 statsUtcOffsetHours（默认东八区 8）切，不再是 UTC 零点。
   </p>
 {/if}

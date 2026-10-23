@@ -102,10 +102,17 @@
         offset: String(offset),
         limit: String(limit),
       });
-      // 带上本地存的凭证，自己那条待审评论才会回传（后端 parseOwners 认 JSON 对象）
+      /* 带上本地存的凭证，自己那条待审评论才会回传（后端 parseOwners 认 JSON 对象）。
+         优先走请求头 —— 查询串会留在浏览器历史与代理日志里，而这一份是「整篇文章的凭证集合」。
+         但一个头不能无限长：localStorage 那侧每篇最多存 200 条，编码后能到十几 KB，
+         超过 4KB 就退回查询串（服务端三档都认，退回不影响功能，只是少一次留痕改进）。 */
       const owners = ownersParam(key);
-      if (owners) q.set('owners', owners);
-      const d = await apiFetch<{ data: CommentListData }>(base, `/api/comments${key}?${q}`);
+      const ownerHeaders: Record<string, string> = {};
+      if (owners) {
+        if (owners.length <= 4096) ownerHeaders['X-Comment-Owners'] = owners;
+        else q.set('owners', owners);
+      }
+      const d = await apiFetch<{ data: CommentListData }>(base, `/api/comments${key}?${q}`, { headers: ownerHeaders });
       const rows = (d.data.comments ?? []).map(normalizeRoot);
       tree = reset ? rows : [...tree, ...rows];
       const extra = (d.data.mine ?? []).map(normalizeRoot);
@@ -304,11 +311,14 @@
     ctx.editError = '';
     try {
       const owner = ownerKeyOf(key, id);
-      const qs = owner ? `?owner=${encodeURIComponent(owner)}` : '';
+      /* 凭证走请求头，不再挤进 URL（URL 会留在浏览器历史、代理日志和任何记录完整地址的地方）。
+         body.ownerKey 照旧带着：那是服务端三档里的最后一档，老 Worker 也认。
+         **升级顺序**：要先部署 Worker（allowHeaders 里有这两个头），再抬主题里的组件产物 ——
+         反过来时新产物对老 Worker 发自定义头会被预检拦住。 */
       const d = await apiFetch<{ data: { id: string; content: string; status: string; editedAt: number | null; message?: string | null } }>(
         base,
-        `/api/comments/${id}${qs}`,
-        { method: 'PATCH', body: JSON.stringify({ content, ...(owner ? { ownerKey: owner } : {}) }) },
+        `/api/comments/${id}`,
+        { method: 'PATCH', headers: owner ? { 'X-Comment-Owner': owner } : {}, body: JSON.stringify({ content, ...(owner ? { ownerKey: owner } : {}) }) },
       );
       const node = findNode(id);
       if (node) {
@@ -330,9 +340,9 @@
   async function remove(id: string) {
     if (!confirm(t('confirmDelete'))) return;
     const owner = ownerKeyOf(key, id);
-    const qs = owner ? `?owner=${encodeURIComponent(owner)}` : '';
     try {
-      await apiFetch(base, `/api/comments/${id}${qs}`, { method: 'DELETE' });
+      /* 与 saveEdit 同一个口径：凭证走头，URL 里不再留痕（升级顺序见 saveEdit 那段注释） */
+      await apiFetch(base, `/api/comments/${id}`, { method: 'DELETE', headers: owner ? { 'X-Comment-Owner': owner } : {} });
       dropOwnerKey(key, id);
       removeLocal(id);
       listError = '';

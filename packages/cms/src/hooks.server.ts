@@ -12,10 +12,18 @@ import { dev } from '$app/env';
  * X-Frame-Options: DENY（不是 SAMEORIGIN）：后台不需要被任何页面框住，包括它自己。
  * 站长带着已登录的会话被别人诱导点开一个伪装页面时，框里的「删除文章」「恢复备份」
  * 就是真的执行 —— 这是后台唯一必须挡住的一类攻击。CSP 里的 frame-ancestors 'none' 是同一件事的现代写法。
+ *
+ * X-Robots-Tag: noindex, nofollow：后台不该出现在搜索结果里。
+ * 为什么用响应头而不是 robots.txt：后台是**另一个子域**（admin-cms.*），前台那份 robots.txt
+ * 里的 `Disallow: /admin/` 管不到它，而 Cloudflare 给这两个子域自动生成的 robots.txt 一条 Disallow 都没有
+ * （实测 1248 字节的 content-signals 模板）。只靠 robots.txt 还会造成最难看的形态 ——
+ * 「不许抓、但照样索引」，搜索结果里挂着一个打不开的「管理后台」。响应头对每一页都有效，
+ * 包括那条 `/login`。
  */
 const HEADERS: Array<[string, string]> = [
   ['X-Content-Type-Options', 'nosniff'],
   ['X-Frame-Options', 'DENY'],
+  ['X-Robots-Tag', 'noindex, nofollow'],
   ['Referrer-Policy', 'strict-origin-when-cross-origin'],
   ['Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)'],
 ];
@@ -32,14 +40,18 @@ const HEADERS: Array<[string, string]> = [
  *   · img-src 放过 https 与 blob：媒体库预览走各桶自己的 baseUrl（可以在任何域），
  *     上传前的压缩图是 canvas 现出的 blob。
  *   · dev 多带 localhost 与 ws：`pnpm dev` 的 HMR 是同源 websocket，vite 还会往页面里注内联脚本。
+ *     dev 的 http 两档要把 `localhost` 与 `127.0.0.1` **都**写上：README/LOCAL_RUN 教的正是
+ *     `http://127.0.0.1:8787` 这种写法，只放 localhost 的话后台一打开就是「接口全挂、缩略图全白」，
+ *     而且 CSP 拦掉图片不会留下任何比一条 violation 更明显的痕迹（R41 那轮量「违规 0 条」就是这么漏的）。
+ *     生产档一个字不加：线上媒体与接口全是 https。
  */
 const CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
+  `img-src 'self' data: blob: https:${dev ? ' http://localhost:* http://127.0.0.1:*' : ''}`,
   "font-src 'self' data:",
-  `connect-src 'self' https: wss:${dev ? ' http://localhost:* ws://localhost:* ws://127.0.0.1:*' : ''}`,
+  `connect-src 'self' https: wss:${dev ? ' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*' : ''}`,
   "media-src 'self' https: blob:",
   "frame-src 'self'",
   "object-src 'none'",

@@ -40,6 +40,29 @@ const href = z.string().max(600);
  * 而后台与前台都不会报错 —— 与 R34 那批堵 `//站外` 是同一类「看着像站内其实不是」。
  * 空串是允许的：「没链接又没有标识」那种整项无用的情况由 navItem 的 refine 管（下拉分组只有标识）。
  */
+/**
+ * 「以 / 开头但其实要往上跳/跳到站外」的判断，**原样与解码后各看一遍**。
+ *
+ * 为什么要看解码后的：R39 只挡了字面量 `/../x`，而 `/tags/%2e%2e/` 一样能写进库、
+ * 浏览器与边缘会先解码再规范路径 —— 体检实测这条写入 200 且落盘，线上点进去 404（一条死链）。
+ * `%2f%2f` 同理（解码后是协议相对，会跳到别人的域名）。
+ * 反过来**不能**把空白/引号那条判据也套到解码后的串上：`/tags/%20a%2eb/` 这种
+ * 正常中文/含空格路径解码出来就带空格，那样会把好地址打死（体检报告里点名的坑）。
+ * decodeURIComponent 遇到坏百分号会抛，抛了就当没解码（原样那条判据仍在）。
+ */
+function looksLikeTraversal(v: string): boolean {
+  const bare = /^\/\/|\/\\/.test(v) || /\/\.\.(\/|$)/.test(v);
+  if (bare) return true;
+  let decoded = '';
+  try {
+    decoded = decodeURIComponent(v);
+  } catch {
+    return false;
+  }
+  if (decoded === v) return false;
+  return /^\/\/|\/\\/.test(decoded) || /\/\.\.(\/|$)/.test(decoded);
+}
+
 const linkUrl = z
   .string()
   .max(600)
@@ -49,8 +72,8 @@ const linkUrl = z
       !v ||
       /^https?:\/\//i.test(v) ||
       /^mailto:/i.test(v) ||
-      (v.startsWith('/') && !/^\/\/|\/\\/.test(v) && !/\/\.\.(\/|$)/.test(v) && !/[\s"'<>`]/.test(v)),
-    '地址要嘛是以 / 开头的站内路径（注意：以 // 或 /\\ 开头是跳到别人的域名，不算站内；带 ../ 往上跳的也不算站内），要嘛写成 http:// 或 https:// 开头的完整地址，或者 mailto: 开头的邮箱',
+      (v.startsWith('/') && !looksLikeTraversal(v) && !/[\s"'<>`]/.test(v)),
+    '地址要嘛是以 / 开头的站内路径（注意：以 // 或 /\\ 开头是跳到别人的域名，不算站内；带 ../ 或 %2e%2e 往上跳的也不算站内），要嘛写成 http:// 或 https:// 开头的完整地址，或者 mailto: 开头的邮箱',
   );
 
 /**

@@ -560,6 +560,43 @@ async function readTable(
 
 /* -------------------------------------------------------------------- 导入 */
 
+/* ── 恢复时的「形状纠正」（R43-A2） ─────────────────────────────
+ * data/site.json 是给人直接在仓库里编辑的，也是备份文件里原样搬运的一段。
+ * 它的 description 一旦写成数组或对象，主题那份 seo.html 的 `plainify` 会抛
+ * `unable to cast map[string]interface{}`，而那是**每一页都跑**的 partial ——
+ * 整站构建直接死，Pages 那边只报构建失败，人在后台看不见原因（R31-3 是同族）。
+ * 后台那条写入路早被 zod 挡住（数组直接 400），漏的是「恢复」与「手改数据文件」这两条。
+ * 口径按站长定的：**不阻断恢复**，自动收成一句话，并在回包里点名改了哪个字段。
+ */
+const SCALAR_SITE_KEYS = ['description', 'logo', 'favicon', 'ogImage', 'landingImage', 'name', 'navName', 'author', 'defaultAuthor'];
+
+function normalizeSiteJsonShape(path: string, raw: string): { content: string; notes: string[] } {
+  if (!/(^|\/)site\.json$/i.test(path)) return { content: raw, notes: [] };
+  let obj: Record<string, unknown>;
+  /* 坏 JSON 不在这里判：恢复口后面有整体校验，这里只处理「能 parse 但形状不对」 */
+  try {
+    obj = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return { content: raw, notes: [] };
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { content: raw, notes: [] };
+  const notes: string[] = [];
+  for (const k of SCALAR_SITE_KEYS) {
+    const v = obj[k];
+    if (v === undefined || v === null || typeof v === 'string') continue;
+    const kind = Array.isArray(v) ? '数组' : typeof v === 'object' ? '对象' : typeof v;
+    let fixed: string;
+    if (Array.isArray(v)) fixed = String((v as unknown[])[0] ?? '');
+    else if (typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      fixed = typeof o.text === 'string' ? o.text : typeof o.value === 'string' ? o.value : JSON.stringify(v);
+    } else fixed = String(v);
+    obj[k] = fixed;
+    notes.push(`${k}：备份里那份是${kind}，已收成一句话「${fixed.slice(0, 36)}${fixed.length > 36 ? '…' : ''}」——这种字段写成非标量会把整站构建打死，请确认收成的这句就是你要的`);
+  }
+  return notes.length ? { content: JSON.stringify(obj, null, 2) + '\n', notes } : { content: raw, notes };
+}
+
 export interface SectionFileResult {
   total: number;
   write: number;
@@ -811,8 +848,15 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
       const keptApi: string[] = [];
       /** 正文/数据里残留的 127.0.0.1 这类地址，改写不了正文，只能逐条点名 */
       const localAddr: string[] = [];
+      /** data/site.json 里被收成一句话的非标量字段（见 normalizeSiteJsonShape） */
+      const shapeFixed: string[] = [];
       for (const f of batch) {
         let content = f.content;
+        const shaped = normalizeSiteJsonShape(f.path, content);
+        if (shaped.notes.length) {
+          content = shaped.content;
+          for (const n of shaped.notes) shapeFixed.push(`${f.path}：${n}`);
+        }
         let current: { content: string } | null = null;
         try {
           current = await readFileFrom(target, f.path);
@@ -864,6 +908,11 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
         result.notes.push(`${fr.skip} 个文件本站已有同名且内容不同，没勾「覆盖同名」所以保持不动（要替换请勾上再导一次）`);
       }
       for (const k of keptApi.slice(0, 3)) result.notes.push(k);
+      if (shapeFixed.length) {
+        result.notes.push(
+          `${shapeFixed.length} 个数据字段不是标量，恢复时已自动收成一句话：${shapeFixed.slice(0, 2).join('；')}${shapeFixed.length > 2 ? ' …' : ''}`,
+        );
+      }
       if (localAddr.length) {
         result.notes.push(
           `${localAddr.length} 个文件里还有源站的本机地址，访客打不开这类链接，请到后台逐个改：${localAddr.slice(0, 3).join('、')}${localAddr.length > 3 ? ' …' : ''}`,

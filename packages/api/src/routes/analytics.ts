@@ -34,6 +34,22 @@ async function memoized<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * 被判为机器人而**没入库**的请求计数（按小时滚动的窗口，记在 isolate 内存里）。
+ * 为什么只放内存、不入库：这条是给「今天数字为什么少了一半」用的线索，不是账本；
+ * 为它每次写 D1/KV 就等于把访问量再乘一遍。口径与限流桶一样：冷启动会清零，
+ * 所以读的时候把它当「本进程这一个小时看到的」，别当全站累计。
+ */
+const botFilter = { hour: Math.floor(Date.now() / 3600000), count: 0 };
+function countBotHit() {
+  const hour = Math.floor(Date.now() / 3600000);
+  if (hour !== botFilter.hour) {
+    botFilter.hour = hour;
+    botFilter.count = 0;
+  }
+  botFilter.count++;
+}
+
+/**
  * 进入页面：建立会话。sendBeacon 只能发 POST 且带不了自定义头，
  * 所以所有字段走 URL 查询串，body 兜底再读一遍；顺便记一次「建站以来累计」。
  */
@@ -52,7 +68,10 @@ app.post('/beat', async (c) => {
   const ua = userAgent(c);
   const ip = clientIp(c);
   // 爬虫与监控探针不入库，否则浏览量与热门页 Top 会被机器流量抬虚高
-  if (isBot(ua)) return ok({ tracked: false });
+  if (isBot(ua)) {
+    countBotHit();
+    return ok({ tracked: false });
+  }
   /* 频控：一条会话一小时 240 次（约每分钟翻 4 页），正常人逛站碰不到这条线。
      放在 UA 判断之后，爬虫已经不入库，别为它们白记一次。
      计数记在 isolate 内存里：这条是每个页面加载都打一次的高频口，
@@ -62,6 +81,12 @@ app.post('/beat', async (c) => {
      匿名访客没有 s 时退回「IP+UA」的指纹，与入库那一步用的是同一个口径。 */
   const beatSession = payload.s || payload.session || hash(ip + '|' + ua);
   rateLimitLocal(c, 'beat', 240, 3600, beatSession);
+  /* 上面那条的键里有 `payload.s` —— 那是**客户端自己给的字符串**，换一串就换一个桶：
+     体检实测同一出口 IP 每次换 s 连打 250 次全过（同串才 240 封顶），灌进来的数直接进了
+     后台的「热门页 Top」（views:250 / visitors:1）。这条纯 IP 桶是兜底：
+     阈值给到正常访客绝碰不到的量级（一小时 3000 次 = 每分钟 50 页），
+     所以既不会重演 R39 之前「整栋楼共用一个桶」的挤兑，又能让换串的脚本撞墙。 */
+  rateLimitLocal(c, 'beat-ip', 3000, 3600);
   const { device, browser, os } = parseUserAgent(ua);
 
   // 访客指纹 sha256(salt|ip)：明文 IP 只在这一步存在于内存，入库的只有哈希
@@ -179,6 +204,11 @@ app.get('/summary', async (c) => {
         totalUniqueIpVisitors: lifetime.totalVisitors,
         retentionDays: meta.retentionDays,
         retentionNote: meta.note,
+        /* 被判为机器人而没入库的量 —— 这条是「今天统计为什么少了一半」的线索：
+           以前 isBot 命中就静默丢掉（回 200 tracked:false），对着空表只能猜。
+           口径写死在这里：本 isolate、当前小时窗口，冷启动清零，不是全站累计。 */
+        botFilteredThisHour: botFilter.count,
+        botFilteredNote: '只统计本 Worker 实例这一个小时里被判为机器人的 /beat 请求；冷启动会清零，不是全站累计',
       };
     }),
   );

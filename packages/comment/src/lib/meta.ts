@@ -125,21 +125,10 @@ export function avatarSources(node: {
   return out;
 }
 
-export function initialOf(name: string | null | undefined, emailDomain?: string | null): string {
-  const n = String(name || '').trim();
-  if (n) return n.slice(0, 1).toUpperCase();
-  const d = String(emailDomain || '').trim();
-  return d ? d.slice(0, 1).toUpperCase() : '?';
-}
-
-/** 名字（其次邮箱域名）散列出色相：同一个人颜色稳定，不依赖随机数 */
-export function fallbackStyle(name: string | null | undefined, emailDomain?: string | null): string {
-  const seed = `${String(name || '').trim()}|${String(emailDomain || '').trim()}`;
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  return `background:hsl(${hue} 45% 84%);color:hsl(${hue} 55% 26%)`;
-}
+/* 首字母与底色那两件事的唯一一份实现在 ./avatar-style.ts（服务端要复用同一算法，
+   而这份文件引了 i18n，Worker 侧不能连一起拖进去）。这里只是原样转出，
+   老代码 import { initialOf, fallbackStyle } from '../lib/meta' 照常能用。 */
+export { initialOf, fallbackStyle, hueOf, styleFromHue, emailDomainOf, avatarStyleFor, avatarStyleFromNode, avatarInitialFromNode } from './avatar-style';
 
 /** 只放行 http(s) 外链，其它协议（javascript: 之类）一律不渲染成链接 */
 export function safeLink(raw: string | null | undefined): string {

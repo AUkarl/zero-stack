@@ -1,8 +1,8 @@
 import { HTTPException } from 'hono/http-exception';
 
 /** 统一错误响应：前端只认 { error, message } 两个字段 */
-export function fail(status: 400 | 401 | 403 | 404 | 409 | 429 | 500 | 502, message: string): never {
-  throw new HTTPException(status, { res: Response.json({ error: status, message }, { status }) });
+export function fail(status: 400 | 401 | 403 | 404 | 409 | 429 | 500 | 502, message: string, headers?: Record<string, string>): never {
+  throw new HTTPException(status, { res: Response.json({ error: status, message }, { status, headers }) });
 }
 
 export function ok<T>(data: T): Response {

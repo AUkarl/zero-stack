@@ -168,15 +168,18 @@
 
 {#if denied}
   <div class="bare">
-    <div class="bare-main nf">
+    <main class="bare-main nf">
       <p class="code">404</p>
       <p class="msg">页面不存在。</p>
-    </div>
+    </main>
     <footer class="copy">{copyright}</footer>
   </div>
 {:else if isLogin}
+  <!-- 这一支只有 /login（公开页）。以前外面是个 <div>，于是 axe 报两条：
+       「整页没有一个 <main>」+「7 处内容不在任何 landmark 里」—— 读屏用户在登录页只能靠 Tab 走。
+       换成 <main> 一次把两类都消掉：样式仍走同一个 .bare-main 类，视觉与位置不动。 -->
   <div class="bare">
-    <div class="bare-main">{@render children()}</div>
+    <main class="bare-main">{@render children()}</main>
     <footer class="copy">{copyright}</footer>
   </div>
 {:else if !ready || !session.user}

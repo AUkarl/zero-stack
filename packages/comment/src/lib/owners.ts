@@ -5,9 +5,10 @@
  *   · POST /api/comments 的响应里，匿名评论会带回一次性 ownerKey（登录用户为 null）；
  *   · GET /api/comments/{slug}?owners=… 出示过凭证的待审评论才对本人可见，
  *     且只有出示过的那条才回传 ownerKey 字段；
- *   · PATCH /api/comments/:id 认 body.ownerKey 或 ?owner=；DELETE /api/comments/:id 认 ?owner=。
- *   自定义头 X-Comment-Owners / X-Comment-Owner 后端也收，但 API 的 CORS allowHeaders
- *   里没有这两项，跨域会被预检拦掉，所以这里一律走查询参数。
+ *   · PATCH /api/comments/:id 认 body.ownerKey 或 ?owner= 或 X-Comment-Owner；DELETE 认 ?owner= 或 X-Comment-Owner。
+ *     R43 起本包**优先发请求头**（凭证不再留在 URL 上），?owner= 仍被服务端接受，
+ *     作为老 Worker 与「凭证太长装不进一个头」时的退回；
+ *     前提是 Worker 的 CORS allowHeaders 已含 X-Comment-Owner / X-Comment-Owners（部署顺序：先 Worker 后主题）。
  *
  * localStorage 结构按约定以文章分组：
  *   key   = "zero-comment-owners"

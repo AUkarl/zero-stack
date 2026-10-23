@@ -594,6 +594,22 @@ export function jsonKeyBadValue(key: string, value: string): string | null {
   }
   const bad = Object.keys(parsed as Record<string, unknown>).filter((k) => !PROVIDER_IDS.includes(k.toLowerCase()));
   if (bad.length) return `commentProviders 里有代码不认识的键：${bad.join(' / ')}（可用：${PROVIDER_IDS.join(' / ')}）`;
+
+  /* 顶层键认得之后还要看**内层**：主题侧是 `fromAdmin[provider] || {}`，
+     所以 `{"waline":1}` 这种「值不是对象」的写法既不报错也不生效（体检实测能写进库、回读也拿得到），
+     人只会在「参数明明填了却没作用」时才发现。这里把这一层一起挡住。 */
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  for (const [p, conf] of entries) {
+    if (typeof conf !== 'object' || conf === null || Array.isArray(conf)) {
+      return `commentProviders 里「${p}」那一项要写成参数对象，例如 {"${p}":{"serverURL":"https://…"}}；现在送的是 ${JSON.stringify(conf).slice(0, 40)}`;
+    }
+    const odd = Object.entries(conf as Record<string, unknown>).filter(
+      ([, x]) => !(x === null || ['string', 'number', 'boolean'].includes(typeof x) || (Array.isArray(x) && x.every((i) => typeof i === 'string'))),
+    );
+    if (odd.length) {
+      return `commentProviders 里「${p}」的这些参数值要写成文字/数字/是·否（或字符串数组）：${odd.map(([k]) => k).join(' / ')}`;
+    }
+  }
   return null;
 }
 

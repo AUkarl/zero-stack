@@ -353,13 +353,14 @@
     testBusy = true;
     testResult = null;
     try {
-      const d = await post<{ data: { sent: boolean; error: string | null; to: string } }>('/api/admin/email/test', {
+      /* R43 起失败是 5xx + { error, message }，不再回 200 带 sent:false ——
+         界面上这句话由下面那个 catch 从 message 里拿（原因文字一个字没少）。
+         状态码改对是为了让「接 Uptime/脚本测信」那种监控也能看见失败。 */
+      const d = await post<{ data: { sent: true; to: string; kind: string } }>('/api/admin/email/test', {
         to: testTo.trim(),
         kind: testKind,
       });
-      testResult = d.data.sent
-        ? { ok: true, text: `已发到 ${d.data.to}，去邮箱（含垃圾邮件箱）看一下` }
-        : { ok: false, text: `发送失败：${d.data.error ?? '未知原因'}` };
+      testResult = { ok: true, text: `已发到 ${d.data.to}，去邮箱（含垃圾邮件箱）看一下` };
     } catch (e) {
       testResult = { ok: false, text: `发送失败：${e instanceof Error ? e.message : '请求出错'}` };
     } finally {
