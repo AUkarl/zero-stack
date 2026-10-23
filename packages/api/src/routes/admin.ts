@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { avatarChainForEmail } from '../lib/avatar';
+import { avatarCacheKey } from '../services/avatar-cache';
 import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
@@ -34,7 +36,7 @@ import { deleteFile, listDir, readFile, writeFile } from '../services/git';
 import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
-import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
+import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, objectUrl, type MediaBucket } from '../services/media';
 import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry } from '../services/media-variants';
 import {
   buildMarkdown,
@@ -1096,6 +1098,59 @@ app.post('/media-variants', async (c) => {
     ip: clientIp(c),
   });
   return ok({ origin, tiers: Object.keys(v), total: Object.keys(manifest).length });
+});
+
+/**
+ * TEMP-R45-DEBUG：一次性头像抓取诊断（令牌保护，查完即删）。
+ * 把 refreshAvatarCache 的每一步（桶、每个源的 status/type/错误、写入结果、回读）原样回传。
+ */
+app.get('/avatar-debug', async (c) => {
+  if (c.req.query('token') !== 't45dbg-8f3a91c2') return c.notFound();
+  const email = String(c.req.query('email') ?? '').trim();
+  if (!email) fail(400, '需要 email');
+  const out: Record<string, unknown> = { email };
+  const bucket = await resolveBucket(c.env, null).catch((e) => { out.bucketError = String(e); return null; });
+  if (!bucket) return ok(out);
+  out.bucket = { id: bucket.id, kind: bucket.kind, baseUrl: bucket.baseUrl ?? '', prefix: bucket.prefix ?? '' };
+  const key = avatarCacheKey(email);
+  out.key = key;
+  out.url = key ? await objectUrl(c.env, bucket, key) : null;
+  const chain = avatarChainForEmail(email);
+  out.chain = chain;
+  const steps: unknown[] = [];
+  for (const url of chain.slice(0, 4)) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal, headers: { 'user-agent': 'zero-avatar-fetch/1.0' } });
+      const type = res.headers.get('content-type') ?? '';
+      const len = Number(res.headers.get('content-length') ?? 0);
+      let stored = '';
+      if (res.ok && type.startsWith('image/')) {
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (buf.byteLength && buf.byteLength <= 300 * 1024) {
+          await putMediaObject(c.env, bucket, { key: key!, data: buf, contentType: type.split(';')[0] });
+          stored = `ok ${buf.byteLength}B`;
+        } else stored = `skip size ${buf.byteLength}`;
+      }
+      steps.push({ url: url.slice(0, 60), status: res.status, type, len, stored });
+    } catch (e) {
+      steps.push({ url: url.slice(0, 60), error: String(e).slice(0, 140) });
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  out.steps = steps;
+  try {
+    const u = String(out.url ?? '');
+    if (u) {
+      const r = await fetch(u.startsWith('http') ? u : new URL(u, c.req.url).toString(), { headers: { 'user-agent': 'Mozilla/5.0 t45' } });
+      out.readback = { status: r.status, type: r.headers.get('content-type') ?? '' };
+    } else out.readback = 'no-url';
+  } catch (e) {
+    out.readback = `err ${String(e).slice(0, 120)}`;
+  }
+  return ok(out);
 });
 
 app.delete('/media/*', async (c) => {
