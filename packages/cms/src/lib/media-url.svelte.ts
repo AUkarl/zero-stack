@@ -72,6 +72,18 @@ export function mediaLinkKind(bucket: MediaBucketRef | null | undefined): MediaL
   return proxyOrigin() ? 'proxy' : 'relative';
 }
 
+/**
+ * 永远走 Worker 代理的地址（不管桶有没有配直链域名）。
+ * 用途：后台在浏览器里 fetch 原图去做缩略/变体时，直链域是**跨域**且 R2 不发 CORS 头，
+ * `fetch().blob()` 会被浏览器拦掉（Failed to fetch）—— 私有桶走的是 /api/media 所以只有它成功。
+ * 代理在 /api/* 下，CORS 白名单已经放行后台域，读字节才成立。
+ */
+export function mediaProxyLink(bucket: MediaBucketRef | null | undefined, key: string): string {
+  /* 必须用 getApiBase()（后台此刻真正连的那个 API），不能用 mediaPublicUrl：
+     后者是「给访客看的公网地址」，本地台架/调试时它指向线上，回填会去线上找本地键 → 全 404。 */
+  return `${getApiBase().replace(/\/+$/, '')}/api/media/${encodeURIComponent(bucketId(bucket))}/${encodeKey(key)}`;
+}
+
 export function mediaLink(bucket: MediaBucketRef | null | undefined, key: string): string {
   const base = directBase(bucket);
   if (base) return `${base}/${encodeKey(key)}`;
