@@ -1,6 +1,7 @@
 <script lang="ts">
   import { del, get, getApiBase, patch } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
+  import { fetchVariantManifest, uploadVariants } from '#lib/media-variants';
   import { loadMediaBases, mediaLink, mediaLinkKind } from '#lib/media-url.svelte';
 
   interface MediaItem {
@@ -47,6 +48,67 @@
   let uploading = $state(false);
   let progress = $state('');
   let error = $state('');
+  /* R44：存量回填（后台按钮，站长点一次） */
+  let rebuilding = $state(false);
+  let rebuildNote = $state('');
+  let rebuildStop = false;
+
+  /**
+   * 给 uploads/ 下已经有、但清单里还没有的母版补三档变体。
+   * 为什么放浏览器里跑：转图要 canvas，Worker 没有这个能力；顺带还能显示进度、随时停。
+   * 已有的跳过（清单为准），所以重复点不会重复上传。
+   */
+  async function rebuildVariants() {
+    if (rebuilding) {
+      rebuildStop = true;
+      return;
+    }
+    rebuilding = true;
+    rebuildStop = false;
+    rebuildNote = '读取清单…';
+    try {
+      const manifest = await fetchVariantManifest();
+      const done = new Set(Object.keys(manifest));
+      let checked = 0, made = 0, skipped = 0, failed = 0;
+      let cursor: string | null = null;
+      do {
+        const params = new URLSearchParams({ prefix: 'uploads/', limit: '200' });
+        if (selectedId) params.set('bucket', selectedId);
+        if (cursor) params.set('cursor', cursor);
+        const d = await get<{ data: { objects: { key: string; url: string }[]; cursor?: string | null } }>(`/api/admin/media/list?${params}`);
+        const objs = d.data.objects || [];
+        cursor = d.data.cursor ?? null;
+        for (const o of objs) {
+          if (rebuildStop) break;
+          if (!/\.(webp|jpe?g|png|avif|bmp)$/i.test(o.key)) continue;
+          checked++;
+          if (done.has(o.key)) {
+            skipped++;
+            continue;
+          }
+          rebuildNote = `回填中：第 ${checked} 张（新建 ${made} / 已有 ${skipped} / 失败 ${failed}）—— ${o.key}`;
+          try {
+            const r = await fetch(o.url, { credentials: 'omit' });
+            if (!r.ok) throw new Error(`取原图 HTTP ${r.status}`);
+            const blob = await r.blob();
+            const file = new File([blob], o.key.split('/').pop() || 'image', { type: blob.type || 'image/webp' });
+            const entry = await uploadVariants(file, o.key, selectedId || undefined);
+            if (entry) {
+              made++;
+              done.add(o.key);
+            } else failed++;
+          } catch {
+            failed++;
+          }
+        }
+      } while (cursor && !rebuildStop);
+      rebuildNote = `回填结束：检查 ${checked} 张，新建 ${made}，已有 ${skipped}，失败 ${failed}${rebuildStop ? '（已手动停止）' : ''}`;
+    } catch (e) {
+      rebuildNote = `回填失败：${msg(e)}`;
+    } finally {
+      rebuilding = false;
+    }
+  }
   let filter = $state('');
   let input: HTMLInputElement;
 
@@ -140,8 +202,12 @@
       const res = await fetch(getApiBase() + '/api/admin/media' + qs, { method: 'POST', credentials: 'include', body: fd });
       const d = await res.json().catch(() => null);
       if (!res.ok) throw new Error(d?.message || '上传失败');
-      progress = `已上传：${mediaLink(selected, d.data.key)}${note ? `（${note}）` : ''}`;
-      setTimeout(() => (progress = ''), 3500);
+      /* R44：顺手生成 360/720/1080 三档并写清单。失败不回滚原图（清单里没这条 → 主题回退原图，不会 404） */
+      progress = `生成取景变体：${source.name}`;
+      const entry = await uploadVariants(file, d.data.key, selectedId || undefined);
+      const tierNote = entry ? `（三档：${Object.keys(entry.v).join('/')}）` : '（变体没生成，已回退原图）';
+      progress = `已上传：${mediaLink(selected, d.data.key)}${note ? `（${note}）` : ''}${tierNote}`;
+      setTimeout(() => (progress = ''), 4500);
       await load();
     } catch (e) {
       error = msg(e);
@@ -290,7 +356,9 @@
     {/if}
     <input class="flt" placeholder="按前缀过滤，如 uploads/2026" bind:value={filter} onkeydown={(e) => e.key === 'Enter' && load()} />
     <button class="sm" onclick={openDrawer}>管理存储桶</button>
+    <button class="sm" onclick={() => void rebuildVariants()}>{rebuilding ? '停止回填' : '重建图片变体'}</button>
   </div>
+  {#if rebuildNote}<p class="muted small">{rebuildNote}</p>{/if}
 </div>
 
 <p class="muted small">

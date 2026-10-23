@@ -35,6 +35,7 @@ import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
+import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry } from '../services/media-variants';
 import {
   buildMarkdown,
   contentWebPath,
@@ -988,19 +989,94 @@ app.get('/media/*', async (c) => {
 });
 
 /** DELETE /api/admin/media/*?bucket= */
+/**
+ * POST /api/admin/media/variant —— 上传**一张图片变体**（FormData：file / key / bucket?）。
+ *
+ * 为什么要单独一个口：普通上传口只会造新键（uploads/日期/uuid），而变体的键必须能从母版键推出来
+ * （variants/<母版键去扩展名>/h720.webp），否则构建期对不上号。
+ * 变体在浏览器里用 canvas 生成（Worker 没有图像处理能力），所以这里只负责校验与落桶：
+ *   · 键必须落在 variants/ 下、且是 .webp（防止拿它往任意位置写）
+ *   · 单张 ≤5MB（一档 1080 的 webp 正常 <500KB，给足余量但不让人拿它当通用上传口）
+ * 幂等：同一个键重复上传直接覆盖（回填重跑时就是这个行为）。
+ */
+app.post('/media/variant', async (c) => {
+  const admin = requireAdmin(c);
+  const form = await c.req.formData().catch(() => null);
+  const file = form?.get('file');
+  const key = String(form?.get('key') ?? '').trim();
+  if (!(file instanceof File)) fail(400, '未收到变体文件');
+  if (!isValidVariantObjectKey(key)) fail(400, '变体键必须形如 variants/<母版键去扩展名>/h720.webp，且不许带 ..');
+  if (file.size > 5 * 1024 * 1024) fail(400, '单个变体不得超过 5MB');
+  const type = checkUploadType(file.name);
+  if (!type.ok || !/webp/i.test(type.contentType)) fail(400, '变体只接受 WebP');
+  const bucket = await bucketFrom(c.env, c.req.url, form);
+  const stored = await putMediaObject(c.env, bucket, { key, data: file.stream(), contentType: 'image/webp' });
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'media',
+    target: stored.key,
+    detail: { event: 'variant', bucket: bucket.id, size: file.size },
+    ip: clientIp(c),
+  });
+  return ok({ key: stored.key, url: stored.url, bucket: bucket.id, size: stored.size });
+});
+
+/** GET /api/admin/media-variants —— 变体清单（回填 UI 用它算「哪些已有、哪些缺」） */
+app.get('/media-variants', async (c) => {
+  requireAdmin(c);
+  const manifest = await readVariantsManifest(c.env);
+  return ok({ manifest, count: Object.keys(manifest).length, path: 'data/media-variants.json' });
+});
+
+/** POST /api/admin/media-variants —— 合并一条：{ origin: "uploads/…", entry: { a, v } } */
+app.post('/media-variants', async (c) => {
+  const admin = requireAdmin(c);
+  const body = (await c.req.json().catch(() => null)) as { origin?: unknown; entry?: unknown } | null;
+  const origin = typeof body?.origin === 'string' ? body.origin : '';
+  const raw = body?.entry as { a?: unknown; v?: unknown } | undefined;
+  if (!isValidOriginKey(origin)) fail(400, 'origin 必须是 uploads/ 下的母版键，且不许带 ..');
+  const aspect = Number(raw?.a);
+  if (!Number.isFinite(aspect) || aspect <= 0 || aspect > 10) fail(400, 'entry.a 要写成宽/高（正数）');
+  const vIn = (raw?.v ?? {}) as Record<string, unknown>;
+  const v: Record<string, string> = {};
+  for (const h of ['360', '720', '1080']) {
+    const u = vIn[h];
+    if (typeof u !== 'string' || !u) continue;
+    /* 允许 http(s)，也允许以 / 开头的站内地址：本地台架没有给桶配直链域名，objectUrl 会回 /api/media/… */
+    if (!/^(https?:\/\/|\/)/i.test(u) || u.length > 500) fail(400, `entry.v.${h} 要写成 http(s) 或 / 开头的地址`);
+    v[h] = u;
+  }
+  if (!Object.keys(v).length) fail(400, 'entry.v 里一档都没有');
+  const manifest = await mergeVariantEntry(c.env, origin, { a: Math.round(aspect * 1000) / 1000, v });
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'media',
+    target: origin,
+    detail: { event: 'variants-manifest', tiers: Object.keys(v), total: Object.keys(manifest).length },
+    ip: clientIp(c),
+  });
+  return ok({ origin, tiers: Object.keys(v), total: Object.keys(manifest).length });
+});
+
 app.delete('/media/*', async (c) => {
   const admin = requireAdmin(c);
   const { key, bucketId } = mediaKeyAndBucket(c.req.url);
   const bucket = await resolveBucket(c.env, c.req.query('bucket') || bucketId || '');
   const removed = await deleteMediaObject(c.env, bucket, key);
+  /* 母版删了，它的三档变体也要跟着删；否则桶里会慢慢攒一堆没人引用的孤儿 */
+  let variantsDeleted = 0;
+  if (!isVariantKey(removed.key)) {
+    variantsDeleted = await deleteVariantsOf(c.env, bucket, removed.key);
+    await removeVariantEntry(c.env, removed.key).catch(() => {});
+  }
   await writeAudit(c.env, {
     actor: admin,
     action: 'media',
     target: removed.key,
-    detail: { event: 'delete', bucket: bucket.id, via: objectPath(bucket, removed.key) },
+    detail: { event: 'delete', bucket: bucket.id, via: objectPath(bucket, removed.key), variantsDeleted },
     ip: clientIp(c),
   });
-  return ok({ key: removed.key, bucket: bucket.id, deleted: true });
+  return ok({ key: removed.key, bucket: bucket.id, deleted: true, variantsDeleted });
 });
 
 /* ---------------- 群发 ---------------- */

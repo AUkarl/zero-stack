@@ -75,3 +75,65 @@ export function compressNote(p: PreparedFile): string {
   const saved = p.from > 0 ? Math.round((1 - p.to / p.from) * 100) : 0;
   return `${fmtBytes(p.from)} → ${fmtBytes(p.to)}，省了 ${saved}%`;
 }
+
+/* ── R44：三档显示变体（360 / 720 / 1080，按高度） ─────────────────────────
+ * 为什么要三档：正文列桌面约 840 CSS px、手机 390 CSS px（DPR 2–3），
+ * 一张 2000px 的原图对手机是纯浪费；而全屏查看又需要 1080。
+ * 规则：
+ *   · 按**高度**分档，宽度按原图比例算（不裁、不拉伸）
+ *   · **不放大**：原图高度不到这一档就跳过（缩上去只会更糊更大）
+ *   · 原图高度 < 360 直接不出变体（这种小图本来就没优化空间）
+ *   · 质量随档位递减：360→0.80、720→0.78、1080→0.75（1080 只给点开看，肉眼更宽容）
+ * 生成放在浏览器里做：Worker 没有图像处理能力，Pages 构建期转图会让每次构建都重跑一遍。
+ */
+export const VARIANT_TIERS: Array<{ height: number; quality: number }> = [
+  { height: 360, quality: 0.8 },
+  { height: 720, quality: 0.78 },
+  { height: 1080, quality: 0.75 },
+];
+
+export interface VariantBlob {
+  height: number;
+  blob: Blob;
+}
+
+export interface PreparedVariants {
+  /** 宽/高（构建期据此算 width/height，避免 CLS） */
+  aspect: number;
+  variants: VariantBlob[];
+}
+
+export async function prepareVariants(file: File): Promise<PreparedVariants | null> {
+  if (!file.type.startsWith('image/') || SKIP.includes(file.type)) return null;
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return null;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const srcW = bitmap.width;
+    const srcH = bitmap.height;
+    if (!srcW || !srcH || srcH < VARIANT_TIERS[0].height) return null;
+    const aspect = Math.round((srcW / srcH) * 1000) / 1000;
+    const variants: VariantBlob[] = [];
+    for (const tier of VARIANT_TIERS) {
+      if (srcH < tier.height) continue;
+      const h = tier.height;
+      const w = Math.max(1, Math.round(srcW * (h / srcH)));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', tier.quality));
+      /* 浏览器不认 WebP 会「成功」返回 PNG，那种不能当变体上传（地址后缀与真实类型不符） */
+      if (!blob || blob.type !== 'image/webp') continue;
+      variants.push({ height: h, blob });
+    }
+    return variants.length ? { aspect, variants } : null;
+  } catch {
+    /* 变体是加分项：任何一步失败都不该让上传失败 */
+    return null;
+  } finally {
+    bitmap?.close?.();
+  }
+}

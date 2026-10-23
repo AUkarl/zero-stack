@@ -1,6 +1,7 @@
 <script lang="ts">
   import { get, getApiBase } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
+  import { uploadVariants } from '#lib/media-variants';
   import { loadMediaBases, mediaLink, mediaLinkKind } from '#lib/media-url.svelte';
 
   interface MediaObj {
@@ -172,6 +173,8 @@
         const note = compressNote(prepared);
         uploadMsg = note ? `上传成功（${file.name}，${note}）` : `上传成功（${file.name}）`;
         choose(mediaLink(selInfo, stored.key));
+        /* R44：后台生成三档变体并写清单（不阻塞选中这张图；失败了主题会回退原图） */
+        void uploadVariants(file, stored.key, selBucket || undefined);
         void loadObjects(true);
       } else {
         uploadMsg = '';
