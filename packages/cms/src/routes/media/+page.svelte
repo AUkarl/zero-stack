@@ -6,9 +6,20 @@
 
   interface MediaItem {
     key: string;
+    name: string;
+    kind: string;
     size: number;
     uploaded: number;
   }
+  const KIND_TABS: Array<{ id: string; label: string }> = [
+    { id: 'all', label: '全部' },
+    { id: 'image', label: '图片' },
+    { id: 'audio', label: '音频' },
+    { id: 'video', label: '视频' },
+    { id: 'doc', label: '文档' },
+    { id: 'other', label: '其他' },
+  ];
+  const KIND_LABEL: Record<string, string> = { image: '图片', audio: '音频', video: '视频', doc: '文档', other: '其他' };
 
   interface Bucket {
     id: string;
@@ -45,6 +56,10 @@
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
 
   let items = $state<MediaItem[]>([]);
+  /* R45：类型分类与条数；排序由服务端按上传时间倒序（最新在最上） */
+  let kind = $state('all');
+  let counts = $state<Record<string, number>>({});
+  const fmtTime = (t: number) => (t ? new Date(t).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-') : '—');
   let uploading = $state(false);
   let progress = $state('');
   let error = $state('');
@@ -182,11 +197,14 @@
     try {
       const params = new URLSearchParams();
       params.set('prefix', filter || 'uploads/');
+      params.set('kind', kind);
+      params.set('sort', 'desc');
       if (selectedId) params.set('bucket', selectedId);
-      const d = await get<{ data: { objects: { key: string; size: number; uploaded: string | null }[] } }>(
+      const d = await get<{ data: { objects: { key: string; name: string; kind: string; size: number; uploaded: string | null }[]; counts?: Record<string, number> } }>(
         `/api/admin/media/list?${params}`,
       );
-      items = (d.data.objects || []).map((o) => ({ key: o.key, size: o.size, uploaded: o.uploaded ? new Date(o.uploaded).getTime() : 0 }));
+      items = (d.data.objects || []).map((o) => ({ key: o.key, name: o.name ?? o.key, kind: o.kind ?? 'other', size: o.size, uploaded: o.uploaded ? new Date(o.uploaded).getTime() : 0 }));
+      counts = d.data.counts ?? {};
     } catch (e) {
       error = msg(e);
       items = [];
@@ -361,6 +379,11 @@
         </select>
       </label>
     {/if}
+    {#each KIND_TABS as t (t.id)}
+      <button class="sm" class:on={kind === t.id} onclick={() => { kind = t.id; void load(); }}>
+        {t.label}{counts[t.id] != null ? ` ${counts[t.id]}` : ''}
+      </button>
+    {/each}
     <input class="flt" placeholder="按前缀过滤，如 uploads/2026" bind:value={filter} onkeydown={(e) => e.key === 'Enter' && load()} />
     <button class="sm" onclick={openDrawer}>管理存储桶</button>
     <button class="sm" onclick={() => void rebuildVariants()}>{rebuilding ? '停止回填' : '重建图片变体'}</button>
@@ -417,10 +440,11 @@
       {#if isImg(it.key)}
         <img src={mediaLink(selected, it.key)} alt={it.key} loading="lazy" />
       {:else}
-        <div class="file">🗎 {it.key.split('/').pop()}</div>
+        <div class="file">🗎 {it.name.split('/').pop()}</div>
       {/if}
       <div class="meta">
-        <span class="muted">{fmtSize(it.size)}</span>
+        <span class="nm" title={it.key}>{it.name.split('/').pop()}</span>
+        <span class="muted">{fmtTime(it.uploaded)} · {fmtSize(it.size)} · {KIND_LABEL[it.kind] ?? '其他'}</span>
         <div class="ops">
           <button class="sm" onclick={() => void copy(it.key)}>复制链接</button>
           <button class="sm danger" onclick={() => void remove(it.key)}>删除</button>

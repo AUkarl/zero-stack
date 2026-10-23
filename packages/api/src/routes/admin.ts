@@ -945,26 +945,66 @@ app.post('/media/import', async (c) => {
 });
 
 /** GET /api/admin/media/list?prefix=&bucket=&limit=&cursor= */
+/**
+ * 媒体库列表：按类型分类 + 按上传时间倒序（最新在最上）。
+ *
+ * 以前只按前缀列、顺序完全跟键名（`uploads/日期/uuid`）走：同一天内部是乱序，界面上又只有大小、
+ * 没有文件名和时间 —— 站长「刚传的那张在哪」只能靠翻。这里在服务端做分类与排序：
+ *   ?kind=all|image|audio|video|doc|other   ?sort=desc|asc（默认 desc）
+ * 为了能「先过滤再排序」，列表会把该桶 uploads/ 下的对象按页取全（上限 5000，够一个个人站用很多年），
+ * 之后在内存里过滤/排序/截断；返回 total 供界面显示条数。
+ */
+const MEDIA_KINDS: Record<string, string[]> = {
+  image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp'],
+  audio: ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'],
+  video: ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v'],
+  doc: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'rtf', 'odt'],
+};
+function mediaKindOf(key: string): string {
+  const ext = (key.split('.').pop() ?? '').toLowerCase();
+  for (const [kind, list] of Object.entries(MEDIA_KINDS)) if (list.includes(ext)) return kind;
+  return 'other';
+}
+
 app.get('/media/list', async (c) => {
   requireAdmin(c);
   const bucket = await bucketFrom(c.env, c.req.url);
   const prefix = c.req.query('prefix') ?? 'uploads/';
-  const limit = Math.min(Number(c.req.query('limit') ?? '200') || 200, 1000);
-  const listed = await listMediaObjects(c.env, bucket, { prefix, limit, cursor: c.req.query('cursor') });
+  const kind = String(c.req.query('kind') ?? 'all').toLowerCase();
+  const desc = (c.req.query('sort') ?? 'desc').toLowerCase() !== 'asc';
+  const cap = Math.min(Number(c.req.query('limit') ?? '1000') || 1000, 5000);
+
+  const all: { key: string; name: string; size: number; uploaded: string | null; url: string; kind: string }[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 10; page++) {
+    const listed = await listMediaObjects(c.env, bucket, { prefix, limit: 1000, cursor: cursor ?? undefined });
+    for (const o of listed.objects) all.push({ key: o.key, name: o.name, size: o.size, uploaded: o.lastModified, url: o.url, kind: mediaKindOf(o.key) });
+    cursor = listed.truncated ? listed.cursor : null;
+    if (!cursor || all.length >= 5000) break;
+  }
+
+  const filtered = (kind === 'all' ? all : all.filter((o) => o.kind === kind)).sort((a, b) => {
+    const ta = a.uploaded ? Date.parse(a.uploaded) : 0;
+    const tb = b.uploaded ? Date.parse(b.uploaded) : 0;
+    if (ta !== tb) return desc ? tb - ta : ta - tb;
+    return desc ? b.key.localeCompare(a.key) : a.key.localeCompare(b.key);
+  });
+
   return ok({
     bucket: bucket.id,
-    truncated: listed.truncated,
-    cursor: listed.truncated ? (listed.cursor ?? null) : null,
-    // 字段名沿用旧接口（uploaded），后台列表就按这个渲染
-    objects: listed.objects.map((o) => ({ key: o.key, name: o.name, size: o.size, uploaded: o.lastModified, url: o.url })),
+    kind,
+    sort: desc ? 'desc' : 'asc',
+    total: filtered.length,
+    counts: { all: all.length, ...Object.fromEntries(['image', 'audio', 'video', 'doc', 'other'].map((k) => [k, all.filter((o) => o.kind === k).length])) },
+    objects: filtered.slice(0, cap),
   });
 });
 
 /**
- * GET /api/admin/media/* —— 两种写法都认：
+ * GET /api/admin/media/* —— 媒体读写都用它：
  *   /media/uploads/2026-10-01/a.png?bucket=oss
- *   /media/object/oss/uploads/2026-10-01/a.png（services/media.ts 的 objectUrl 生成的是这个）
- * 私有 S3 桶没有签名直连拿不到对象，所以没配 baseUrl 时全靠这里代理。
+ *   /media/object/oss/uploads/2026-10-01/a.png（services/media.ts 里 objectUrl 生成的代理地址形状）
+ * 私有 S3 桶没有签名直链不能用，走这里由服务端代取；R2 桶没配 baseUrl 时也走这里。
  */
 function mediaKeyAndBucket(url: string): { key: string; bucketId: string | null } {
   const path = decodeURIComponent(new URL(url).pathname.replace(/^\/api\/admin\/media\/?/, ''));

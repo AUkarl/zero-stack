@@ -54,6 +54,8 @@
   /* 头像逐级退化：后端给的每一张依次试（avatar → gravatar → cravatar → QQ），
      全挂了才落到首字母色块（sources 取空 = avatarSrc 为空） */
   let step = $state(0);
+  /* 首字母垫底、图片加载完淡入：等待期间看到的是首字母，不是一个破图/空框 */
+  let imgLoaded = $state(false);
   const sources = $derived(avatarSources(node));
   const avatarSrc = $derived(sources[step] ?? '');
 
@@ -76,7 +78,7 @@
     avatarTimer = setTimeout(() => {
       const el = avatarEl;
       if (!el || !el.complete || el.naturalWidth === 0) advanceAvatar();
-    }, 1200);
+    }, 600);
     return () => clearTimeout(avatarTimer);
   });
 
@@ -116,19 +118,21 @@
   <div class="avatar-col">
     {#if linkHref}
       <a href={linkHref} target="_blank" rel="nofollow ugc noopener" title={node.authorLink ?? ''}>
-        {#if avatarSrc}
-          <img class="avatar" src={avatarSrc} alt="" bind:this={avatarEl} onerror={() => advanceAvatar()} />
-        {:else}
-          <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">
-            {avatarInitialFromNode(node)}
-          </span>
-        {/if}
+        <span class="avatar-wrap">
+          <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">{avatarInitialFromNode(node)}</span>
+          {#if avatarSrc}
+            <img class="avatar avatar-img" class:loaded={imgLoaded} src={avatarSrc} alt="" bind:this={avatarEl}
+                 onload={() => (imgLoaded = true)} onerror={() => { imgLoaded = false; advanceAvatar(); }} />
+          {/if}
+        </span>
       </a>
-    {:else if avatarSrc}
-      <img class="avatar" src={avatarSrc} alt="" bind:this={avatarEl} onerror={() => advanceAvatar()} />
     {:else}
-      <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">
-        {avatarInitialFromNode(node)}
+      <span class="avatar-wrap">
+        <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">{avatarInitialFromNode(node)}</span>
+        {#if avatarSrc}
+          <img class="avatar avatar-img" class:loaded={imgLoaded} src={avatarSrc} alt="" bind:this={avatarEl}
+               onload={() => (imgLoaded = true)} onerror={() => { imgLoaded = false; advanceAvatar(); }} />
+        {/if}
       </span>
     {/if}
   </div>
@@ -245,6 +249,10 @@
     display: block; width: 36px; height: 36px; border-radius: 50%; object-fit: cover;
     border: 1px solid var(--zc-border, #e2e2e2); background: var(--zc-bg, #fff);
   }
+  .avatar-wrap { position: relative; display: block; width: 36px; height: 36px; border-radius: 50%; overflow: hidden; border: 1px solid var(--zc-border, #e2e2e2); background: var(--zc-bg, #fff); }
+  .avatar-wrap .fallback { position: absolute; inset: 0; border: 0; border-radius: 0; }
+  .avatar-img { position: absolute; inset: 0; opacity: 0; transition: opacity .18s ease; }
+  .avatar-img.loaded { opacity: 1; }
   .fallback {
     display: inline-flex; align-items: center; justify-content: center;
     width: 36px; height: 36px; border-radius: 50%; font-size: 15px;

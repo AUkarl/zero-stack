@@ -24,6 +24,8 @@ import { commentLikeStatsForSlug, toggleCommentLike } from './likes';
  * 该模块零依赖、不碰 DOM，Worker 侧可以直接用。
  */
 import { avatarStyleFor } from '../../../comment/src/lib/avatar-style';
+import { avatarCachedUrl, refreshAvatarCache, shouldWarm, markWarmAttempt } from '../services/avatar-cache';
+import { resolveBucket } from '../services/media';
 import type { AuthUser } from '../services/auth';
 import type { AppEnv } from '../lib/app';
 
@@ -204,10 +206,17 @@ interface ShapeOpts {
   replyToName?: string;
 }
 
-function makeShaper(avatarTemplate: string, profiles: Map<string, Profile>) {
+function makeShaper(avatarTemplate: string, profiles: Map<string, Profile>, cachedAvatars: Map<string, string> = new Map()) {
   return (row: CommentRow, opts: ShapeOpts = {}) => {
     const profile = row.authorId ? profiles.get(row.authorId) : undefined;
     const isUser = row.authorType === 'user';
+    const mail = (isUser ? row.authorEmail || profile?.email : row.authorEmail) ?? '';
+    const avatarSet = avatars(mail, avatarTemplate, isUser ? profile?.image : null);
+    /* R45：自己桶里缓存过的那一份顶到链首。没缓存过时它 404 → 前端 onerror 自然落到下一档（已有逻辑） */
+    const cached = cachedAvatars.get(mail.trim().toLowerCase()) ?? '';
+    const mergedAvatars = cached
+      ? { avatar: cached, gravatar: avatarSet.avatar || avatarSet.gravatar, fallbacks: [avatarSet.avatar ? avatarSet.gravatar : '', ...avatarSet.fallbacks].filter(Boolean) }
+      : avatarSet;
     return {
       id: row.id,
       postSlug: row.postSlug,
@@ -224,7 +233,7 @@ function makeShaper(avatarTemplate: string, profiles: Map<string, Profile>) {
          以前这里把邮箱硬写成 null，于是「没单独设头像的注册用户」一律掉到首字母色块，
          邮箱明明注册了 Gravatar 也拿不到图。评论行自己存过一份 authorEmail，先拿它，
          再兜账号那一份（改过邮箱的旧评论存的还是老地址，所以账号那份只作补充）。 */
-      ...avatars(isUser ? row.authorEmail || profile?.email : row.authorEmail, avatarTemplate, isUser ? profile?.image : null),
+      ...mergedAvatars,
       /* 一张头像都取不到时那个「首字母色块」的色相与字母。
          以前这里公开的是 emailDomain（每个人的邮箱域名），前端自己拿 `昵称|域名` 去散列颜色 ——
          域名本不该出现在公开响应里，可要直接删掉字段，所有人的底色会集体换一遍（颜色由那串种子决定）。
@@ -283,7 +292,9 @@ function isMinePending(row: CommentRow, user: AuthUser | null, owners: Map<strin
 }
 
 function parseSort(value: string | undefined): SortKey {
-  return value === 'latest' || value === 'hot' ? value : 'oldest';
+  /* R45：默认改成「最新在前」。不带参数的调用方（老包、后台预览）也拿到最新一条在最上；
+     置顶仍在比较器里强制排最前（见 sortRows）。 */
+  return value === 'oldest' || value === 'hot' ? value : 'latest';
 }
 
 function parsePaging(c: Context): { offset: number; limit: number } {
@@ -434,11 +445,31 @@ app.get('*', async (c) => {
   }
 
   const avatarTemplate = (await getConfig(env, 'avatarTemplate'))?.trim() ?? '';
+  /* 本次列表里出现过的邮箱 → 桶里那份头像的稳定地址（不判断存在，没缓存的会 404 后退到下一档） */
+  const cachedAvatars = new Map<string, string>();
+  {
+    const bucket = await resolveBucket(env, null).catch(() => null);
+    if (bucket) {
+      const mails = [...new Set(visible.map((r) => (r.authorEmail ?? '').trim().toLowerCase()).filter((m) => m.includes('@')))].slice(0, 80);
+      await Promise.all(mails.map(async (m) => {
+        const u = await avatarCachedUrl(env, bucket, m);
+        if (u) cachedAvatars.set(m, u);
+      }));
+      /* 懒预热最多两个：慢源不该把一页请求拖住，waitUntil 后台去抓 */
+      const ctx0 = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void } | undefined;
+      const warm = mails.filter(shouldWarm).slice(0, 2);
+      for (const m of warm) {
+        markWarmAttempt(m);
+        const chain = avatarChainForEmail(m);
+        ctx0?.waitUntil?.(refreshAvatarCache(env, m, chain).catch(() => false));
+      }
+    }
+  }
   const profiles = await profilesOf(env, [
     ...visible.filter((r) => r.authorType === 'user').map((r) => r.authorId ?? ''),
     ...[...missingParents].map((id) => rowById.get(id)).filter((r) => r?.authorType === 'user').map((r) => r!.authorId ?? ''),
   ]);
-  const shape = makeShaper(avatarTemplate, profiles);
+  const shape = makeShaper(avatarTemplate, profiles, cachedAvatars);
   /** 「回复 @某人」：被回复者也是登录用户时取账号昵称，父评论查不到就是空串（前端只少一段小字） */
   const nameOf = (id: string | null | undefined): string => {
     const parent = id ? rowById.get(id) : undefined;
@@ -718,6 +749,10 @@ app.post('/', async (c) => {
   void notifying.catch((err) => console.warn('[zero-api] 评论提醒任务异常', err));
   const ctx = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void } | undefined;
   ctx?.waitUntil?.(notifying);
+
+  /* R45：这个人**再发评论**时重抓一次头像进桶（头像换了也能更新）。
+     与提醒信一样不阻塞响应；失败什么都不影响。 */
+  if (email) ctx?.waitUntil?.(refreshAvatarCache(env, email, avatarChainForEmail(email)).catch(() => false));
 
   const shape = makeShaper(
     (await getConfig(env, 'avatarTemplate'))?.trim() ?? '',

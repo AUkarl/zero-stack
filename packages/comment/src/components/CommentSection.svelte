@@ -63,7 +63,7 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let listError = $state('');
-  let sort = $state<SortKey>('oldest');
+  let sort = $state<SortKey>('latest');
   /** 每个顶层已经展开多少条回复（按 root id 记，纯前端切片，不会再发请求） */
   let shown = $state<Record<string, number>>({});
 
