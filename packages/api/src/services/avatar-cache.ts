@@ -49,7 +49,9 @@ export async function refreshAvatarCache(env: Env, email: string, urls: string[]
   const list = urls.filter((u) => /^https?:\/\//i.test(u)).sort((a, b) => rank(a) - rank(b)).slice(0, 4);
   if (!list.length) return false;
 
-  const bucket = await resolveBucket(env, null);
+  console.warn('[avatar-cache] start', key, list.length);
+  let bucket;
+  try { bucket = await resolveBucket(env, null); console.warn('[avatar-cache] bucket', bucket.id, bucket.kind); } catch (e) { console.warn('[avatar-cache] bucket-fail', String(e).slice(0,120)); return false; }
   const deadline = Date.now() + FETCH_BUDGET_MS;
   for (const url of list) {
     const left = deadline - Date.now();
@@ -58,6 +60,7 @@ export async function refreshAvatarCache(env: Env, email: string, urls: string[]
     const timer = setTimeout(() => ctrl.abort(), Math.min(left, 1500));
     try {
       const res = await fetch(url, { signal: ctrl.signal, headers: { 'user-agent': 'zero-avatar-fetch/1.0' }, redirect: 'follow' });
+      console.warn('[avatar-cache] try', url.slice(0,36), res.status, res.headers.get('content-type'));
       if (!res.ok) continue;
       const type = (res.headers.get('content-type') ?? '').toLowerCase();
       if (!type.startsWith('image/')) continue;
@@ -66,6 +69,7 @@ export async function refreshAvatarCache(env: Env, email: string, urls: string[]
       const buf = new Uint8Array(await res.arrayBuffer());
       if (!buf.byteLength || buf.byteLength > MAX_BYTES) continue;
       await putMediaObject(env, bucket, { key, data: buf, contentType: type.split(';')[0] ?? 'image/webp' });
+      console.warn('[avatar-cache] stored', key, buf.byteLength);
       recentAttempt.set(key, Date.now());
       return true;
     } catch (e) {
