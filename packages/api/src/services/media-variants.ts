@@ -46,12 +46,19 @@ export function variantKey(key: string, height: number): string {
   return `${variantDir(key)}h${height}.webp`;
 }
 
+function hasControlChar(v: string): boolean {
+  for (let i = 0; i < v.length; i++) if (v.charCodeAt(i) < 32) return true;
+  return false;
+}
+
 export function isValidOriginKey(key: string): boolean {
-  return /^uploads\/[A-Za-z0-9._/-]+$/.test(key) && !key.includes('..');
+  /* 允许非 ASCII（R2 的键就是 UTF-8，站长的图里有 `918纪念碑.jpg` 这种中文名）。
+     拦的是路径穿越、控制字符与超长 —— 不是拦中文。 */
+  return key.startsWith('uploads/') && !key.includes('..') && key.length <= 300 && !hasControlChar(key);
 }
 
 export function isValidVariantObjectKey(key: string): boolean {
-  return /^variants\/[A-Za-z0-9._/-]+\.webp$/.test(key) && !key.includes('..');
+  return key.startsWith('variants/') && key.toLowerCase().endsWith('.webp') && !key.includes('..') && key.length <= 320 && !hasControlChar(key);
 }
 
 async function manifestPath(env: Env): Promise<string> {
