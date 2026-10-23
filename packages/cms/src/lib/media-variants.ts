@@ -26,10 +26,15 @@ export interface VariantEntryPayload {
  * 给刚上传的母版生成并上传三档，然后写清单。
  * 返回写进清单的那一条（回填 UI 也复用它）；失败返回 null。
  */
-export async function uploadVariants(file: File, originKey: string, bucketId?: string): Promise<VariantEntryPayload | null> {
+export type VariantOutcome =
+  | { ok: true; entry: VariantEntryPayload }
+  | { ok: false; reason: 'small' | 'error'; message: string };
+
+export async function uploadVariants(file: File, originKey: string, bucketId?: string): Promise<VariantOutcome> {
   try {
     const prepared = await prepareVariants(file);
-    if (!prepared) return null;
+    /* 高度不到 360、动图、SVG：按设计不出变体，这**不是失败** */
+    if (!prepared) return { ok: false, reason: 'small', message: '图片高度不足 360（或动图/矢量），按设计不做变体' };
     const v: Record<string, string> = {};
     for (const t of prepared.variants) {
       const fd = new FormData();
@@ -42,7 +47,7 @@ export async function uploadVariants(file: File, originKey: string, bucketId?: s
       if (!res.ok || !d?.data?.url) throw new Error(d?.message || `变体 h${t.height} 上传失败`);
       v[String(t.height)] = d.data.url;
     }
-    if (!Object.keys(v).length) return null;
+    if (!Object.keys(v).length) return { ok: false, reason: 'small', message: '没有可用的档位' };
     const m = await fetch(getApiBase() + '/api/admin/media-variants', {
       method: 'POST',
       credentials: 'include',
@@ -50,10 +55,10 @@ export async function uploadVariants(file: File, originKey: string, bucketId?: s
       body: JSON.stringify({ origin: originKey, entry: { a: prepared.aspect, v } }),
     });
     if (!m.ok) throw new Error((await m.text()).slice(0, 120) || '清单写入失败');
-    return { a: prepared.aspect, v };
+    return { ok: true, entry: { a: prepared.aspect, v } };
   } catch (e) {
     console.warn('[media-variants]', e);
-    return null;
+    return { ok: false, reason: 'error', message: e instanceof Error ? e.message : String(e) };
   }
 }
 

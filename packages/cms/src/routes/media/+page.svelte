@@ -2,7 +2,7 @@
   import { del, get, getApiBase, patch } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
   import { fetchVariantManifest, uploadVariants } from '#lib/media-variants';
-  import { loadMediaBases, mediaLink, mediaLinkKind } from '#lib/media-url.svelte';
+  import { loadMediaBases, mediaLink, mediaLinkKind, mediaProxyLink } from '#lib/media-url.svelte';
 
   interface MediaItem {
     key: string;
@@ -69,7 +69,7 @@
     try {
       const manifest = await fetchVariantManifest();
       const done = new Set(Object.keys(manifest));
-      let checked = 0, made = 0, skipped = 0, failed = 0;
+      let checked = 0, made = 0, skipped = 0, failed = 0, lastErr = '';
       let cursor: string | null = null;
       do {
         const params = new URLSearchParams({ prefix: 'uploads/', limit: '200' });
@@ -86,23 +86,30 @@
             skipped++;
             continue;
           }
-          rebuildNote = `回填中：第 ${checked} 张（新建 ${made} / 已有 ${skipped} / 失败 ${failed}）—— ${o.key}`;
+          rebuildNote = `回填中：第 ${checked} 张（新建 ${made} / 已有或跳过 ${skipped} / 失败 ${failed}）—— ${o.key}${lastErr ? '；最近一次失败：' + lastErr.slice(0, 80) : ''}`;
           try {
-            const r = await fetch(o.url, { credentials: 'omit' });
+            /* 一律走 Worker 代理：直链域跨域且不带 CORS，fetch().blob() 会被拦（私有桶能成、公开桶全失败就是它） */
+            const r = await fetch(mediaProxyLink(selected, o.key), { credentials: 'include' });
             if (!r.ok) throw new Error(`取原图 HTTP ${r.status}`);
             const blob = await r.blob();
             const file = new File([blob], o.key.split('/').pop() || 'image', { type: blob.type || 'image/webp' });
-            const entry = await uploadVariants(file, o.key, selectedId || undefined);
-            if (entry) {
+            const vres = await uploadVariants(file, o.key, selectedId || undefined);
+            if (vres.ok) {
               made++;
               done.add(o.key);
-            } else failed++;
-          } catch {
+            } else if (vres.reason === 'small') {
+              skipped++;
+            } else {
+              failed++;
+              lastErr = vres.message;
+            }
+          } catch (e) {
             failed++;
+            lastErr = e instanceof Error ? e.message : String(e);
           }
         }
       } while (cursor && !rebuildStop);
-      rebuildNote = `回填结束：检查 ${checked} 张，新建 ${made}，已有 ${skipped}，失败 ${failed}${rebuildStop ? '（已手动停止）' : ''}`;
+      rebuildNote = `回填结束：检查 ${checked} 张，新建 ${made}，已有 ${skipped}，失败 ${failed}${rebuildStop ? '（已手动停止）' : ''}${lastErr ? '；最近一次失败：' + lastErr.slice(0, 120) : ''}`;
     } catch (e) {
       rebuildNote = `回填失败：${msg(e)}`;
     } finally {
@@ -204,8 +211,8 @@
       if (!res.ok) throw new Error(d?.message || '上传失败');
       /* R44：顺手生成 360/720/1080 三档并写清单。失败不回滚原图（清单里没这条 → 主题回退原图，不会 404） */
       progress = `生成取景变体：${source.name}`;
-      const entry = await uploadVariants(file, d.data.key, selectedId || undefined);
-      const tierNote = entry ? `（三档：${Object.keys(entry.v).join('/')}）` : '（变体没生成，已回退原图）';
+      const vres = await uploadVariants(file, d.data.key, selectedId || undefined);
+      const tierNote = vres.ok ? `（三档：${Object.keys(vres.entry.v).join('/')}）` : `（${vres.reason === 'small' ? '图太小/动图，按设计不做变体' : '变体没生成，已回退原图'}）`;
       progress = `已上传：${mediaLink(selected, d.data.key)}${note ? `（${note}）` : ''}${tierNote}`;
       setTimeout(() => (progress = ''), 4500);
       await load();
