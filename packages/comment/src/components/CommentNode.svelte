@@ -57,6 +57,29 @@
   const sources = $derived(avatarSources(node));
   const avatarSrc = $derived(sources[step] ?? '');
 
+  /* 换下一档的第二个理由：onerror 只在「明确失败」时触发，连接挂起（不回 404、也不断开）
+     就一直等到套接字超时 —— 实测 gravatar 与 cravatar 在部分网络下各挂 6 秒以上，
+     三级串起来头像要十几秒才出来。所以给每一档一个 1.2 秒的软上限。
+     头像不再是 loading=lazy：组件本身就是滚到附近才挂载的，再懒一次只会让这个计时器误判。 */
+  let avatarEl = $state<HTMLImageElement | null>(null);
+  let avatarTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function advanceAvatar() {
+    clearTimeout(avatarTimer);
+    step = step + 1;
+  }
+
+  $effect(() => {
+    const src = avatarSrc;
+    clearTimeout(avatarTimer);
+    if (!src) return;
+    avatarTimer = setTimeout(() => {
+      const el = avatarEl;
+      if (!el || !el.complete || el.naturalWidth === 0) advanceAvatar();
+    }, 1200);
+    return () => clearTimeout(avatarTimer);
+  });
+
   const linkHref = $derived(safeLink(node.authorLink));
   const displayName = $derived(node.authorName || t('anonymous'));
   const replyToName = $derived(String(node.replyToName || '').trim());
@@ -94,7 +117,7 @@
     {#if linkHref}
       <a href={linkHref} target="_blank" rel="nofollow ugc noopener" title={node.authorLink ?? ''}>
         {#if avatarSrc}
-          <img class="avatar" src={avatarSrc} alt="" loading="lazy" onerror={() => (step = step + 1)} />
+          <img class="avatar" src={avatarSrc} alt="" bind:this={avatarEl} onerror={() => advanceAvatar()} />
         {:else}
           <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">
             {avatarInitialFromNode(node)}
@@ -102,7 +125,7 @@
         {/if}
       </a>
     {:else if avatarSrc}
-      <img class="avatar" src={avatarSrc} alt="" loading="lazy" onerror={() => (step = step + 1)} />
+      <img class="avatar" src={avatarSrc} alt="" bind:this={avatarEl} onerror={() => advanceAvatar()} />
     {:else}
       <span class="avatar fallback" style={avatarStyleFromNode(node)} aria-hidden="true">
         {avatarInitialFromNode(node)}
