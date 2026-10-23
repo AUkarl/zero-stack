@@ -752,7 +752,13 @@ app.post('/', async (c) => {
 
   /* R45：这个人**再发评论**时重抓一次头像进桶（头像换了也能更新）。
      与提醒信一样不阻塞响应；失败什么都不影响。 */
-  if (email) ctx?.waitUntil?.(refreshAvatarCache(env, email, avatarChainForEmail(email)).catch(() => false));
+  if (email) {
+    /* 先同步抓一次（QQ 源通常几百毫秒），保证「第一条评论就把头像存进桶」；
+       同步没成就交给后台任务兜底（本地 workerd 无外网、线上慢源时都靠这一手）。 */
+    const chainNow = avatarChainForEmail(email);
+    await refreshAvatarCache(env, email, chainNow, 900).catch(() => false);
+    ctx?.waitUntil?.(refreshAvatarCache(env, email, chainNow).catch(() => false));
+  }
 
   const shape = makeShaper(
     (await getConfig(env, 'avatarTemplate'))?.trim() ?? '',
