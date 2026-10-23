@@ -380,7 +380,7 @@
       </label>
     {/if}
     {#each KIND_TABS as t (t.id)}
-      <button class="sm" class:on={kind === t.id} onclick={() => { kind = t.id; void load(); }}>
+      <button class="sm" class:primary={kind === t.id} aria-pressed={kind === t.id} onclick={() => { kind = t.id; void load(); }}>
         {t.label}{counts[t.id] != null ? ` ${counts[t.id]}` : ''}
       </button>
     {/each}
