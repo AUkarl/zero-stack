@@ -128,6 +128,24 @@ async function profileOf(env: Env, id: string): Promise<Profile | null> {
   return r ? { name: r.name, image: r.image, website: r.website, userGroup: r.userGroup, role: r.role, email: r.email } : null;
 }
 
+/**
+ * 邮箱 → 账号头像。
+ *
+ * 从老站导入的评论落成的是 `authorType='commenter'`（没有 authorId），于是站长的那些历史评论
+ * 拿不到账号资料，只能按邮箱去撞 Gravatar → 后台里设的头像永远显示不出来。
+ * 这里按邮箱再认一次账号：命中且账号填了头像，就用账号那张（用户表很小，一次全读）。
+ */
+async function accountImagesOf(env: Env): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const rows = await createDb(env).select({ email: users.email, image: users.image }).from(users).limit(500);
+  for (const r of rows) {
+    const mail = (r.email ?? '').trim().toLowerCase();
+    const img = (r.image ?? '').trim();
+    if (mail && img) map.set(mail, img);
+  }
+  return map;
+}
+
 /** 登录用户以账号昵称为准（改名后旧评论跟着变），游客用评论里存的那份 */
 function authorDisplayName(row: CommentRow, profiles: Map<string, Profile>): string {
   const profile = row.authorId ? profiles.get(row.authorId) : undefined;
@@ -206,14 +224,21 @@ interface ShapeOpts {
   replyToName?: string;
 }
 
-function makeShaper(avatarTemplate: string, profiles: Map<string, Profile>, cachedAvatars: Map<string, string> = new Map()) {
+function makeShaper(
+  avatarTemplate: string,
+  profiles: Map<string, Profile>,
+  cachedAvatars: Map<string, string> = new Map(),
+  accountImages: Map<string, string> = new Map(),
+) {
   return (row: CommentRow, opts: ShapeOpts = {}) => {
     const profile = row.authorId ? profiles.get(row.authorId) : undefined;
     const isUser = row.authorType === 'user';
     const mail = (isUser ? row.authorEmail || profile?.email : row.authorEmail) ?? '';
-    const avatarSet = avatars(mail, avatarTemplate, isUser ? profile?.image : null);
-    /* R45：自己桶里缓存过的那一份顶到链首。没缓存过时它 404 → 前端 onerror 自然落到下一档（已有逻辑） */
-    const cached = cachedAvatars.get(mail.trim().toLowerCase()) ?? '';
+    /* 登录用户用账号头像；非登录的（含从老站导入的历史评论）按邮箱再认一次账号，命中同样用账号那张 */
+    const accountImage = ((isUser ? profile?.image : accountImages.get(mail.trim().toLowerCase())) ?? '').trim();
+    const avatarSet = avatars(mail, avatarTemplate, accountImage || null);
+    /* 账号设了头像时，别让桶里那份「按邮箱抓来的 Gravatar」顶掉它 —— 那正是站主要换掉的那张 */
+    const cached = accountImage ? '' : cachedAvatars.get(mail.trim().toLowerCase()) ?? '';
     const mergedAvatars = cached
       ? { avatar: cached, gravatar: avatarSet.avatar || avatarSet.gravatar, fallbacks: [avatarSet.avatar ? avatarSet.gravatar : '', ...avatarSet.fallbacks].filter(Boolean) }
       : avatarSet;
@@ -469,7 +494,7 @@ app.get('*', async (c) => {
     ...visible.filter((r) => r.authorType === 'user').map((r) => r.authorId ?? ''),
     ...[...missingParents].map((id) => rowById.get(id)).filter((r) => r?.authorType === 'user').map((r) => r!.authorId ?? ''),
   ]);
-  const shape = makeShaper(avatarTemplate, profiles, cachedAvatars);
+  const shape = makeShaper(avatarTemplate, profiles, cachedAvatars, await accountImagesOf(env));
   /** 「回复 @某人」：被回复者也是登录用户时取账号昵称，父评论查不到就是空串（前端只少一段小字） */
   const nameOf = (id: string | null | undefined): string => {
     const parent = id ? rowById.get(id) : undefined;
@@ -763,6 +788,8 @@ app.post('/', async (c) => {
   const shape = makeShaper(
     (await getConfig(env, 'avatarTemplate'))?.trim() ?? '',
     user?.id && profile ? new Map([[user.id, profile]]) : new Map(),
+    new Map(),
+    await accountImagesOf(env),
   );
 
   /* 回复成功也要带上「回复 @某人」的昵称：被回复者是注册用户时取账号当前昵称，
