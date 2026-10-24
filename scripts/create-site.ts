@@ -214,8 +214,7 @@ function backfillExampleData(siteDir: string, a: Answers): number {
     save('data/apply.json', apply);
   }
 
-  /** 作者资料表：顶部署名与文章底部作者框读这里，那句「占位作者」和 your-username 同理处理。
-      shape-list / shape-map 两条是渲染形状的用例，不动。 */
+  /** 作者资料表：顶部署名与文章底部作者框读这里，那句「占位作者」和 your-username 同理处理。 */
   if (existsSync(file('data/authors.yaml'))) {
     const raw = readFileSync(file('data/authors.yaml'), 'utf8');
     const patched = raw
@@ -224,6 +223,33 @@ function backfillExampleData(siteDir: string, a: Answers): number {
     if (patched !== raw) {
       writeFileSync(file('data/authors.yaml'), patched);
       changed++;
+    }
+    /** shape-list / shape-map 是主题自己的构建用例（联系方式的两种形状都得能渲染，
+        只用一种形状测曾经放过一个打死整站构建的 bug）。它们不该出现在用户站里：
+        那两条挂着 github.com/example 与 you@example.com，会在演示文章的作者框和 /author/ 页上显示出来。
+        所以新站只留 zero-author，引用那两条的演示文章改挂到 zero-author；主题 exampleSite 里原样保留给 CI 用。 */
+    const kept: string[] = [];
+    let drop = false;
+    for (const line of patched.split('\n')) {
+      // 顶级键行（不是注释、不是缩进行）决定后面这些行要不要丢；注释与空行跟着当前块的判定走
+      const key = /^[ \t]*#/.test(line) || /^[ \t]/.test(line) || /^[ \t]*$/.test(line)
+        ? null
+        : /^([^\s:]+):/.exec(line)?.[1] ?? null;
+      if (key) drop = key === 'shape-list' || key === 'shape-map';
+      if (drop) continue;
+      kept.push(line.replace(/下面两条就是这两种[^\n]*/, '（联系方式的两种形状在主题自己的演示站里各留了一条用例，新站只留下面这一条。）'));
+    }
+    const pruned = kept.join('\n');
+    if (pruned !== patched) writeFileSync(file('data/authors.yaml'), pruned);
+    const postsDir = file('content/zh/posts');
+    if (existsSync(postsDir)) {
+      for (const f of readdirSync(postsDir)) {
+        if (!f.endsWith('.md')) continue;
+        const p = resolve(postsDir, f);
+        const body = readFileSync(p, 'utf8');
+        const fixed = body.replace(/^author:\s*["']?(?:shape-list|shape-map)["']?\s*$/gm, 'author: "zero-author"');
+        if (fixed !== body) writeFileSync(p, fixed);
+      }
     }
   }
   return changed;
