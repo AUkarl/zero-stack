@@ -15,7 +15,7 @@
  * 出图时一张表情带几个备选图床地址，取不到就在浏览器里依次换，全取不到才退回 token 原文。
  */
 
-import { EMOJI_TOKEN_RE, emojiImageOf, emojiImgHtml } from './emoji-packs';
+import { EMOJI_TOKEN_RE, emojiImageFromLegacyUrl, emojiImageOf, emojiImgHtml } from './emoji-packs';
 import { sanitizeHtml } from './sanitize';
 
 export interface MdOptions {
@@ -62,6 +62,19 @@ function inline(s: string, base: string): string {
     return `\u0000${codes.length - 1}\u0000`;
   });
 
+  /* 老站（Waline）导入的评论把表情存成了 <img class="wl-emoji" src="…">。
+     整段 HTML 会被下面的 esc 转义，于是表情变成一串源码 —— 转义前先把地址能认出来的那些
+     换成同一枚表情图（只认 @waline/emojis 的 CDN 路径，见 emojiImageFromLegacyUrl）。 */
+  const legacy: string[] = [];
+  out = out.replace(/<img\b[^>]*>/gi, (tag) => {
+    if (!/\bwl-emoji\b/i.test(tag)) return tag;
+    const src = (tag.match(/\bsrc\s*=\s*(["'])(.*?)\1/i) ?? [])[2] ?? '';
+    const img = emojiImageFromLegacyUrl(src);
+    if (!img) return tag;
+    legacy.push(emojiImgHtml(img));
+    return `\u0002${legacy.length - 1}\u0002`;
+  });
+
   out = esc(out);
 
   /* 表情先占位再交给后面的行内规则：白名单里查不到的 [x:y] 原样留作文本，
@@ -95,6 +108,7 @@ function inline(s: string, base: string): string {
 
   // 表情要赶在 code 还原之前回填，否则 ` [weibo:smile] ` 这种字面写法会被当成表情
   out = out.replace(/\u0001(\d+)\u0001/g, (_m, i) => images[Number(i)] ?? '');
+  out = out.replace(/\u0002(\d+)\u0002/g, (_m, i) => legacy[Number(i)] ?? '');
   return out.replace(/\u0000(\d+)\u0000/g, (_m, i) => `<code>${esc(codes[Number(i)] ?? '')}</code>`);
 }
 

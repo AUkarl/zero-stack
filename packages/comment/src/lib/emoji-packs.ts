@@ -117,6 +117,40 @@ export function emojiImageOf(key: string): EmojiImage | undefined {
   return EMOJI_IMAGES.get(key);
 }
 
+/**
+ * 老站（Waline）导入的评论把表情存成了一枚 img：
+ *   <img class="wl-emoji" src="https://cdn.jsdelivr.net/npm/@waline/emojis@1.4.0/weibo/weibo_grin.png">
+ * 渲染器会把正文里的 HTML 整体转义，于是这些表情全变成一串源码。
+ *
+ * 这里只认「@waline/emojis 的 jsdelivr/unpkg 路径」这一种形状，把同一条路径换成我们惯用的
+ * 四家镜像（fastly → gcore → cdn → unpkg），其余一律返回 null（正文继续按文本显示）。
+ * 表情库本身只烘焙了 1.3.0 的一小部分，导入的 1.4.0 图名多半不在白名单里，所以这里不查白名单，
+ * 只校验地址形状 —— 地址之外的任何东西仍然进不来。
+ */
+const LEGACY_WALINE_URL =
+  /^https?:\/\/(?:cdn|fastly|gcore)\.jsdelivr\.net\/npm\/@waline\/emojis@([^/]+)\/([a-z0-9_-]+)\/([a-z0-9_.-]+)\.(png|gif|webp)$/i;
+
+export function emojiImageFromLegacyUrl(src: string): EmojiImage | null {
+  const m = String(src || '').trim().match(LEGACY_WALINE_URL);
+  if (!m) return null;
+  const [, version, dirRaw, stemRaw, ext] = m;
+  const dir = dirRaw.toLowerCase();
+  const stem = stemRaw.toLowerCase();
+  const name = stem.startsWith(`${dir}_`) ? stem.slice(dir.length + 1) : stem;
+  if (!/^[a-z0-9_-]+$/.test(name)) return null;
+  const npmPath = `@waline/emojis@${version}/${dir}/${stem}.${ext}`;
+  return {
+    token: `[${dir}:${name}]`,
+    name,
+    srcs: [
+      `https://fastly.jsdelivr.net/npm/${npmPath}`,
+      `https://gcore.jsdelivr.net/npm/${npmPath}`,
+      `https://cdn.jsdelivr.net/npm/${npmPath}`,
+      `https://unpkg.com/${npmPath}`,
+    ],
+  };
+}
+
 /*
  * 表情图的那一枚 <img> —— 正文渲染、表情面板、后台与账号页都用这一份，保证四处行为一致。
  *
