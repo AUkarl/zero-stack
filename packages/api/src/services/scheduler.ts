@@ -9,7 +9,7 @@ import { readRepoFile, repoBackend, writeRepoFile } from './repo';
 import { normalizeFriendUrl, parseLinksYaml, type LinkSite } from './links-yaml';
 import { linksFilePath } from './friends-file';
 import { triggerPagesBuild } from './git';
-import { flushStatCounters, lifetimeStats } from './stats';
+import { flushStatCounters, reconcileLifetimeCounters } from './stats';
 import { newId } from '../lib/crypto';
 
 export interface JobOutcome {
@@ -82,7 +82,10 @@ export async function runScheduledJobs(env: Env, cron: string): Promise<JobOutco
   // 就吃掉当天相当大一块读额度；计数器按批量增量自己走，最多滞后不足一批（100 以内）。
   await run('stats:flush', async () => {
     await flushStatCounters(env);
-    const life = await lifetimeStats(env);
+    /* 累计计数是「攒够 100 次或满 5 分钟」才落库的，isolate 被回收时攒着的那部分就丢了：
+       线上实测明细 4904 条、计数器只有 1509（少 69%）。每天按明细与访客表做一次下限校正
+       （raiseCounter 只抬不降），把丢掉的零头补回来；明细到期清理也不会把累计值往回拉。 */
+    const life = await reconcileLifetimeCounters(env);
     return `累计浏览 ${life.totalViews} / 累计访客 ${life.totalVisitors}`;
   });
 

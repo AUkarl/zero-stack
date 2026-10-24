@@ -1938,7 +1938,10 @@ app.get('/health-detail', async (c) => {
         }
         if (!cursor) break;
       }
-      return { ok: true, detail: `${count.toLocaleString('zh-CN')}${capped ? '+' : ''} 个`, count, capped };
+      /* 单位写清楚：以前只回「20 个」，卡片上拼成「对象存储 · 20 个」，
+         读起来像「20 个对象存储」。 */
+      const unit = kind === 'r2' ? '个对象' : '个键';
+      return { ok: true, detail: `${count.toLocaleString('zh-CN')}${capped ? '+' : ''} ${unit}`, count, capped };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : String(e), count: 0, capped: false };
     }

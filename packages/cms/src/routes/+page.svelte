@@ -117,8 +117,8 @@
     const email = chk.email ?? {};
     return [
       { key: 'd1', label: '数据库', ok: chk.d1?.ok !== false, detail: chk.d1?.detail ?? '', tip: 'D1 连通性：select 1 是否成功' },
-      { key: 'r2', label: '对象存储', ok: chk.r2?.ok !== false, detail: chk.r2?.detail ?? '', tip: 'R2 桶里的对象总数（分页翻完，超过 5 万个标 +）' },
-      { key: 'kv', label: '缓存', ok: chk.kv?.ok !== false, detail: chk.kv?.detail ?? '', tip: 'KV 命名空间的键总数' },
+      { key: 'r2', label: '对象存储', ok: chk.r2?.ok !== false, detail: chk.r2?.detail ?? '', tip: '只数私有桶（绑定 R2，默认 zero-media）里的对象：分页翻完，超过 5 万个标 +。公开桶与 media 桶不在此列' },
+      { key: 'kv', label: '缓存', ok: chk.kv?.ok !== false, detail: chk.kv?.detail ?? '', tip: 'KV 命名空间里的键数：分页翻完，超过 5 万个标 +' },
       { key: 'queue', label: '发信队列', ok: chk.emailQueue?.ok !== false, detail: chk.emailQueue?.detail ?? '', tip: 'EMAIL_QUEUE 绑定是否存在' },
       {
         key: 'repo',
