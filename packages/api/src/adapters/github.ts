@@ -185,7 +185,8 @@ export async function commitFiles(input: {
     shas[f.path] = sha;
     tree.push({ path: f.path, mode: '100644', type: 'blob', sha });
   }
-  for (const p of deletes) tree.push({ path: p, sha: null });
+  /* 删除也要带 mode/type：只写 {path, sha:null} 会被 GitHub 回 422「Must supply a valid tree.mode」 */
+  for (const p of deletes) tree.push({ path: p, mode: '100644', type: 'blob', sha: null });
 
   const treeRes = await fetch(`${base}/git/trees`, {
     method: 'POST',
