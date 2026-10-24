@@ -43,7 +43,7 @@ class CmsSession {
 
 export const session = new CmsSession();
 
-/** 前台页面的完整地址；siteUrl 没配时返回空串，调用方要降级成纯文本 */
+/** 前台页面的完整地址；siteUrl 没配时返回空串，调用方要降级成纯文本。时刻的挂载键在 siteOf 里换成锚点 */
 export function frontUrl(path: string): string {
   return siteOf(session.site, path);
 }

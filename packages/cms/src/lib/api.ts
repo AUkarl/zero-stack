@@ -87,7 +87,18 @@ export function mailNote(data: { state?: 'sent' | 'queued' | 'failed'; notifyErr
 export function siteOf(site: string | null | undefined, path: string): string {
   const base = (site ?? '').replace(/\/+$/, '');
   if (!base) return '';
-  return base + (path.startsWith('/') ? path : '/' + path);
+  const p = displayPath(path ?? '');
+  return base + (p.startsWith('/') ? p : '/' + p);
+}
+
+/**
+ * 时刻没有详情页了：接口里的 `/moments/<文件名>/` 只是评论/点赞的挂载键，
+ * 展示成链接时要指向时刻时间线上那一条的锚点。其它路径原样返回。
+ * 已经是锚点形式的路径匹配不上，重复调用不会套两层。
+ */
+export function displayPath(path: string): string {
+  const m = String(path ?? '').match(/^\/?moments\/([^/?#]+)\/?$/);
+  return m ? `/moments/#moment-${m[1]}` : path;
 }
 
 export function timeAgo(ts: number): string {

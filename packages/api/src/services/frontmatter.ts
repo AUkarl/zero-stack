@@ -307,6 +307,18 @@ export function contentWebPath(path: string): string {
   return postWebPath(clean);
 }
 
+/**
+ * 展示给读者看的站内地址（邮件、后台列表里的「打开」）。
+ *
+ * 时刻已经不再生成详情页（moments/_index.md 里 cascade build.render=never），
+ * 但 `/moments/<文件名>/` 这个键还得留在数据库里当评论/点赞的挂载点，
+ * 所以只在“要展示成链接”的地方换成时刻时间线上那一条的锚点。其它路径原样返回。
+ */
+export function webUrlForSlug(slug: string): string {
+  const m = String(slug ?? '').match(/^\/?moments\/([^/?#]+)\/?$/);
+  return m ? `/moments/#moment-${m[1]}` : slug;
+}
+
 /* ------------------------------------------------------------------ 内容目录 */
 
 /** 内容目录（后台可配），去掉首尾斜杠 */

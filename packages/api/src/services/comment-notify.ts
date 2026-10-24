@@ -18,6 +18,7 @@ import { siteAuthorName } from './authors';
 import { getConfig, getConfigBool } from './config';
 import { queueEmail, renderEmail, sendEmail } from './email';
 import { commentEmailHtml } from './email-content';
+import { webUrlForSlug } from './frontmatter';
 
 export interface NotifyComment {
   id: string;
@@ -136,7 +137,7 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
     const adminEmail = (await getConfig(env, 'adminNotifyEmail'))?.trim() || fromMail;
     const articleTitle = prettyTitle(slug, input.title);
     const base = await siteBase(env);
-    const url = `${base}${canonSlug(slug)}`;
+    const url = `${base}${webUrlForSlug(canonSlug(slug))}`;
 
     const recipients: Recipient[] = [];
     const push = (r: Recipient) => {
