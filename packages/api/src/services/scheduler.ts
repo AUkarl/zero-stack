@@ -830,10 +830,10 @@ export async function exportPostStats(env: Env, onChange?: (paths: string[]) => 
 
   const res = await writeRepoFile(env, path, content, 'zero-api: 导出文章阅读/评论/点赞/收藏统计', { audit: false });
   if (!res.success) return `写入 ${path} 失败：${res.error ?? '未知原因'}`;
-  if (res.unchanged) return `统计与上次一致，未提交（${Object.keys(posts).length} 篇，阅读窗口 ${windowDays > 0 ? `${windowDays} 天` : '全量'}）`;
+  if (res.unchanged) return `统计与上次一致，未提交（${Object.keys(posts).length} 条路径记录，阅读窗口 ${windowDays > 0 ? `${windowDays} 天` : '全量'}）`;
   // 定时任务把构建推迟到整轮结束后统一触发一次；后台手动点「立即导出」时没有这层，直接构建
   if (onChange) onChange([path]);
   else await triggerPagesBuild(env);
-  return `写入 ${path}（${Object.keys(posts).length} 篇，阅读窗口 ${windowDays > 0 ? `${windowDays} 天` : '全量'}）`;
+  return `写入 ${path}（${Object.keys(posts).length} 条路径记录，阅读窗口 ${windowDays > 0 ? `${windowDays} 天` : '全量'}）`;
 }
 
