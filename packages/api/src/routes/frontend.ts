@@ -528,6 +528,11 @@ app.post('/', async (c) => {
   /** 站点地址改前/改后的值：改完要连带把 hugo.toml 的 baseURL 与友链申请页的两条地址一起写掉 */
   let siteUrlOld = '';
   let siteUrlNew = '';
+  /** 这次请求里带了、但 schema 没登记过的键。zod 会把它们静默丢掉而回执仍是 200，
+      调用方只能靠猜（T7 体检实测：写成 siteName / author 而不是 name / defaultAuthor 时，
+      值没进去而屏幕上看不出任何异常）。这里不改判定、不学 /api/admin/config 那样整批 400
+      （后台面板和脚本可能带冗余字段，突然报错等于制造新故障），只把它们点名回出去。 */
+  const ignored: string[] = [];
   for (const key of Object.keys(SECTIONS) as SectionKey[]) {
     const raw = parsed.data[key];
     if (raw === undefined) continue;
@@ -535,7 +540,12 @@ app.post('/', async (c) => {
       pending.push({ key, content: '' });
       continue;
     }
-    const res = SECTIONS[key].schema.safeParse(key === 'seo' ? normalizeSeoKeys(raw) : raw);
+    const probe = (key === 'seo' ? normalizeSeoKeys(raw) : raw) as Record<string, unknown>;
+    if (probe && typeof probe === 'object' && !Array.isArray(probe)) {
+      const known = knownKeys(SECTIONS[key].schema);
+      for (const k of Object.keys(probe)) if (!known.has(k)) ignored.push(`${SECTIONS[key].label}.${k}`);
+    }
+    const res = SECTIONS[key].schema.safeParse(probe);
     if (!res.success) fail(400, `${SECTIONS[key].label}保存失败：${res.error.issues[0]?.message ?? '字段不合法'}`);
     const prev = await readSection(c.env, dir, key);
     /* 出盘不能用「过完 schema 的对象」这一份：schema 只登记面板上那些键，
@@ -640,8 +650,12 @@ app.post('/', async (c) => {
   return ok({
     written,
     notice: failed.length ? `部分未保存：${failed.join('；')}` : null,
+    /** 面板/脚本这次送的、schema 没登记的键（形如「基本信息.siteName」）：它们没有落盘。空数组=一切有效 */
+    ignored,
     build,
-    message: written.length ? buildReceipt(build, `已保存 ${written.length} 个文件`) : '未保存任何文件',
+    message: written.length
+      ? buildReceipt(build, `已保存 ${written.length} 个文件`) + (ignored.length ? `；另有 ${ignored.length} 个字段本站面板不认识，未保存` : '')
+      : '未保存任何文件',
   });
 });
 

@@ -118,7 +118,14 @@ app.use('*', authMiddleware);
 /* ---------------- 记下接口自己的域名（只记一次，见 services/config.ts 里的说明）：
    群发邮件的退订链接、订阅确认链接都要用它，而那些场合手里没有请求可问。 */
 app.use('*', async (c, next) => {
-  await recordApiOrigin(c.env, c.req.url);
+  /* 这一步只是「顺手记下接口自己的域名」，每个 isolate 一次，失败不影响这一单请求。
+     不加 try 时：库还没建表（新站先起了 dev:api）这里抛出去，**所有**接口一律 500，
+     连专门用来自查的 /api/health 也一起倒下，新人完全看不出是「还没跑迁移」。 */
+  try {
+    await recordApiOrigin(c.env, c.req.url);
+  } catch (e) {
+    console.warn('[zero-api] 记录接口域名失败（不影响本次请求）：', errorMessage(e));
+  }
   await next();
 });
 
@@ -250,11 +257,22 @@ app.onError((err, c) => {
    * 线上给人看的是日志里那同一个 trace。
    */
   const dev = c.env.ENVIRONMENT === 'development';
+  /* 表不存在 = 迁移还没跑（或只跑了一半）。这种情况不该回那句「联系站长并附上 trace」：
+     照 README 先起了 dev:api 还没跑迁移的新人，会拿到一个只会说「内部异常」的 500，
+     而唯一该用来自查的 /api/health 也是同一个 500，等于把最该给的那句「先跑迁移」藏起来了。
+     这里只回一句固定的操作指引（不外泄列名清单、堆栈与绝对路径），细节仍留在带 trace 的日志里。 */
+  const uninitialized = /no such table|missing table|SQLITE_ERROR/i.test(errorMessage(err));
+  const msg = uninitialized
+    ? '数据库还没有初始化（表不存在）：先应用迁移再访问接口 —— 本地 `pnpm db:migrate:local`，线上 `pnpm db:migrate:remote`（或 `wrangler d1 migrations apply zero-db --remote`）'
+    : dev
+      ? errorMessage(err)
+      : '服务内部异常，请联系站长并附上 trace';
   return Response.json(
     {
       error: 500,
-      message: dev ? errorMessage(err) : '服务内部异常，请联系站长并附上 trace',
+      message: msg,
       trace: traceId,
+      ...(uninitialized && dev ? { detail: errorMessage(err) } : {}),
     },
     { status: 500 },
   );

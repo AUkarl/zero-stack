@@ -47,7 +47,15 @@ const requestSchema = z.object({
 app.post('/', async (c) => {
   const admin = requireAdmin(c);
   const parsed = requestSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, '请给出要翻译的文本 text / texts');
+  if (!parsed.success) {
+    // 原来无论哪种不合法都回同一句「请给出要翻译的文本」，粘一篇长文（>4 万字）的人
+    // 看到的第一反应是「我明明给了」。把 zod 的真实原因带出来，一句话就能自解释。
+    const issue = parsed.error.issues[0];
+    if (issue?.code === 'too_big') {
+      fail(400, `内容太长了：${issue.path.join('.') || 'text'} 单段上限 ${String(issue.maximum ?? 40_000)} 字，请分成几段（texts 一次最多 20 段）再翻`);
+    }
+    fail(400, '请给出要翻译的文本 text / texts（单段上限 4 万字，一次最多 20 段）');
+  }
   const { text, texts, source } = parsed.data;
 
   const inputs = texts?.length ? texts : text ? [text] : [];

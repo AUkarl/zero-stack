@@ -179,7 +179,10 @@
        「整页没有一个 <main>」+「7 处内容不在任何 landmark 里」—— 读屏用户在登录页只能靠 Tab 走。
        换成 <main> 一次把两类都消掉：样式仍走同一个 .bare-main 类，视觉与位置不动。 -->
   <div class="bare">
-    <main class="bare-main">{@render children()}</main>
+    <main class="bare-main">
+      <h1 class="sr-only">Zero 管理后台 · 登录</h1>
+      {@render children()}
+    </main>
     <footer class="copy">{copyright}</footer>
   </div>
 {:else if !ready || !session.user}
@@ -244,6 +247,9 @@
         <button class="sm out" onclick={logout}>退出</button>
       </header>
       <main>
+        <!-- 页面自己的标题是 <h2>（19 个后台页都是这个结构，改它会动到各页 scoped 样式），
+             这里补一个只给读屏的 <h1>：顶栏那行当前栏目名跟着走，每页的标题层级就顺了。 -->
+        <h1 class="sr-only">Zero 管理后台 · {currentLabel}</h1>
         {@render children()}
         <footer class="copy">{copyright}</footer>
       </main>

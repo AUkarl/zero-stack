@@ -1,6 +1,11 @@
 # ============================================================
-# 用户可选部署模板 —— 复制到你自己仓库的
-# .github/workflows/deploy.yml 即可启用。
+# 用户可选部署模板 —— 属于 **zero-stack 这一侧**（接口 + 后台），
+# 复制到你自己的 zero-stack 仓库的 .github/workflows/deploy.yml 即可启用。
+#
+# 不要放进内容仓 zero-site：下面的步骤要 pnpm install、packages/api 的
+# wrangler.jsonc 和 .svelte-kit/cloudflare 产物，内容仓一样都没有，
+# 第一次跑就死在「缺少 packages/api/wrangler.jsonc」。内容仓那份由
+# pnpm create:site 生成（hugo --minify + pages deploy public）。
 #
 # 需要在仓库 Secrets 中配置：
 #   CF_API_TOKEN   Cloudflare API Token（需 Workers / Pages / D1 权限）

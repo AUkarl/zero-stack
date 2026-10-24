@@ -101,9 +101,15 @@ cp packages/api/wrangler.jsonc.example packages/api/wrangler.jsonc
 其余按功能选填）。
 本地要改的一般只有 `name`（避免和线上 worker 撞名）与 `vars.SITE_URL`。
 
-**照上面 `cp` 完就先改这四个占位再跑迁移**，否则报的是 `No configuration file found. Create a wrangler.jsonc file`
-—— 这句离真正的原因隔了一整步，看起来像仓库缺文件（`pnpm setup` 能把它们填上，但它会真的去 Cloudflare 建
-D1/KV/R2/Queue，本地开发不该跑它）。本地填法（这几个值 `wrangler dev --local` 根本不校验格式，能过 JSON 即可）：
+**先分清两件事**：`wrangler.jsonc` 这个文件**不存在**时才报 `No configuration file found. Create a wrangler.jsonc file`；
+`cp` 之后四个占位一个都不改，`pnpm db:migrate:local` 是**过得去的**（`wrangler dev --local` 不校验这些值的格式，
+本地建库靠 `database_name: zero-db` 认）。不改占位真正坑人的是下一步：接口照样 `Ready on http://127.0.0.1:8787`，
+但 D1 是一个空的本地库、`.dev.vars` 还没建，于是每个后台口都回 500 —— 原因（`no such table: site_config`）
+只在 workerd 日志里，界面上只剩一句「服务内部异常」。所以顺序是 **cp → 建 `.dev.vars` → 改下面这四个占位 → 跑迁移**
+（`pnpm setup` 也能把占位填上，但它会真的去 Cloudflare 建 D1/KV/R2/Queue，本地开发不该跑它）。
+现在漏跑迁移时 `/api/health` 与错误回包会直接点出「表结构比代码旧，先 `pnpm db:migrate:local`」，不用再去翻日志。
+
+本地填法（这四个值 `wrangler dev --local` 都不校验格式，能过 JSON 即可）：
 
 | 位置 | 本地填什么 |
 | --- | --- |
@@ -296,8 +302,11 @@ pnpm setup -- --no-deploy      # 只建资源、跑迁移、写配置：不部�
    主题 submodule 引用都写好了；本地生成与提交，不会替你 push）。
    然后在后台「设置 → 内容仓库」填 `owner / repo / branch / 各目录 / 友链文件 / Pages 重建 Hook`。
 
-8. **GitHub Actions 部署**：把 `docs/deploy-template.yml` 复制成 `zero-site` 仓库的
-   `.github/workflows/deploy.yml`，替换里面的站点名、D1 / Pages 项目 id 与 `CF_*` secrets 名称。
+8. **GitHub Actions 部署**：`docs/deploy-template.yml` 是 **zero-stack 自己**（接口 + 后台）的流水线模板 ——
+   它跑的是 `pnpm install` → `packages/api` 里应用 D1 远端迁移 → 部署 Worker → 部署 `zero-cms` Pages，
+   所以放在**这套代码的仓库**里用。内容仓 `zero-site` 不用它：`pnpm create:site` 已经给那一侧生成了
+   `.github/workflows/deploy.yml`（`hugo --minify` + `pages deploy public`，检测不到 CF 凭据时只构建不发布），
+   把这份模板复制进内容仓只会第一跑就报 `缺少 packages/api/wrangler.jsonc`（那边压根没有 `packages/`）。
 
 ## 站点侧的接口地址（`create:site` 已经替你写好）
 

@@ -48,13 +48,35 @@ const esc = (v: unknown): string => fillTemplate('{v}', { v: String(v ?? '') });
  * 正文片段 → 完整邮件文档。
  * opts.title 是白卡里的标题（可空）；opts.actionNote 放在落款下面的小字说明。
  */
+/**
+ * 邮件里的资源地址必须是绝对地址：邮件客户端没有「本站域名」这个上下文，
+ * `/img/logo-nav.png` 这种相对写法在 Gmail / QQ 邮箱 / Outlook 里一律解析不出来，
+ * 结果是品牌邮件首屏一个破图（出厂 data/site.json 的 logo 恰好就是相对路径，新站必中）。
+ * 规则：已是 http(s) 原样；相对且站点地址有值 → 按站点地址拼成绝对；站点地址为空 → 返回空串，
+ * 宁可不显示 logo，也不发一个必然破图的地址。
+ */
+export function absoluteAsset(url: string, siteUrl: string): string {
+  const u = (url ?? '').trim();
+  if (!u) return '';
+  if (/^https?:\/\//i.test(u)) return u;
+  if (!u.startsWith('/') && !u.startsWith('//')) return ''; // 相对当前目录的写法拼不出可靠地址，丢掉
+  const base = (siteUrl ?? '').trim();
+  if (!base || !/^https?:\/\//i.test(base)) return '';
+  try {
+    return new URL(u.replace(/^\/+/, ''), base.endsWith('/') ? base : base + '/').href;
+  } catch {
+    return '';
+  }
+}
+
 export function wrapEmailShell(body: string, v: Partial<ShellVars> = {}, opts: { title?: string; actionNote?: string } = {}): string {
   const siteName = (v.siteName ?? '').trim() || '站点';
   const author = (v.author ?? '').trim() || siteName;
   const nickname = (v.nickname ?? '').trim() || '朋友';
   const heading = opts.title ? `<h2 style="margin:0 0 6px;font-size:19px;font-weight:700;color:#1f2328">${esc(opts.title)}</h2>` : '';
-  const logo = (v.logo ?? '').trim()
-    ? `<img src="${esc(v.logo!.trim())}" alt="" width="36" height="36" style="width:36px;height:36px;border-radius:8px;display:block">`
+  const logoSrc = absoluteAsset(v.logo ?? '', v.siteUrl ?? '');
+  const logo = logoSrc
+    ? `<img src="${esc(logoSrc)}" alt="" width="36" height="36" style="width:36px;height:36px;border-radius:8px;display:block">`
     : '';
   const siteLink = (v.siteUrl ?? '').trim()
     ? `<a href="${esc((v.siteUrl ?? '').replace(/\/+$/, ''))}" style="color:#0d8368;text-decoration:none">${esc(siteName)}</a>`

@@ -117,6 +117,119 @@ function importExampleSite(siteDir: string): number {
 }
 
 /**
+ * 演示站的示例数据里有几处只属于「演示站」自己的值：站点名「示例站点」、
+ * `00000000号-1` 这类备案号、还有 example.com 的友链申请信息。整份复制过来时
+ * 生成器手上已经有用户刚填的站点名 / 域名 / GitHub 用户名 —— 能推出来的当场填上，
+ * 推不出来的清空，免得新站第一次构建就把「示例站点」摆到访客面前。
+ *
+ * 清空依赖主题那套「空数组 = 还没填」的取法（partials/cms/list.html）：回落的是
+ * params 里本来就留空的项，不会出现「后台一保存整块消失」的意外；
+ * home.desc 清空后走的是模板里那句默认介绍语。返回改写的文件数。
+ */
+function backfillExampleData(siteDir: string, a: Answers): number {
+  const name = a.siteName.trim() || '我的站点';
+  const url = a.siteUrl.trim().replace(/\/+$/, '');
+  const handle = a.githubUser.trim();
+
+  type Row = Record<string, unknown>;
+  const file = (p: string) => resolve(siteDir, p);
+  const read = (p: string): Row | null => {
+    if (!existsSync(file(p))) return null;
+    try {
+      const raw = JSON.parse(readFileSync(file(p), 'utf8')) as unknown;
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Row) : null;
+    } catch {
+      /** 读不懂就整段跳过：新站照旧带着示例值，构建不会因为这一步崩 */
+      return null;
+    }
+  };
+  let changed = 0;
+  const save = (p: string, obj: Row) => {
+    writeFileSync(file(p), JSON.stringify(obj, null, 2) + '\n');
+    changed++;
+  };
+  const rows = (v: unknown): Row[] =>
+    Array.isArray(v) ? v.filter((it): it is Row => !!it && typeof it === 'object' && !Array.isArray(it)) : [];
+  const text = (v: unknown) => String(v ?? '').trim();
+  /** demo 域名的链接点了就是别人的站，比少一条更糟 */
+  const demoLink = (v: unknown) => /^https?:\/\/(www\.)?example\.com/i.test(text(v));
+
+  const site = read('data/site.json');
+  if (site) {
+    if (text(site.name) === '示例站点') site.name = name;
+    if (text(site.navName) === '示例站点') site.navName = name;
+    if (!text(site.siteUrl) && url) site.siteUrl = url;
+    if (text(site.description).includes('占位')) site.description = '';
+    save('data/site.json', site);
+  }
+
+  const footer = read('data/footer.json');
+  if (footer) {
+    if (text(footer.copyrightText).includes('我的站点名')) footer.copyrightText = text(footer.copyrightText).replace('我的站点名', name);
+    /** 备案号：留着一串 0 比不写更容易被当成真备案 */
+    if (Array.isArray(footer.icpItems)) {
+      footer.icpItems = rows(footer.icpItems).filter((it) => !/0{6,}/.test(text(it.text)));
+    }
+    for (const key of ['services', 'socialRow1', 'socialRow2'] as const) {
+      if (!Array.isArray(footer[key])) continue;
+      footer[key] = rows(footer[key])
+        .map((it) =>
+          /** GitHub 那条能补：用户名就是刚才填的那一个。其余 demo 链接（X、站点联盟、打赏）删掉 */
+          /^github$/i.test(text(it.name)) && demoLink(it.link) && handle ? { ...it, link: `https://github.com/${handle}` } : it,
+        )
+        .filter((it) => !demoLink(it.link));
+    }
+    save('data/footer.json', footer);
+  }
+
+  const home = read('data/home.json');
+  if (home && text(home.desc).includes('占位')) {
+    home.desc = '';
+    save('data/home.json', home);
+  }
+
+  const about = read('data/about.json');
+  if (about && Array.isArray(about.contacts)) {
+    about.contacts = rows(about.contacts).filter((it) => !demoLink(it.url) && !/example\.com|@email\.com/i.test(text(it.text)));
+    save('data/about.json', about);
+  }
+
+  const apply = read('data/apply.json');
+  if (apply && Array.isArray(apply.myInfo)) {
+    /** 「我的信息」是给访客看的本站资料：示例值一律换掉，换不出来的整行删掉 */
+    apply.myInfo = rows(apply.myInfo)
+      .map((it) => {
+        const value = text(it.value);
+        if (value === '示例站点') return { ...it, value: name };
+        if (demoLink(value)) {
+          const tail = value.replace(/^https?:\/\/(www\.)?example\.com/i, '');
+          if (/^\/index\.xml$/i.test(tail)) return { ...it, value: `${url}/index.xml` };
+          if (tail === '' || tail === '/' || /^\/home\/?$/i.test(tail)) return { ...it, value: `${url}/` };
+          return { ...it, value: '' };
+        }
+        if (/@email\.com$/i.test(value) || value.includes('一句话介绍你的网站')) return { ...it, value: '' };
+        return it;
+      })
+      .filter((it) => text(it.value) !== '');
+    save('data/apply.json', apply);
+  }
+
+  /** 作者资料表：顶部署名与文章底部作者框读这里，那句「占位作者」和 your-username 同理处理。
+      shape-list / shape-map 两条是渲染形状的用例，不动。 */
+  if (existsSync(file('data/authors.yaml'))) {
+    const raw = readFileSync(file('data/authors.yaml'), 'utf8');
+    const patched = raw
+      .replace(/^(\s*)bio_zh:\s*["']?占位作者[^\n]*$/m, '$1bio_zh: ""')
+      .replace(/https:\/\/github\.com\/your-username/i, handle ? `https://github.com/${handle}` : 'https://github.com');
+    if (patched !== raw) {
+      writeFileSync(file('data/authors.yaml'), patched);
+      changed++;
+    }
+  }
+  return changed;
+}
+
+/**
  * 边缘 404 中间件的模板：scripts/site-template/functions/_middleware.ts
  * 里面只有 __ZERO_API_BASE__ 一个占位，生成仓库时换成填好的接口地址。
  * 单独放成一个文件而不是写在代码里：能直接读、直接改，也不用处理模板字符串里的正则转义。
@@ -616,9 +729,29 @@ async function main(): Promise<void> {
       而 params 那行注释也写着「末尾不要带斜杠」—— 让人填错再靠注释提醒没意义。 */
   a.apiBaseURL = a.apiBaseURL.trim().replace(/\/+$/, '');
   a.siteUrl = a.siteUrl.trim().replace(/\/+$/, '');
+  /** 用 URL 解析而不是「主机名里得有一个点」的正则：老写法会把台架常用的
+      http://localhost:9605 判成不合法，而 http://127.0.0.1:1767 反倒能过 —— 两条本是同一种东西。 */
   for (const [label, v] of [['API 地址', a.apiBaseURL], ['站点域名', a.siteUrl]] as const) {
-    if (!/^https?:\/\/[^\s/]+\.[^\s/]+$/i.test(v)) die(`${label}不像完整 URL：${v}\n要形如 https://zero-api.xxx.workers.dev（协议 + 域名写全，末尾不要带斜杠）`);
+    const bad = (): never => die(`${label}不像完整 URL：${v}\n要形如 https://zero-api.xxx.workers.dev（协议 + 域名写全，末尾不要带斜杠）`);
+    let u: URL | null = null;
+    try {
+      u = new URL(v);
+    } catch {
+      bad();
+    }
+    if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname) bad();
+    /** 只到域名/端口为止：带路径的地址会让主题拼出来的绝对链接错位，比报这一条更难查 */
+    else if (u.pathname !== '/' && u.pathname !== '')
+      die(`${label}只填到域名（或域名 + 端口），末尾不要带路径：${v}\n例如 https://zero-api.xxx.workers.dev`);
   }
+
+  /** 仓库名直接变成生成目录的名字：带分隔符、`.`/`..` 或 Windows 非法字符的 --repo
+      会把整座站写到 zero-stack 同级之外去，所以这里先按「一个目录名」的要求拦下来。 */
+  const repo = a.repoName.trim();
+  if (!repo) die('仓库名不能为空');
+  if (repo === '.' || repo === '..' || /[/\\]/.test(repo) || /[<>:"|?*\s]/.test(repo))
+    die(`仓库名得是一个单纯的目录名：不能带 / \\ 、空格、. 或 ..，也不能含 <>:"|?*：${a.repoName}`);
+  a.repoName = repo;
 
   const siteDir = resolve(ROOT, '..', a.repoName);
   /** 结尾的清单要按「哪些步骤其实没成」来印命令，不能让站主回头翻上面的日志 */
@@ -756,6 +889,8 @@ hugo server -D
       if (existsSync(p)) rmSync(p);
     }
     good(`已按主题演示站填入示例内容与示例数据（${imported} 个文件）`);
+    const filled = backfillExampleData(siteDir, a);
+    if (filled > 0) good(`示例数据里的占位值已换成这座站的（${filled} 个文件：站点名 / 域名 / 备案与服务图标 / 友链申请信息）`);
   } else {
     warn('没读到 themes/zero/exampleSite（子模块还没拉下来？）：这座站只有最小骨架，初始化子模块后重跑一次 create:site 才有完整示例');
   }
@@ -766,6 +901,29 @@ hugo server -D
   write(
     rel('content/zh/posts/_index.md'),
     '---\ntitle: "文章"\ntype: "posts"\nlayout: "list"\nbuild: { render: never }\n---\n',
+  );
+
+  /**
+   * 跳转规则出厂只有注释，原因有两层：
+   * · 新站这些路径都归 Hugo 自己出，/posts/ 那个 404 还是上面刻意做的，放开就是改行为；
+   * · 但「换域名以后旧地址要 301」「某个分区下线了要指到替身页」这两件事，
+   *   只有手写过一次的人知道 Pages 读的是 static/_redirects —— 后台改站点地址会连带改
+   *   hugo.toml / site.json / apply.json 三处，唯独不会生成这份，所以这里先摆个样子。
+   *   整个文件都是注释时 Pages 一条规则都不加，本地 hugo server 也根本不读它。
+   */
+  write(
+    rel('static/_redirects'),
+    '# Cloudflare Pages 的跳转规则（本地 hugo server 不读这个文件）。出厂一条都没启用，照着放开即可。\n' +
+      '# 规则按「先匹配先生效」排队：具体的那条要排在通配之前。\n' +
+      '\n' +
+      '# ① 换过域名、旧站是子目录结构时，把旧地址 301 到新站同路径\n' +
+      '# /zh/*       /:splat        301\n' +
+      '# /zh         /              301\n' +
+      '\n' +
+      '# ② 关掉某个分区后，把老地址指到替身页。\n' +
+      '#    带斜杠与不带斜杠是两条精确串，只写一条时手打缺斜杠的那位会直接吃 404。\n' +
+      '# /posts/     /archive/      301\n' +
+      '# /posts      /archive/      301\n',
   );
 
   /* 站点参数只有一份：把主题那份「全量注释版」params.toml 复制成站点自己的，

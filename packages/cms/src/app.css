@@ -265,3 +265,18 @@ td {
   background: #dcfce7;
   color: var(--good);
 }
+
+/* 只给读屏的标题：后台每一页的可见标题都是 <h2>，整页没有 <h1> 时读屏用户
+   的「跳到标题」列表是空的。clip 那套写法是 WCAG 推荐的，不用 display:none
+   （那样读屏也读不到），也不用 position:absolute 单打独斗（会被父级 overflow 裁掉）。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

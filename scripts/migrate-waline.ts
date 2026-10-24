@@ -227,11 +227,13 @@ function toSql(list: OutComment[]): string {
     .map((c) =>
       [
         'INSERT OR IGNORE INTO comments',
+        // 列清单以「跑完全部迁移之后」的表为准：comments.ip 已被 0005_round2_drop_ip 删除，
+        // 这里再写就会在最后一步 `d1 execute` 上撞 `table comments has no column named ip`。
         '(id, post_slug, parent_id, depth, root_id, author_type, author_id, author_name, author_email, author_link,',
-        ' content, status, ip, user_agent, is_legacy, legacy_id, created_at, updated_at)',
+        ' content, status, user_agent, is_legacy, legacy_id, created_at, updated_at)',
         'VALUES',
         `(${q(c.id)}, ${q(c.postSlug)}, ${q(c.parentId)}, ${c.depth}, ${q(c.rootId)}, 'commenter', null, ${q(c.name)}, ${q(c.email)}, ${q(c.link)},`,
-        ` ${q(c.content)}, ${q(c.status)}, ${q(c.ip)}, ${q(c.userAgent)}, 1, ${q(c.legacyId)}, ${c.createdAt}, ${c.updatedAt});`,
+        ` ${q(c.content)}, ${q(c.status)}, ${q(c.userAgent)}, 1, ${q(c.legacyId)}, ${c.createdAt}, ${c.updatedAt});`,
       ].join(' '),
     )
     .join('\n');
@@ -292,7 +294,15 @@ function main(): void {
   if (apply !== 'local' && apply !== 'remote') die('--apply 只能是 local 或 remote');
 
   step(`导入 D1（${apply}）`);
-  wrangler(`d1 execute ${D1_NAME} --${apply} --yes --file="${OUT_SQL}"`, { cwd: API_DIR });
+  try {
+    wrangler(`d1 execute ${D1_NAME} --${apply} --yes --file="${OUT_SQL}"`, { cwd: API_DIR, capture: true });
+  } catch (e) {
+    // 原来这里直接把整段 node 堆栈与退出码抛出来，而「✓ 已生成 SQL」刚打印完，
+    // 看起来像脚本坏了。把 wrangler 真正的那行 SQL 错误提到第一行，人一眼就知道改哪。
+    const text = String((e as Error)?.message ?? e);
+    const first = text.split('\n').find((l) => /ERROR|SQLITE_|no such|failed/i.test(l)) ?? '';
+    die(`写入 D1 失败（${apply}）：${first.trim() || text.split('\n')[0] || '未知错误'}\nSQL 文件留在 ${OUT_SQL}，可自己打开核对或改完重跑。`);
+  }
   const check = wrangler(
     `d1 execute ${D1_NAME} --${apply} --json --command "SELECT COUNT(*) AS n FROM comments WHERE is_legacy = 1"`,
     { cwd: API_DIR, capture: true },

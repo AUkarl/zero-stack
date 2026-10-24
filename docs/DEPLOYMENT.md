@@ -533,8 +533,11 @@ pnpm exec wrangler d1 execute zero-db --local --command "SELECT count(*) FROM us
 
 ## 9. 用 GitHub Actions 部署
 
-把 `docs/deploy-template.yml` 复制成你自己仓库的 `.github/workflows/deploy.yml`，
+把 `docs/deploy-template.yml` 复制成**你自己 zero-stack 仓库**的 `.github/workflows/deploy.yml`
+（它部署的是接口 + 后台这两件，需要 `packages/api/wrangler.jsonc` 与 `.svelte-kit/cloudflare` 产物），
 并配置 `CF_API_TOKEN`、`CF_ACCOUNT_ID` 两个 Secrets。模板会先应用 D1 迁移再部署 worker，然后构建并部署后台。
+内容仓 `zero-site` 的那份 CI 由 `pnpm create:site` 生成（`hugo --minify` + `pages deploy public`），
+**别把这份模板复制进内容仓** —— 那边没有 `packages/`，跑起来只会报「缺少 packages/api/wrangler.jsonc」。
 
 zero-stack 自身的 `.github/workflows/ci.yml` 只做校验：`pnpm typecheck:scripts` → `pnpm -r typecheck` → `pnpm -r build`。
 
