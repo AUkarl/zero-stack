@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { deleteRepoFile, readRepoFile, repoBackend, writeRepoFile } from '../services/repo';
+import { commitRepoFiles, readRepoFile, repoBackend, writeRepoFile } from '../services/repo';
 import { getAllConfig, getConfig, setConfig } from '../services/config';
 import { requireAdmin } from '../middleware/auth';
 import { buildReceipt, triggerPagesBuild } from '../services/git';
@@ -525,6 +525,9 @@ app.post('/', async (c) => {
   // 先整体校验，任何一段不合法都不落盘，免得存一半
   const dir = await dataDir(c.env);
   const pending: { key: SectionKey; content: string }[] = [];
+  /** 站点地址改前/改后的值：改完要连带把 hugo.toml 的 baseURL 与友链申请页的两条地址一起写掉 */
+  let siteUrlOld = '';
+  let siteUrlNew = '';
   for (const key of Object.keys(SECTIONS) as SectionKey[]) {
     const raw = parsed.data[key];
     if (raw === undefined) continue;
@@ -544,6 +547,10 @@ app.post('/', async (c) => {
       const old = (prev?.value as { defaultAuthor?: string } | undefined)?.defaultAuthor ?? '';
       if (old) value = { ...value, defaultAuthor: old };
     }
+    if (key === 'site') {
+      siteUrlOld = String((prev?.value as { siteUrl?: string } | undefined)?.siteUrl ?? '').trim();
+      siteUrlNew = String((value as { siteUrl?: string }).siteUrl ?? '').trim();
+    }
     if (key === 'footer') {
       /** 这三组键是可选的：面板没送（旧版面板、或别的页面整段保存）时
           必须把仓库里的现值带回去，否则一次保存就把服务图标与社交链接整段抹掉。 */
@@ -561,21 +568,57 @@ app.post('/', async (c) => {
   }
   if (!pending.length) fail(400, '没有要保存的内容');
 
+  /* 站点地址一变，连带改两处 —— 否则就是「后台改了地址，前台 canonical 还是旧域名」：
+       ① hugo.toml 的 baseURL：canonical / og:url / sitemap / RSS / robots 全部由它生成；
+       ② 友链申请页（data/apply.json）里「链接」「RSS」两条展示值（只替换与旧地址完全相同的值）。 */
+  const extra: { path: string; content: string }[] = [];
+  if (siteUrlNew && siteUrlOld && siteUrlNew !== siteUrlOld) {
+    const norm = (u: string) => u.replace(/\/+$/, '');
+    const oldBase = norm(siteUrlOld);
+    const newBase = norm(siteUrlNew);
+
+    const hugo = await readRepoFile(c.env, 'hugo.toml').catch(() => null);
+    if (hugo?.content && /^baseURL\s*=\s*"[^"]*"/m.test(hugo.content)) {
+      extra.push({ path: 'hugo.toml', content: hugo.content.replace(/^baseURL\s*=\s*"[^"]*"/m, `baseURL = "${newBase}/"`) });
+    }
+
+    const applyPath = dataPath(dir, 'apply.json');
+    const applyFile = await readRepoFile(c.env, applyPath).catch(() => null);
+    if (applyFile?.content) {
+      try {
+        const j = JSON.parse(applyFile.content) as { myInfo?: { label?: string; value?: string }[] };
+        let touched = false;
+        for (const it of j.myInfo ?? []) {
+          const v = norm(String(it.value ?? '').trim());
+          if (v === oldBase) {
+            it.value = `${newBase}/`;
+            touched = true;
+          } else if (v === `${oldBase}/index.xml`) {
+            it.value = `${newBase}/index.xml`;
+            touched = true;
+          }
+        }
+        if (touched) extra.push({ path: applyPath, content: JSON.stringify(j, null, 2) + '\n' });
+      } catch {
+        /* apply.json 内容坏了就不碰它，别把整次保存拖垮 */
+      }
+    }
+  }
+
   const written: string[] = [];
   const failed: string[] = [];
+  const files = [
+    ...pending.filter((p) => p.content !== '').map((p) => ({ path: dataPath(dir, SECTIONS[p.key].file), content: p.content })),
+    ...extra,
+  ];
+  // 空内容 = 删除该段，主题回到 params.toml 的默认值
+  const deletes = pending.filter((p) => p.content === '').map((p) => dataPath(dir, SECTIONS[p.key].file));
   const message = `zero-cms: 更新前端设置（${pending.map((p) => SECTIONS[p.key].label).join('、')}）`;
-  for (const item of pending) {
-    const path = dataPath(dir, SECTIONS[item.key].file);
-    // 空内容 = 删除该段，主题回到 params.toml 的默认值
-    if (item.content === '') {
-      const res = await deleteRepoFile(c.env, path, message, { actor: admin, ip: clientIp(c), action: 'params' }).catch(() => null);
-      if (res?.success) written.push(path);
-      else failed.push(SECTIONS[item.key].label);
-      continue;
-    }
-    const res = await writeRepoFile(c.env, path, item.content, message, { actor: admin, ip: clientIp(c), action: 'params' });
-    if (res.success) written.push(path);
-    else failed.push(`${SECTIONS[item.key].label}：${res.error ?? '写入失败'}`);
+  if (files.length || deletes.length) {
+    /* 一次提交写全部：每个提交都会触发一次 Pages 构建，逐个写等于把「一次保存」拆成好几次构建 */
+    const res = await commitRepoFiles(c.env, files, message, { actor: admin, ip: clientIp(c), action: 'params', deletes });
+    if (res.success) written.push(...files.map((f) => f.path), ...deletes);
+    else failed.push(res.error ?? '写入失败');
   }
 
   // 基本信息同步一份进 site_config：邮件里的站点名与链接前缀、群发、备份文件名、

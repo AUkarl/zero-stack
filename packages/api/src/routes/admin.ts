@@ -30,9 +30,9 @@ import { clientIp } from '../lib/http';
 import { datedSlug } from '../lib/postName';
 import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
-import { deleteFile, listDir, readFile, writeFile } from '../services/git';
+import { deleteFile, listDir, readFile } from '../services/git';
 import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
-import { listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
+import { commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
 import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry } from '../services/media-variants';
@@ -437,15 +437,33 @@ async function withAuthorFallback(env: Env, path: string, front: Front): Promise
   return handle ? { ...front, author: handle } : front;
 }
 
+/** 校验通过、准备写进仓库的一篇 */
+interface PreparedContent {
+  path: string;
+  content: string;
+  bytes: number;
+  futureDraft: string | null;
+  /** 仓库里已经有一模一样的一份：不参与本次提交，但仍算成功 */
+  unchanged: boolean;
+  currentSha?: string;
+}
+
+type PrepareResult = { ok: true; prepared: PreparedContent } | { ok: false; outcome: ContentOutcome };
+
 /**
- * 写一个内容文件：拼 front matter → sha 乐观锁 → 提交 → 按需群发。
- * 不抛 HTTP 异常、不清缓存、不触发构建，这三件都由调用方在整批做完后统一做一次，
- * 免得一次批量推送把 Pages 构建配额和后台缓存刷爆。
+ * 第一阶段：路径校验 → 拼 front matter → 读现状做乐观锁检查。**不写盘**。
+ *
+ * 拆成两阶段是为了「多篇一个提交」：每篇各自校验、各自判冲突，通过的攒成一批一次提交。
+ * 以前每篇一次 writeFile = 每篇一个提交 = 每篇触发一次 Pages 构建，
+ * 后台那句「攒一批再推」实际省不掉构建次数。
  */
-async function writeContentItem(env: Env, admin: { id?: string | null }, item: ContentItem): Promise<ContentOutcome> {
+async function prepareContentItem(
+  env: Env,
+  settings: Awaited<ReturnType<typeof repoTarget>>,
+  item: ContentItem,
+): Promise<PrepareResult> {
   const path = safePath(item.path ?? '');
-  if (!path) return { ok: false, path: String(item.path ?? ''), reason: 'invalid', error: '路径不合法' };
-  const settings = await repoTarget(env);
+  if (!path) return { ok: false, outcome: { ok: false, path: String(item.path ?? ''), reason: 'invalid', error: '路径不合法' } };
 
   let content: string;
   let futureDraft: string | null = null;
@@ -472,47 +490,127 @@ async function writeContentItem(env: Env, admin: { id?: string | null }, item: C
       throw new Error('缺少正文');
     }
   } catch (e) {
-    return { ok: false, path, reason: 'invalid', error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, outcome: { ok: false, path, reason: 'invalid', error: e instanceof Error ? e.message : String(e) } };
   }
+
+  const current = await readFile({ ...settings, path }).catch(() => null);
 
   // 带 sha 就是乐观锁：别人在你编辑期间改过就不覆盖（批量时这一条被跳过并单独报出来，其余照常推）
   if (item.sha) {
-    const current = await readFile({ ...settings, path }).catch(() => null);
     if (current && current.sha && current.sha !== item.sha) {
-      return { ok: false, path, reason: 'conflict', error: '这篇在你编辑期间已被改动，未覆盖' };
+      return { ok: false, outcome: { ok: false, path, reason: 'conflict', error: '这篇在你编辑期间已被改动，未覆盖' } };
     }
-  } else {
+  } else if (current) {
     /* 不带 sha 而仓库里已经有这个文件 = 名字被占了。以前直接覆盖：两个人同时新建「今天第一篇」时
        取到同一个号（取号是「列目录数最大序号 +1」，号本身没有锁），后写的那一笔把前一篇整篇盖掉，
        两边都显示「保存成功」，后台毫无痕迹（T3 体检实测）。
        现在按冲突报出去：单写回 409，批量时这一条被跳过并单独列出，其余照推。 */
-    const exists = await readFile({ ...settings, path }).catch(() => null);
-    if (exists) {
-      return {
+    return {
+      ok: false,
+      outcome: {
         ok: false,
         path,
         reason: 'conflict',
         error: `${path} 在仓库里已经存在，而这次提交没带它的版本号，所以没有覆盖。两种可能：另一个人（或另一个标签页）刚用同一个文件名建过；或者你上一次保存其实成功了、只是回执没收到。请先打开这篇确认内容，或换一个文件名再存。`,
-      };
-    }
+      },
+    };
   }
 
-  const message = (item.message || '').trim() || `content: update ${path}`;
-  const result = await writeFile({ ...settings, path, content, message });
-  if (!result.success) return { ok: false, path, reason: 'failed', error: result.error ?? '提交失败' };
+  return {
+    ok: true,
+    prepared: {
+      path,
+      content,
+      bytes: content.length,
+      futureDraft,
+      unchanged: Boolean(current && current.content === content),
+      currentSha: current?.sha,
+    },
+  };
+}
 
-  const parsed = parseFrontMatter(content);
+/** 第二阶段：提交成功之后的收尾（草稿摘掉本地产物、按需群发）。 */
+async function finishContentItem(
+  env: Env,
+  adminId: string,
+  settings: Awaited<ReturnType<typeof repoTarget>>,
+  item: ContentItem,
+  prepared: PreparedContent,
+  sha: string | undefined,
+): Promise<ContentOutcome> {
+  const parsed = parseFrontMatter(prepared.content);
   /* 草稿与线上必须一致：Hugo 不带 -D 时根本不渲染 draft，可本地 `hugo server`
      已经把「取消发布」前的那一份写进 public/ 了，不摘掉就会出现「后台标了草稿、
      前台还打得开」。线上 Pages 每次是干净目录，没这一步。 */
   const purgedBuild: string[] = [];
-  const ref = buildPageRef(path);
+  const ref = buildPageRef(prepared.path);
   if (ref && isDraftFront(parsed.front)) {
     purgedBuild.push(...(await pruneLocalBuild(settings, { ...ref, title: String(parsed.front.title ?? '').trim() })));
   }
 
-  const notify: NotifyResult = item.notifySubscribers ? await notifyPostSubscribers(env, admin.id ?? '', path, parsed) : {};
-  return { ok: true, path, sha: result.sha, bytes: content.length, notify, purgedBuild, futureDraft };
+  const notify: NotifyResult = item.notifySubscribers ? await notifyPostSubscribers(env, adminId, prepared.path, parsed) : {};
+  return {
+    ok: true,
+    path: prepared.path,
+    sha,
+    bytes: prepared.bytes,
+    notify,
+    purgedBuild,
+    futureDraft: prepared.futureDraft,
+  };
+}
+
+/**
+ * 一批内容落成**一个**提交，然后逐篇收尾。
+ * 不抛 HTTP 异常、不清缓存、不触发构建 —— 这三件由调用方在整批做完后统一做一次。
+ */
+async function writeContentItems(
+  env: Env,
+  admin: { id?: string | null },
+  items: ContentItem[],
+): Promise<ContentOutcome[]> {
+  const settings = await repoTarget(env);
+  const outcomes: (ContentOutcome | null)[] = items.map(() => null);
+  const ready: { idx: number; item: ContentItem; prepared: PreparedContent }[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const r = await prepareContentItem(env, settings, items[i]);
+    if (r.ok) ready.push({ idx: i, item: items[i], prepared: r.prepared });
+    else outcomes[i] = r.outcome;
+  }
+
+  const changed = ready.filter((x) => !x.prepared.unchanged);
+  let shas: Record<string, string> = {};
+  let commitError = '';
+  if (changed.length) {
+    const message =
+      items.length === 1
+        ? (changed[0].item.message || '').trim() || `content: update ${changed[0].prepared.path}`
+        : `zero-cms: 批量更新 ${changed.length} 个文件（${changed.map((x) => x.prepared.path).join('、')}）`;
+    const res = await commitRepoFiles(
+      env,
+      changed.map((x) => ({ path: x.prepared.path, content: x.prepared.content })),
+      message,
+    );
+    if (!res.success) commitError = res.error ?? '提交失败';
+    else shas = res.shas;
+  }
+
+  for (const { idx, item, prepared } of ready) {
+    if (commitError) {
+      outcomes[idx] = { ok: false, path: prepared.path, reason: 'failed', error: commitError };
+      continue;
+    }
+    // 成功的那几篇要把新 sha 带回去：前端本地暂存里存的是提交前的 sha，不带回来下次推送必然报冲突
+    outcomes[idx] = await finishContentItem(env, admin.id ?? '', settings, item, prepared, shas[prepared.path] ?? prepared.currentSha);
+  }
+
+  return outcomes as ContentOutcome[];
+}
+
+/** 写一篇：等价于批次里只有一个元素。 */
+async function writeContentItem(env: Env, admin: { id?: string | null }, item: ContentItem): Promise<ContentOutcome> {
+  return (await writeContentItems(env, admin, [item]))[0];
 }
 
 /** 「发布后群发订阅」：只有非草稿的文章能发，草稿只入库不推送 */
@@ -619,10 +717,11 @@ app.post('/content/batch', async (c) => {
     purgedBuild?: string[];
     futureDraft?: string | null;
   }[] = [];
+  /* 整批一次提交：校验与冲突检查逐篇做，通过的攒成**一个** Git 提交 ——
+     每个提交都会触发一次 Pages 构建，逐个 PUT 等于把「攒一批再推」白做了。 */
+  const outcomes = await writeContentItems(c.env, admin, files);
   let done = 0;
-  for (const item of files) {
-    const r = await writeContentItem(c.env, admin, item);
-    // 成功的那几篇要把新 sha 带回去：前端本地暂存里存的是提交前的 sha，不带回来下次推送必然报冲突
+  for (const r of outcomes) {
     if (r.ok) done++;
     results.push(
       r.ok

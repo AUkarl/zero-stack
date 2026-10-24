@@ -134,6 +134,89 @@ export async function writeFile(input: CommitInput): Promise<CommitResult> {
   return { success: true, sha: body.content.sha, path: body.content.path };
 }
 
+/**
+ * 一次提交写多个文件（Git Data API：blob → tree → commit → 移动 ref）。
+ *
+ * 为什么需要它：contents API 的 `PUT /contents/<path>` **一次只能写一个文件、一个提交**，
+ * 而每个提交都会触发一次 Pages 构建。后台「批量推送」与「前端设置」都是一次改多个文件，
+ * 以前逐个 PUT = N 个提交 = N 次构建，批量的意义全没了。
+ *
+ * 语义与 writeFile 保持一致：返回每个文件的 blob 号（前端拿它当下一轮的乐观锁基准），
+ * 调用方已在外面做过 sha 冲突检查，这里只负责把这一批原子地落成一个提交。
+ */
+export async function commitFiles(input: {
+  owner: string;
+  repo: string;
+  branch: string;
+  token: string;
+  message: string;
+  files: { path: string; content: string }[];
+  deletes?: string[];
+}): Promise<{ success: boolean; commit?: string; shas?: Record<string, string>; unchanged?: boolean; error?: string }> {
+  const files = input.files.filter((f) => f.path);
+  const deletes = (input.deletes ?? []).filter(Boolean);
+  if (!files.length && !deletes.length) return { success: true, shas: {} };
+
+  const base = `${API}/repos/${input.owner}/${input.repo}`;
+  const auth = headers(input.token, 'application/vnd.github+json');
+  const where = { owner: input.owner, repo: input.repo, branch: input.branch };
+
+  const refRes = await fetch(`${base}/git/ref/heads/${encodeURIComponent(input.branch)}`, { headers: auth });
+  if (!refRes.ok) return { success: false, error: await readError(refRes, where) };
+  const headSha = ((await refRes.json()) as { object: { sha: string } }).object.sha;
+
+  const commitRes = await fetch(`${base}/git/commits/${headSha}`, { headers: auth });
+  if (!commitRes.ok) return { success: false, error: await readError(commitRes, where) };
+  const baseTree = ((await commitRes.json()) as { tree: { sha: string } }).tree.sha;
+
+  const tree: { path: string; mode?: string; type?: string; sha: string | null }[] = [];
+  const shas: Record<string, string> = {};
+  for (const f of files) {
+    const bytes = new TextEncoder().encode(f.content);
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    const blobRes = await fetch(`${base}/git/blobs`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ content: btoa(binary), encoding: 'base64' }),
+    });
+    if (!blobRes.ok) return { success: false, error: await readError(blobRes, { ...where, path: f.path }) };
+    const sha = ((await blobRes.json()) as { sha: string }).sha;
+    shas[f.path] = sha;
+    tree.push({ path: f.path, mode: '100644', type: 'blob', sha });
+  }
+  for (const p of deletes) tree.push({ path: p, sha: null });
+
+  const treeRes = await fetch(`${base}/git/trees`, {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({ base_tree: baseTree, tree }),
+  });
+  if (!treeRes.ok) return { success: false, error: await readError(treeRes, where) };
+  const treeSha = ((await treeRes.json()) as { sha: string }).sha;
+  /* 内容与现在完全一样时 tree 不会变 —— 不产生空提交，也不白触发一次构建 */
+  if (treeSha === baseTree) return { success: true, commit: headSha, shas, unchanged: true };
+
+  const newCommitRes = await fetch(`${base}/git/commits`, {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({ message: input.message, tree: treeSha, parents: [headSha] }),
+  });
+  if (!newCommitRes.ok) return { success: false, error: await readError(newCommitRes, where) };
+  const newCommit = ((await newCommitRes.json()) as { sha: string }).sha;
+
+  const moveRes = await fetch(`${base}/git/refs/heads/${encodeURIComponent(input.branch)}`, {
+    method: 'PATCH',
+    headers: auth,
+    body: JSON.stringify({ sha: newCommit, force: false }),
+  });
+  if (!moveRes.ok) {
+    /* 期间有别的提交（CMS、定时任务）动过这个分支：不覆盖，交回调用方重试 */
+    return { success: false, error: `仓库在这几秒里被其他提交更新过，这次没有写入。请重试一次（目标：${where.owner}/${where.repo}@${where.branch}）` };
+  }
+  return { success: true, commit: newCommit, shas };
+}
+
 export async function deleteFile(input: { owner: string; repo: string; path: string; message: string; branch: string; token: string }): Promise<CommitResult> {
   const path = encodeURIComponentPath(input.path);
   const url = `${API}/repos/${input.owner}/${input.repo}/contents/${path}?ref=${encodeURIComponent(input.branch)}`;

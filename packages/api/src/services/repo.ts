@@ -201,6 +201,65 @@ export async function listDirViaTarget(target: RepoTarget, dir: string): Promise
   return gh.listDir({ owner: target.owner, repo: target.repo, branch: target.branch, token: target.token, path: dir });
 }
 
+export interface RepoCommitResult {
+  success: boolean;
+  /** 每个路径对应的新 blob 号（前端拿它当下一次乐观锁的基准） */
+  shas: Record<string, string>;
+  commit?: string;
+  /** 这批内容与仓库现状完全一致，没有产生提交 */
+  unchanged?: boolean;
+  error?: string;
+  backend: RepoBackend;
+}
+
+/**
+ * 一次提交写多个文件。
+ *
+ * github 后端走 Git Data API，整批落成**一个**提交 —— 每个提交都会触发一次 Pages 构建，
+ * 所以「批量推送 3 篇」必须是 1 次构建而不是 3 次。本地后端没有提交概念，逐个落盘。
+ */
+export async function commitViaTarget(
+  target: RepoTarget,
+  files: { path: string; content: string }[],
+  message: string,
+  opts: RepoWriteOptions & { deletes?: string[] } = {},
+): Promise<RepoCommitResult> {
+  if (target.backend === 'local') {
+    const shas: Record<string, string> = {};
+    for (const f of files) {
+      const result = await localWrite(target, f.path, f.content);
+      await auditLocal(target, 'write', f.path, message, opts, result);
+      if (!result.success) return { success: false, shas, backend: 'local', error: result.error ?? '写入失败' };
+      if (result.sha) shas[f.path] = result.sha;
+    }
+    for (const p of opts.deletes ?? []) {
+      const result = await localDelete(target, p);
+      await auditLocal(target, 'delete', p, message, opts, result);
+      if (!result.success) return { success: false, shas, backend: 'local', error: result.error ?? '删除失败' };
+    }
+    return { success: true, shas, backend: 'local' };
+  }
+  const res = await gh.commitFiles({
+    owner: target.owner,
+    repo: target.repo,
+    branch: target.branch,
+    token: target.token,
+    message,
+    files,
+    deletes: opts.deletes,
+  });
+  return { ...res, shas: res.shas ?? {}, backend: 'github' };
+}
+
+export async function commitRepoFiles(
+  env: Env,
+  files: { path: string; content: string }[],
+  message: string,
+  opts: RepoWriteOptions & { deletes?: string[] } = {},
+): Promise<RepoCommitResult> {
+  return commitViaTarget(await resolveRepoTarget(env), files, message, opts);
+}
+
 /**
  * 递归列目录，只回文件路径。
  * 备份与仪表盘的「文章数 / 时刻数」共用这一份：单层 listDir 在多语言或

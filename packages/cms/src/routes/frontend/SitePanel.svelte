@@ -48,7 +48,7 @@
   <label>
     站点主地址（邮件里的确认 / 退订链接前缀、后台仪表盘的跳转都用它）
     <input bind:value={site.siteUrl} maxlength={LIMIT.href} placeholder="https://example.com" />
-    <span class="muted small cnt">要与 <code>config.toml</code> 的 <code>baseURL</code> 写成同一个地址；保存时会同步进配置键 siteUrl。</span>
+    <span class="muted small cnt">保存时一起写：<code>hugo.toml</code> 的 <code>baseURL</code>、友链申请页里的「链接」「RSS」、以及配置键 <code>siteUrl</code>。换域名只改这里 + Worker 的 <code>wrangler.jsonc</code> 就够，构建完成后 canonical / sitemap / RSS 全部跟上。</span>
   </label>
   <div class="row sws">
     <label class="switch"><input type="checkbox" bind:checked={site.showLogo} /><span>导航栏显示 Logo</span></label>
