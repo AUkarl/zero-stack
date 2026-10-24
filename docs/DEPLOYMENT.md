@@ -481,6 +481,17 @@ rclone copy r2:旧桶/uploads r2:zero-media/uploads --progress
 | 账号 | 普通用户（含密码哈希）与仓库 `authors.yaml`；**管理员账号不导出** |
 | 媒体清单 | 每个桶里图片的 key、所属桶、体积、被哪篇文章引用；**图片本体在同页「图片（媒体本体）」那节的图片包里** |
 
+### 备份的是「按下导出那一刻的内容」，运行期新写的不在里面
+
+后台每 6 小时的定时任务会往仓库写 `data/poststats.json`（阅读/访客的路径记录）这类运行期文件。
+它们和别的仓库文件一样会被导出 —— **但只在那次导出之后才第一次被写出来的，就不在那份 JSON 里**，
+恢复完也不会有人凭空给你补回来（体检实测过一次：备份时 43 个文件，破坏后恢复比破坏前少一个，少的正是那种情况）。
+所以按口径来：
+
+- **备份 = 按下导出那一刻的仓库快照**，这是有意为之，不改；
+- 统计类数据想要严格的副本，就先在后台「备份」导出的**同一分钟之前**确认那个文件已经存在（或者手动往仓库提交一次再导）；
+- 恢复之后统计从下一次定时任务开始重新累积，不会报任何错 —— 别把它当数据丢了。
+
 ### 搬站步骤
 
 1. 旧站：后台「备份」→「存档到 R2」或「导出到本地」，拿到那份 JSON。
@@ -569,6 +580,7 @@ pnpm check   # 本地跑同一套校验
 | QQ / 163 邮箱收不到信 | 必须用「授权码」而不是登录密码，且发件人地址要与 SMTP 账号一致；`smtpSecure` 对 465 没有意义（那端口只有隐式 TLS），587 / 2525 留 `false` 走 STARTTLS —— 在非 465 端口勾上它等于要求那个端口直接上 TLS，握手会谈不拢（这条同样**没在真实服务商上验证过**，写在这里是按协议应然，不是实测结论） |
 | 上传成功但图片 403 / 前台不显示 | 桶未开启公开访问且 `mediaPublicUrl` 没填；或 Markdown 里存的还是站内相对路径 —— 站点与 Worker 不同源时相对地址会指回站点。改 `mediaPublicUrl` 后重新插入一次即可，旧文章里的地址要手动替换 |
 | 后台「前端管理」保存报「未配置内容仓库」 | 这一页写的是站点的 `data/*.json`，需要仓库写回通道：`GITHUB_TOKEN` + `githubOwner/githubRepo`，或本地的 `GIT_LOCAL_DIR`（本地开发还要 `GIT_LOCAL_HTTP` 指向 `pnpm repo:bridge`） |
+| 脚本调 `POST /api/admin/frontend` 只想改一个键，结果那一段其余字段被清空 | 这是**整段覆盖**的语义，有意为之、不改：每个 section 先过 schema，**没送的键按 schema 默认补齐**再落盘，所以只送 `{site:{siteName:"x"}}` 会把 `name / navName / description …` 写成空串。后台面板每次送的是整段，界面上永远碰不到这个坑。脚本要改一个字段：先 `GET /api/admin/frontend` 取回那一段的现值，改完把整段送回去。送上来但 schema 不认识的键不会落盘，会被点名回在 `data.ignored[]`（形如 `基本信息.siteName`），回执 `message` 末尾也写着「另有 N 个字段本站面板不认识，未保存」。本站自己往 `data/*.json` 里加的、schema 没有的键**不会被这次保存抹掉**（出盘时先把现值垫在下面） |
 | 后台保存文章成功、仓库没有变化 | 未配置 `GITHUB_TOKEN`，或 `githubOwner/githubRepo/githubBranch/githubContentDir` 与实际不符；看 worker 日志 |
 | 评论组件在页面里不显示 | `apiBaseURL` 没配或指向错误协议；浏览器控制台看是否有 CORS 报错 |
 | 注册/改密码报 `PBKDF2 failed: iteration counts above 100000 are not supported` | Cloudflare 的 Web Crypto 把 PBKDF2 迭代次数硬上限设在 100000，本地 workerd 走 Node 的 crypto 不报错，只有上线才暴露。`packages/api/src/lib/crypto.ts` 的 `PBKDF2_ITERATIONS` 必须 ≤ 100000；口令串本身带迭代次数（`pbkdf2$次数$盐$摘要`），改小不影响老账号登录 |

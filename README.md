@@ -439,6 +439,10 @@ pnpm setup -- --no-deploy      # 只建资源、跑迁移、写配置：不部�
 | `/api/user` `/api/account` `/api/security` | 登录用户 | 用户中心：资料、评论、收藏、友链申请、投稿、认证、验证器、注销 |
 | `/api/admin/*` | 管理员 | 内容与仓库、前端参数、评论审核、用户、订阅、群发、翻译、备份、统计、设置、我的信息 |
 
+`POST /api/admin/frontend`（后台「前端管理」写 `data/*.json` 那一路）是**整段覆盖**：每段没送的键会按 schema 默认补齐再落盘。
+面板每次送整段，所以界面里碰不到；**自己写脚本改一个字段要先 `GET` 回那一段的现值、改完整段送回去**，
+否则那一段其余字段会被写成空串。不认识的键不落盘，会在回执 `data.ignored[]` 里点名。详见 `docs/DEPLOYMENT.md` 第 10 节「常见故障」那张表。
+
 Cron 与队列消费者没有 HTTP 入口，走 `scheduled` / `queue` 事件。
 
 ---
@@ -461,7 +465,8 @@ Waline / Twikoo 的历史评论可以搬进来：
 pnpm migrate:waline        # 导出 JSON → D1 comments 表，详见 docs/DEPLOYMENT.md 第 7 节
 ```
 
-日常备份用后台「备份」页导出 JSON，恢复也是同一页导入。
+日常备份用后台「备份」页导出 JSON，恢复也是同一页导入。备份是**按下导出那一刻的仓库快照**：
+定时任务在那之后才第一次写出来的文件（`data/poststats.json` 这类）不在那份 JSON 里，恢复后也不会凭空补回 —— 口径与应对见 `docs/DEPLOYMENT.md` §7.5。
 
 ---
 
