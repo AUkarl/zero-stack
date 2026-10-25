@@ -6,12 +6,18 @@
     rows = 14,
     placeholder = '',
     shortBase = '/post/',
+    plainLinks = false,
     disabled = false,
   }: {
     value?: string;
     rows?: number;
     placeholder?: string;
     shortBase?: string;
+    /**
+     * 文章 / 投稿的正文由 Hugo 渲染，认不了 [[…]] —— 那套短链只在评论、时刻、群发（评论包渲染）里成立。
+     * 给真正按文章发布的编辑器打开这个开关：按钮改插普通 Markdown 链接，提示也换口径。
+     */
+    plainLinks?: boolean;
     disabled?: boolean;
   } = $props();
 
@@ -86,7 +92,11 @@
     <button type="button" class="sm" disabled={disabled} onclick={() => wrap('`', '`', '代码')}>行内代码</button>
     <button type="button" class="sm" disabled={disabled} onclick={() => wrap('```\n', '\n```', '代码块')}>代码块</button>
     <button type="button" class="sm" disabled={disabled} onclick={() => wrap('[', '](https://)', '链接文字')}>链接</button>
-    <button type="button" class="sm" disabled={disabled} onclick={() => insert('[[文章标识符|显示文字]]')}>站内短链</button>
+    {#if plainLinks}
+      <button type="button" class="sm" disabled={disabled} onclick={() => wrap('[', '](/posts/文章标识符/)', '显示文字')}>站内文章链接</button>
+    {:else}
+      <button type="button" class="sm" disabled={disabled} onclick={() => insert('[[文章标识符|显示文字]]')}>站内短链</button>
+    {/if}
     <button type="button" class="sm" disabled={disabled} onclick={() => prefix('## ', '小标题')}>标题</button>
     <button type="button" class="sm" disabled={disabled} onclick={() => prefix('> ', '引用')}>引用</button>
     <button type="button" class="sm" disabled={disabled} onclick={() => prefix('- ', '列表项')}>列表</button>
@@ -110,8 +120,14 @@
     ></textarea>
   {/if}
   <p class="muted small tip">
-    支持标题 / 列表 / 引用 / 代码 / 表格；站内短链写 <code>[[文章标识符]]</code> 或
-    <code>[[文章标识符|显示文字]]</code>，渲染成 <code>{shortBase}文章标识符/</code>。
+    {#if plainLinks}
+      支持标题 / 列表 / 引用 / 代码 / 表格；站内文章用普通链接写
+      <code>[显示文字](/posts/文章标识符/)</code>，标识符就是文件名去扩展名。
+      <code>[[…]]</code> 那种短链只在评论、时刻和群发里认，文章正文里会原样显示。
+    {:else}
+      支持标题 / 列表 / 引用 / 代码 / 表格；站内短链写 <code>[[文章标识符]]</code> 或
+      <code>[[文章标识符|显示文字]]</code>，渲染成 <code>{shortBase}文章标识符/</code>。
+    {/if}
   </p>
 </div>
 

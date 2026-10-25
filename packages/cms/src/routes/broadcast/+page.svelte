@@ -272,7 +272,7 @@
   {#if htmlMode}
     <textarea rows="14" placeholder="<p>邮件正文</p>" bind:value={htmlText}></textarea>
   {:else}
-    <MarkdownEditor bind:value={md} rows={14} placeholder={'用 Markdown 写正文，发送时自动转成邮件 HTML。\n\n支持标题、列表、引用、链接、**加粗**。'} />
+    <MarkdownEditor bind:value={md} rows={14} shortBase={frontUrl('/posts/') || '/posts/'} placeholder={'用 Markdown 写正文，发送时自动转成邮件 HTML。\n\n支持标题、列表、引用、链接、**加粗**。'} />
   {/if}
 
   <div class="row acts">

@@ -2,6 +2,7 @@
   import { get, post, del, purgeNote, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { splitFrontMatter } from '#lib/markdown';
+  import { frontUrl } from '#lib/session.svelte';
   import MediaPicker from './MediaPicker.svelte';
   import ShortcodeBar from './ShortcodeBar.svelte';
   import type { Shortcode } from './_shortcodes';
@@ -804,7 +805,7 @@
 
         <div class="body" role="presentation" onclick={capture} onkeyup={capture}>
           <ShortcodeBar oninsert={insertShortcode} onmedia={() => (showInsertMedia = true)} />
-          <MarkdownEditor bind:value={body} rows={20} placeholder="Markdown 正文…" />
+          <MarkdownEditor bind:value={body} rows={20} placeholder="Markdown 正文…" plainLinks shortBase={frontUrl('/posts/') || '/posts/'} />
         </div>
 
         {#if tr?.ready}

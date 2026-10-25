@@ -414,7 +414,7 @@
     {#if editing}<button class="sm ghost" onclick={resetForm}>改为新建</button>{/if}
   </div>
 
-  <MarkdownEditor bind:value={body} rows={5} placeholder="此刻的想法、照片或链接…" />
+  <MarkdownEditor bind:value={body} rows={5} placeholder="此刻的想法、照片或链接…" shortBase={frontUrl('/posts/') || '/posts/'} />
 
   <div class="grid2">
     <label>日期<input type="datetime-local" bind:value={date} /></label>
