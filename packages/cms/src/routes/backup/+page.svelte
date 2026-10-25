@@ -1,6 +1,6 @@
 <script lang="ts">
   import { del, get, getApiBase, post } from '#lib/api';
-  import { fmtDate } from '#lib/api';
+  import { fmtDate, healthWarn, type BuildHealth } from '#lib/api';
 
   /**
    * 全站备份：导出一份 JSON，恢复时按分区勾选。
@@ -66,6 +66,8 @@
     layout: { postsDir: { from: string; to: string }; momentsDir: { from: string; to: string }; dataDir: { from: string; to: string } };
     sections: OutcomeSection[];
     build: { triggered: boolean; error?: string } | null;
+    /** 本地后端的构建体检（线上没桥时后端回 null） */
+    buildHealth?: BuildHealth | null;
     /** 后端让分批续跑的坐标：这一区还有 from 之后的文件没推 */
     resume?: { section: string; from: number; total: number } | null;
   }
@@ -490,6 +492,7 @@
         const merged: OutcomeSection[] = [];
         let head: Outcome | null = null;
         let build: Outcome['build'] = null;
+        let buildHealth: Outcome['buildHealth'] = null;
         for (const id of order) {
           let start = 0;
           for (;;) {
@@ -504,6 +507,7 @@
             head ??= d.data;
             mergeSections(merged, d.data.sections);
             if (d.data.build?.triggered) build = d.data.build;
+            if (d.data.buildHealth) buildHealth = d.data.buildHealth;
             const r = d.data.resume;
             if (!r || r.section !== id || r.from <= start) break;
             const done = merged.find((m) => m.id === id)?.files?.write ?? 0;
@@ -511,12 +515,13 @@
             start = r.from;
           }
         }
-        outcome = head ? { ...head, sections: merged, build } : null;
+        outcome = head ? { ...head, sections: merged, build, buildHealth } : null;
         const rows = merged.reduce((n, s) => n + (s.tables?.reduce((m, t) => m + t.inserted, 0) ?? 0), 0);
         const files = merged.reduce((n, s) => n + (s.files?.write ?? 0), 0);
         /** 计划数减去写/跳/未变的余额，就是这次没能落进仓库的文件 */
         const left = merged.reduce((n, s) => n + Math.max(0, (s.files?.total ?? 0) - (s.files?.write ?? 0) - (s.files?.skip ?? 0) - (s.files?.unchanged ?? 0)), 0);
-        notice = `恢复完成：数据表新增 ${rows} 行、仓库写入 ${files} 个文件${build?.triggered ? '，已触发站点重建' : ''}${left ? `；有 ${left} 个文件没写成，原因列在下面各区` : ''}`;
+        /* 恢复搬回来的可能是老备份里的坏内容；本地能跑体检就把结论直接拼在这句结果后面 */
+        notice = `恢复完成：数据表新增 ${rows} 行、仓库写入 ${files} 个文件${build?.triggered ? '，已触发站点重建' : ''}${left ? `；有 ${left} 个文件没写成，原因列在下面各区` : ''}${healthWarn(buildHealth) ? `。${healthWarn(buildHealth)}` : ''}`;
       }
     } catch (e) {
       error = e instanceof Error ? e.message : '导入失败';

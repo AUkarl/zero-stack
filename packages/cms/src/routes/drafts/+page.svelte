@@ -1,6 +1,6 @@
 <script lang="ts">
   import { del, get, post, patch, mailNote, purgeNote, type PurgeOut } from '#lib/api';
-  import { fmtDate, timeAgo } from '#lib/api';
+  import { fmtDate, timeAgo, healthWarn, type BuildHealth } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { frontUrl } from '#lib/session.svelte';
 
@@ -139,11 +139,21 @@
     error = '';
     try {
       const d = await post<{
-        data: { synced: boolean; syncError: string | null; path: string | null; state?: 'sent' | 'queued' | 'failed'; notifyError?: string | null };
+        data: {
+          synced: boolean;
+          syncError: string | null;
+          path: string | null;
+          state?: 'sent' | 'queued' | 'failed';
+          notifyError?: string | null;
+          buildHealth?: BuildHealth | null;
+        };
       }>(`/api/admin/drafts/${r.id}/approve`, { publish, note: note.trim() || undefined });
+      /* 投稿的 front matter 是投稿人填的：日期写成 Hugo 认不了的样子会让整站构建失败。
+         审核这一笔以前只说「已通过并写入」，站点停了没人知道（R58 补上）。 */
       notice =
         (d.data.synced ? `已通过并写入 ${d.data.path}` : `已通过，未写入仓库：${d.data.syncError ?? '检查「设置 → 内容仓库」的 owner / repo / 目录与 GITHUB_TOKEN'}`) +
-        mailNote(d.data);
+        mailNote(d.data) +
+        healthWarn(d.data.buildHealth);
       open = null;
       await load();
     } catch (e) {

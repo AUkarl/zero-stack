@@ -15,6 +15,7 @@
  *   ② 媒体对象键的长度与字符（R2 对超长名回运行时错误，以前冒成 500）；
  *   ③ 上传件的字节真相（空文件、扩展名与文件头不符）。
  */
+import { checkRepoFileSyntax } from './repo-syntax';
 
 /* ------------------------------------------------------------------ ① 日期 */
 
@@ -156,3 +157,67 @@ export function checkUploadBytes(ext: string, bytes: Uint8Array): string | null 
   }
   return null;
 }
+
+/* ------------------------------------------------------------------ ④ 写进仓库的每一份文件 */
+
+/**
+ * 仓库写入层的总闸门。上一轮把判据加在各条路由的「保存」里，结果是**保护按调用点堆积**：
+ * 实测还有 6 个会触发站点重建的入口一个检查都没有（投稿审核、友链申请、个人中心写稿、整篇翻译、
+ * 备份恢复、以及**每天 02:00 的 cron** —— cron 直接往仓库写 data/poststats.json 与友链那两份 JSON）。
+ * 而 R31 那次打死整站构建的正是「构建期被消费的数据文件」。
+ *
+ * 所以这一条挂在**往仓库写的那个唯一出口**上（services/repo.ts 的 writeViaTarget / commitViaTarget），
+ * 以后新增写入口自动带上，不需要谁记得再抄一遍。
+ *
+ * 刻意只收「Hugo 会硬失败」的三种，且全部复用已有判据，不另立标准：
+ *   ① .toml / links.yaml → 交给 repo-syntax（真解析器，已拿站长真站那份验过能过）；
+ *   ② .json → 只用 JSON.parse 判「语法就坏了」的；**不**检查字段形状 ——
+ *      台架实测 site.json 里把描述包成数组并不炸构建，按形状拦会把正当保存挡在门外；
+ *   ③ .md → 扫开头那段 front matter 的时间字段，值本身的判据仍是上面那一份 checkHugoDateValue。
+ * 返回 null = 放行；返回字符串 = 一句人能照着改的话（调用方当 400 的 message，或写进审计与日志）。
+ */
+export function checkRepoWrite(path: string, content: string): string | null {
+  const p = String(path ?? '').trim().replace(/\\/g, '/');
+
+  const syntax = checkRepoFileSyntax(p, content);
+  if (syntax) return syntax;
+
+  if (/\.json$/i.test(p)) {
+    try {
+      JSON.parse(content);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return `${p} 不是合法的 JSON（${String(msg).replace(/\s+/g, ' ').slice(0, 160)}）：这种内容写进仓库会让 Hugo 读不出这一份数据文件，所以没写进去`;
+    }
+    return null;
+  }
+
+  if (/\.md$/i.test(p)) return checkMarkdownFrontDates(p, content);
+
+  return null;
+}
+
+/**
+ * 只扫第一对 `---` 之间的时间行。这里**不**引入 services/frontmatter.ts 那个解析器：
+ * 它要读 git 与配置，引进来就和 repo.ts 成了环。规则仍然只有一份 —— 每条时间值
+ * 还是交给 checkHugoDateValue 判，这里只负责把「哪个键配了哪个值」找出来。
+ */
+function checkMarkdownFrontDates(path: string, md: string): string | null {
+  const text = String(md ?? '');
+  const open = text.startsWith('---') ? 0 : -1;
+  if (open < 0) return null;
+  const close = text.indexOf('\n---', 3);
+  if (close < 0) return null;
+  const block = text.slice(3, close);
+  for (const line of block.split(/\r?\n/)) {
+    const m = /^\s*([A-Za-z][\w-]*)\s*:\s*(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const key = m[1]!;
+    if (!DATE_KEYS.includes(key)) continue;
+    const raw = m[2]!.replace(/^["']|["']$/g, '');
+    const err = checkHugoDateValue(raw);
+    if (err) return `${path} 的 ${key}：${err}`;
+  }
+  return null;
+}
+

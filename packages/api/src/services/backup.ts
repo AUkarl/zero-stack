@@ -37,7 +37,7 @@ import {
 } from '../db/schema';
 import { SECRET_KEYS, getConfig, invalidateConfigCache } from './config';
 import { SPAM_PATTERN_FILE } from './moderation';
-import { readFileFrom, resolveRepoTarget, walkFiles, writeViaTarget, type RepoTarget } from './repo';
+import { readFileFrom, resolveRepoTarget, runLocalBuildCheck, walkFiles, writeViaTarget, type BuildHealth, type RepoTarget } from './repo';
 import { triggerPagesBuild } from './git';
 import { listBuckets, listMediaObjects } from './media';
 import { parseFrontMatter } from './frontmatter';
@@ -636,6 +636,8 @@ export interface ImportOutcome {
   layout: { postsDir: { from: string; to: string }; momentsDir: { from: string; to: string }; dataDir: { from: string; to: string } };
   sections: SectionOutcome[];
   build: { triggered: boolean; error?: string } | null;
+  /** 本地后端的构建体检（线上没有桥时为 null）；失败时同时会有一条写进 sections 的 notes */
+  buildHealth?: BuildHealth | null;
   /** 分批写入时回给后台的续跑坐标：这一区还有 from 之后的文件没写 */
   resume: { section: SectionId; from: number; total: number } | null;
 }
@@ -905,7 +907,13 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
               ip: opts.ip,
               action: 'backup',
             });
-            if (!res.success) fr.conflicts.push(`${f.path}：${res.error ?? '提交失败'}`);
+            if (!res.success) {
+              fr.conflicts.push(`${f.path}：${res.error ?? '提交失败'}`);
+              /* 这一笔没落盘，上面那句 fr.write++ 就得退回来：后台「有 N 个文件没写成」是按
+                 total − write − skip − unchanged 算的，被闸门拦下的文件若还算写成，
+                 小结就成了「全部写成」，而仓库里其实少了一份。 */
+              fr.write--;
+            }
             else wroteFiles = true;
           } catch (e) {
             fr.conflicts.push(`${f.path}：${briefError(e)}`);
@@ -946,6 +954,10 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
   if (!dryRun && wroteFiles && !outcome.resume) {
     const build = await triggerPagesBuild(env);
     outcome.build = build;
+    /* 恢复整站时最容易碰上的就是「搬回来的某份文件让 Hugo 整站失败」——老备份里的坏日期已经在上面逐文件跳过，
+       这里再兜一层：本地桥在就跑一次体检，结果放进 outcome.buildHealth，由导入接口回给后台，
+       后台的导入小结按它显示红字（线上没有桥时是 null，不显示，也不报错）。 */
+    outcome.buildHealth = await runLocalBuildCheck(env);
   }
   return outcome;
 }

@@ -32,11 +32,17 @@ export function checkRepoFileSyntax(path: string, content: string): string | nul
     }
   }
 
-  if (/\.ya?ml$/i.test(p)) {
+  if (/\.ya?ml$/i.test(p) && /(^|\/)links\.ya?ml$/i.test(p)) {
     const bad = validateLinksYaml(content);
     return bad ? `${p} 这样写 Hugo 读不出来，友链整页会没，所以这次没写进仓库：${bad}` : null;
   }
 
+  /* 其它 .yaml 一律不判 —— validateLinksYaml 认的是「friends:/alliance: 两段」这一种固定形状，
+     拿它去量 data/authors.yaml（作者表）会把每一行都判成错。以前这条体检只在
+     「主题配置文件」那个白名单口上跑（只会碰到 params/config/menus/links 四份），
+     R58 把它挂到仓库写入的总出口时，作用域必须一起收清：
+     实测站长的 authors.yaml 与仓库里两份 CI 的 .yml 都会被误拦。没有通用的 YAML 解析器，
+     宁可少拦，也不拦错 —— 拦错的结果是站长保存不了自己的作者表。 */
   return null;
 }
 

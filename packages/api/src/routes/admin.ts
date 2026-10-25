@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { kvDelete, kvGet, kvPut } from '../services/kv-cache';
 import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
@@ -31,7 +32,7 @@ import { datedSlug } from '../lib/postName';
 import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { deleteFile, listDir, readFile } from '../services/git';
-import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
+import { finishRepoWrites, repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { buildHealthReceipt, commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, runLocalBuildCheck, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
@@ -658,20 +659,17 @@ async function notifyPostSubscribers(env: Env, adminId: string, path: string, pa
   return { jobId, sent: run.sent, failed: run.failed };
 }
 
-/** 整批写完统一做的一次收尾：清后台文章列表缓存 + 触发一次站点重建 + （本地后端）构建体检 */
+/** 整批写完统一做的一次收尾：清后台文章列表缓存 + 触发一次站点重建 + （本地后端）构建体检。
+ *  重建与体检这两件本身已下沉到 services/git.ts 的 finishRepoWrites —— 那是所有写仓库路径共用的收尾，
+ *  这里只多做一件文章特有的：清掉后台的文章列表缓存。 */
 async function finishContentWrite(
   env: Env,
   changed: number,
   triggerBuild: boolean,
-): Promise<{ build: { triggered?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
+): Promise<{ build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
   if (!changed) return { build: null, buildHealth: null };
   await kvDelete(env, POSTS_CACHE_KEY);
-  // 前台是 Hugo 构建出来的静态页：不触发重建，新文章不会出现在列表里，改过的正文也不会变
-  const build = triggerBuild ? await triggerPagesBuild(env) : null;
-  /** 只有配了桥（本地开发）才有体检；线上跑同一条 hugo 命令，成败在 Cloudflare 那边，返回 null。
-   *  代价是本地每次保存多等一次构建（站点越大越明显），不想等就 `REPO_BRIDGE_DOCTOR=off pnpm repo:bridge`。 */
-  const buildHealth = await runLocalBuildCheck(env);
-  return { build, buildHealth };
+  return finishRepoWrites(env, changed, triggerBuild);
 }
 
 app.put('/content/file', async (c) => {
@@ -1638,31 +1636,10 @@ interface PostOption {
 const POSTS_CACHE_KEY = 'zero:admin:posts';
 const POSTS_CACHE_TTL = 300;
 
-/** 缓存读写都不能把主流程带崩：KV 在本地 dev 偶尔会抽风 */
-async function kvGet(env: Env, key: string): Promise<unknown | null> {
-  try {
-    return await env.CACHE.get(key, 'json');
-  } catch {
-    return null;
-  }
-}
 
-/** 内容写回仓库后清掉文章列表缓存，后台下一次读到的就是刚改过的 */
-async function kvDelete(env: Env, key: string): Promise<void> {
-  try {
-    await env.CACHE.delete(key);
-  } catch {
-    /* 清不掉就等 TTL 过期，不影响写入本身 */
-  }
-}
-
-async function kvPut(env: Env, key: string, value: unknown, ttl: number): Promise<void> {
-  try {
-    await env.CACHE.put(key, JSON.stringify(value), { expirationTtl: ttl });
-  } catch {
-    /* 下次再缓存 */
-  }
-}
+/* 内容仓构建结果的回报口在 routes/build-report.ts（挂在 /api/build-report）。
+   它不能挂在这里：index.ts 对 /api/admin/* 有一道统一登录闸，CI 没有会话 Cookie，
+   实测挂在 /api/admin 下时直接 401「请先登录」，令牌逻辑根本轮不到执行。 */
 
 /**
  * GET /api/admin/posts —— 群发选文章用的下拉。
@@ -2079,6 +2056,16 @@ app.get('/health-detail', async (c) => {
     from: (await getConfig(env, 'emailFrom')) || '',
     secretConfigured: await emailOtpAvailable(env),
     credentialSource,
+  };
+
+  /* 边缘缓存清除的配对状态。为什么算进运行状况：这两项没配时**不是报错**，而是删掉的文章
+     在 CDN 上按 7 天 max-age 继续能访问（强刷也没用），而那只在「删除的回包备注」里说过一次，
+     没人删文章就永远看不到。缺配置不该只在出错那一刻才说话。 */
+  const purgeZone = ((await getConfig(env, 'cfZoneId')) ?? '').trim();
+  const purgeTokenSet = Boolean(((await getConfig(env, 'cfPurgeToken')) ?? '').trim());
+  checks.purge = {
+    ok: Boolean(purgeZone && purgeTokenSet),
+    detail: purgeZone && purgeTokenSet ? `zone ${purgeZone.slice(0, 8)}…` : [!purgeZone && '没填 Zone ID', !purgeTokenSet && '没填令牌'].filter(Boolean).join('、'),
   };
 
   checks.apiLatencyMs = Date.now() - started;

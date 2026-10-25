@@ -7,7 +7,7 @@
  */
 
 import { getConfig } from './config';
-import { deleteViaTarget, listDirViaTarget, readFileFrom, resolveRepoTarget, targetFromInput, writeViaTarget } from './repo';
+import { deleteViaTarget, listDirViaTarget, readFileFrom, resolveRepoTarget, runLocalBuildCheck, buildHealthReceipt, targetFromInput, writeViaTarget } from './repo';
 import type { RepoEntry, RepoFile, RepoFileResult, RepoTarget } from './repo';
 
 /** 历史导出名，调用方遍布后台各路由，保留 */
@@ -95,4 +95,33 @@ export function buildReceipt(
     return `${savedText}，站点按 Git 集成随这次提交重建（若前台几分钟内没变，说明你的 Pages 不是 Git 集成构建，需在后台填「Pages 构建 Hook」）`;
   }
   return `${savedText}，但站点重建没起来：${build.error ?? '未知原因'}`;
+}
+
+/**
+ * 写完之后统一做的收尾：清后台列表缓存（调用方自己做）→ 按需请求站点重建 → 跑一次构建体检。
+ *
+ * 上一轮这个收尾叫 finishContentWrite，只在文章那两条路上有；实测还有 6 个会触发重建的入口
+ * 完全不体检（投稿审核、友链申请、个人中心写稿、整篇翻译、备份恢复、每天 02:00 的 cron）。
+ * 挂在这里，任何写仓库的路径都只需调这一个函数，不用再自己决定要不要体检。
+ *
+ * 体检**整批一次**：每文件跑一次 hugo 会把保存拖成分钟级。
+ * 线上没有本地桥，buildHealth 为 null，回执里也就不加那句话（详见 services/repo.ts 的说明）。
+ */
+export async function finishRepoWrites(
+  env: Env,
+  changed: number,
+  triggerBuild = true,
+): Promise<{ build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
+  if (!changed) return { build: null, buildHealth: null };
+  const build = triggerBuild ? await triggerPagesBuild(env) : null;
+  return { build, buildHealth: await runLocalBuildCheck(env) };
+}
+
+/** 给调用方拼回执用的完整一句：重建 + 体检 */
+export function writeReceipt(
+  envText: string,
+  build: Parameters<typeof buildReceipt>[0],
+  health: Awaited<ReturnType<typeof runLocalBuildCheck>>,
+): string {
+  return buildReceipt(build, envText) + buildHealthReceipt(health);
 }

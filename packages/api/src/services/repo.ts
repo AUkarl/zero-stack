@@ -10,6 +10,7 @@
  */
 
 import { getConfig } from './config';
+import { checkRepoWrite } from './hugo-guard';
 import { fail } from '../lib/errors';
 import { writeAudit, type AuditAction } from './audit';
 import * as gh from '../adapters/github';
@@ -177,6 +178,15 @@ export async function writeViaTarget(
   message: string,
   opts: RepoWriteOptions = {},
 ): Promise<RepoFileResult> {
+  /* 闸门挂在唯一出口上，不在各条路由里重复：以前每加一个写仓库的入口就得有人记得抄一遍检查，
+     实测漏掉了投稿审核、友链申请、整篇翻译、备份恢复，以及每天 02:00 的 cron（它直接写
+     data/poststats.json 与友链那两份 JSON —— 构建期被消费的数据文件，正是 R31 打死整站的那一类）。
+     只拦「Hugo 会硬失败」的，判据见 services/hugo-guard.ts 的 checkRepoWrite。 */
+  const blocked = checkRepoWrite(path, content);
+  if (blocked) {
+    console.warn(`[repo-guard] 拦下一次写入 ${path}：${blocked}`);
+    return { success: false, path, error: blocked, backend: target.backend };
+  }
   if (target.backend === 'local') {
     const result = await localWrite(target, path, content);
     await auditLocal(target, 'write', path, message, opts, result);
@@ -224,6 +234,16 @@ export async function commitViaTarget(
   message: string,
   opts: RepoWriteOptions & { deletes?: string[] } = {},
 ): Promise<RepoCommitResult> {
+  /* 批量出口的闸门。这里与单写不同，**整批一起拒**：一个提交就是一次站点构建，
+     把 19 篇好的和 1 篇会让 Hugo 报错退出的写在一起，结果不是那一篇没发，而是整站停在上一版。
+     正常路径不会走到这一步 —— 内容批量在 prepareContentItem 里已逐篇判过并逐条回报（F-06），
+     备份恢复也逐文件跳过坏日期；这层只兜「绕开路由直接调仓库」的新写法。 */
+  const blocked = files.map((f) => ({ path: f.path, error: checkRepoWrite(f.path, f.content) })).filter((x) => x.error);
+  if (blocked.length) {
+    const list = blocked.map((b) => `${b.path}：${b.error}`).join('；');
+    console.warn(`[repo-guard] 拒掉一批 ${blocked.length}/${files.length} 个文件的提交：${list}`);
+    return { success: false, shas: {}, backend: target.backend, error: `这批里 ${blocked.length} 个文件会让站点构建失败，整批没有提交（一个提交=一次构建，混进去会让全站停在上一版）：${list}` };
+  }
   if (target.backend === 'local') {
     const shas: Record<string, string> = {};
     for (const f of files) {

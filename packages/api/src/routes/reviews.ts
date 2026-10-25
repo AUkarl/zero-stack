@@ -20,8 +20,8 @@ import { withAdminAuthorBits } from '../services/admin-author';
 import { purgePageUrls, type PurgeResult } from '../services/cf-purge';
 import { postWebPath, postsDir } from '../services/frontmatter';
 import { writeFile } from '../services/git';
-import { repoTarget, triggerPagesBuild } from '../services/git';
-import { deleteRepoFile, repoBackend } from '../services/repo';
+import { finishRepoWrites, repoTarget } from '../services/git';
+import { deleteRepoFile, repoBackend, type BuildHealth } from '../services/repo';
 import { PLACEHOLDER_PREFIX, datedSlug } from '../lib/postName';
 import { sendDraftReviewResult } from '../services/review-mail';
 import { clientIp } from '../lib/http';
@@ -320,20 +320,23 @@ draftsAdmin.post('/:id/approve', async (c) => {
     })
     .where(eq(postDrafts.id, row.id));
 
+  /* 通过就落仓库，等价于站长自己发了一篇新文章：front matter 是投稿人填的，
+     日期写成 Hugo 认不了的样子会让整站构建失败，所以这里也要体检（以前只触发重建）。 */
+  let buildHealth: BuildHealth | null = null;
   if (synced) {
     await rememberSubmitterAuthor(c.env, row.userId, admin);
-    await triggerPagesBuild(c.env);
+    buildHealth = (await finishRepoWrites(c.env, 1)).buildHealth;
   }
   await writeAudit(c.env, {
     actor: admin,
     action: 'draft',
     target: row.id,
-    detail: { event: 'approve', slug: synced ? slug : row.slug, path, synced, syncError, contentSha },
+    detail: { event: 'approve', slug: synced ? slug : row.slug, path, synced, syncError, contentSha, buildHealth },
     ip: clientIp(c),
   });
   // 结论已经落库，邮件只是补一句告知：发不出去也照样算通过
   const mail = await sendDraftReviewResult(c.env, { ...row, status: 'pending', publishedPath: synced ? path : null, reviewNote: parsed.data.note ?? row.reviewNote }, true, parsed.data.note);
-  return ok({ id: row.id, status: 'approved', synced, syncError, path: synced ? path : null, ...mail });
+  return ok({ id: row.id, status: 'approved', synced, syncError, path: synced ? path : null, buildHealth, ...mail });
 });
 
 /** 已通过但没进仓库的（当时没开回写或提交失败），补一次 */
@@ -373,9 +376,9 @@ draftsAdmin.post('/:id/publish', async (c) => {
     .set({ slug, publishedPath: path, publishedAt: row.publishedAt ?? now, updatedAt: now })
     .where(eq(postDrafts.id, row.id));
   await rememberSubmitterAuthor(c.env, row.userId, admin);
-  await triggerPagesBuild(c.env);
-  await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', slug, path, contentSha: result.sha }, ip: clientIp(c) });
-  return ok({ id: row.id, synced: true, path, contentSha: result.sha ?? null });
+  const republishHealth = (await finishRepoWrites(c.env, 1)).buildHealth;
+  await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', slug, path, contentSha: result.sha, buildHealth: republishHealth }, ip: clientIp(c) });
+  return ok({ id: row.id, synced: true, path, contentSha: result.sha ?? null, buildHealth: republishHealth });
 });
 
 draftsAdmin.post('/:id/reject', async (c) => {
@@ -477,6 +480,7 @@ draftsAdmin.post('/:id/withdraw', async (c) => {
 
   const path = (row.publishedPath ?? '').trim();
   let purge: PurgeResult | null = null;
+  let health: BuildHealth | null = null;
   if (path) {
     const backend = await repoBackend(c.env);
     if (backend === 'none') {
@@ -494,7 +498,8 @@ draftsAdmin.post('/:id/withdraw', async (c) => {
       return ok({ id: row.id, deleted: false, path, error: removed.error ?? '仓库文件删除失败' });
     }
     // 文章下线了，顺手请 Pages 重建一次，否则线上还挂着旧文章
-    await triggerPagesBuild(c.env);
+    const withdrawn = await finishRepoWrites(c.env, 1);
+    health = withdrawn.buildHealth;
     // 重建只换掉源站那一份，边缘缓存里那条地址还能撑 7 天 —— 一并清掉
     purge = await purgePageUrls(c.env, [postWebPath(path)]);
   }
@@ -504,11 +509,11 @@ draftsAdmin.post('/:id/withdraw', async (c) => {
     actor: admin,
     action: 'draft',
     target: row.id,
-    detail: { event: 'withdraw', deleted: true, path: path || null, slug: row.slug, purge },
+    detail: { event: 'withdraw', deleted: true, path: path || null, slug: row.slug, purge, buildHealth: health },
     ip: clientIp(c),
   });
   const mail = await sendDraftReviewResult(c.env, { ...row, publishedPath: null }, true, '你的撤回申请已同意，文章已从站点移除。');
-  return ok({ id: row.id, deleted: true, path: path || null, purge, error: null, ...mail });
+  return ok({ id: row.id, deleted: true, path: path || null, purge, buildHealth: health, error: null, ...mail });
 });
 
 /** POST /api/admin/drafts/:id/withdraw-reject —— 驳回撤回申请：稿件保持已发布，理由留档 */

@@ -16,6 +16,7 @@ import userCenter, { authorsPublic } from './routes/user';
 import { authorsAdmin, draftsAdmin } from './routes/reviews';
 import applications, { publicApp as publicApply } from './routes/applications';
 import translate from './routes/translate';
+import buildReport from './routes/build-report';
 import backup from './routes/backup';
 import frontendAdmin from './routes/frontend';
 import publicMedia from './routes/media';
@@ -261,6 +262,12 @@ app.route('/api/user', userCenter);
 app.route('/api/account', account);
 app.route('/api/admin/deletions', deletionsAdmin);
 app.route('/api/security', security);
+/**
+ * 内容仓 CI 的构建结果回报。**必须挂在 /api/admin/* 那道统一登录闸之外** ——
+ * CI 没有会话 Cookie，挂在下面时它连处理函数都进不去（实测 401「请先登录」）。
+ * 写口靠 `x-build-report-token` 认，读口在自己内部 requireAdmin。
+ */
+app.route('/api/build-report', buildReport);
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return err.getResponse();

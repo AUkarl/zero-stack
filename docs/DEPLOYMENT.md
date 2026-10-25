@@ -155,6 +155,7 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 | `CF_ACCOUNT_ID` / `CF_EMAIL_API_TOKEN` | 向导输入 | Cloudflare 邮件通道 | — |
 | `GITHUB_TOKEN` | 向导输入 | 可选 | 后台把文章、时刻、作者表提交回 `zero-site`，需要 `contents: write` |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth App | 可选 | 「GitHub 验证登录」与账号绑定；不配时该入口直接回「未配置」，其余功能不受影响 |
+| `BUILD_REPORT_TOKEN` | 随机长字符串 | 可选 | 内容仓的构建结果回报给本站后端用（`POST /api/build-report`）。**两边都要有同名的一份**：Worker 这条 Secret + 内容仓的 GitHub Secrets（`create:site` 生成的 `deploy.yml` 读的就是它，回报脚本 `scripts/build-report.sh` 也是）。不配的话站点构建失败时后台不会有任何提示，功能一切正常；配了以后，「Pages 构建挂了、前台停在上一版」会直接显示在后台首页的「站点构建」那一块。没配时那个口回 500 并写明怎么开，不会静默收下任何人写的构建结果 |
 
 `GITHUB_REDIRECT_URI`（OAuth 回调地址）与 `GIT_LOCAL_DIR`（未配 GitHub 时把后台写入落到本地目录）
 只在本地 `.dev.vars` 里用；线上不要设 `GIT_LOCAL_DIR`，否则 Worker 上会退化成无效的本地路径。

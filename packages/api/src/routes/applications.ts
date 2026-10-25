@@ -17,7 +17,8 @@ import { getConfig, getConfigBool, getConfigJson } from '../services/config';
 import { normalizeFriendUrl, type NewFriend } from '../services/links-yaml';
 import { FRIEND_KINDS, normalizeFriendKind, type FriendKind } from '../services/friends-groups';
 import { addFriendToLinksFile } from '../services/friends-file';
-import { triggerPagesBuild } from '../services/git';
+import { finishRepoWrites } from '../services/git';
+import type { BuildHealth } from '../services/repo';
 import { writeAudit } from '../services/audit';
 import { sendFriendReviewResult } from '../services/review-mail';
 import { newId } from '../lib/crypto';
@@ -284,7 +285,6 @@ adminApp.post('/:id/publish', async (c) => {
     kind: normalizeFriendKind(linked[0]?.kind),
   });
   await writeAudit(c.env, { actor: admin, action: 'friendApp', target: row.url, detail: { event: 'republish', ...synced }, ip: clientIp(c) });
-  if (synced.synced) await triggerPagesBuild(c.env);
   return ok(synced);
 });
 
@@ -327,6 +327,8 @@ interface ApproveResult {
   syncError: string | null;
   /** 写进仓库后那一版 links.yaml 的 blob 号（不是提交号，见 adapters/github.ts writeFile） */
   contentSha: string | null;
+  /** 本地后端的构建体检（线上没有桥时为 null）；links.yaml 写坏是「友链整页没」，所以这条也要体检 */
+  buildHealth: BuildHealth | null;
 }
 
 /**
@@ -379,6 +381,7 @@ async function approve(
   let synced = false;
   let syncError: string | null = null;
   let contentSha: string | null = null;
+  let buildHealth: BuildHealth | null = null;
   const autoPublish = await getConfigBool(env, 'friendApplyAutoPublish', true);
   if (opts.publish !== false && autoPublish) {
     const res = await syncLinksYaml(env, {
@@ -393,16 +396,18 @@ async function approve(
     synced = res.synced;
     syncError = res.error;
     contentSha = res.contentSha;
-    if (synced) await triggerPagesBuild(env);
+    /* 同意一条友链 = 往 data/links.yaml 里写一笔，写坏了是「友链整页没」甚至整站构建失败。
+       重建与体检统一放在这里（两条调用路径都过），以前是各调一次 triggerPagesBuild、谁也看不见构建结果。 */
+    if (synced) buildHealth = (await finishRepoWrites(env, 1)).buildHealth;
   }
 
   await writeAudit(env, {
     actor: admin,
     action: 'friendApp',
     target: row.url,
-    detail: { event: 'approve', friendId, kind, reused: Boolean(already), synced, syncError, contentSha },
+    detail: { event: 'approve', friendId, kind, reused: Boolean(already), synced, syncError, contentSha, buildHealth },
   });
-  return { friendId, kind, synced, syncError, contentSha };
+  return { friendId, kind, synced, syncError, contentSha, buildHealth };
 }
 
 /** 新站点写进仓库里的 data/links.yaml（文件还不存在时由 friends-file 顺手按骨架建出来） */

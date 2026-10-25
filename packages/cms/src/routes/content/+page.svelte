@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, post, del, purgeNote, type PurgeOut } from '#lib/api';
+  import { get, post, del, purgeNote, healthBroken, type BuildHealth, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { splitFrontMatter } from '#lib/markdown';
   import { frontUrl } from '#lib/session.svelte';
@@ -143,7 +143,7 @@
           done: number;
           message: string;
           results: { path: string; ok: boolean; sha?: string; error?: string }[];
-          buildHealth?: { ran: boolean; ok: boolean; errors?: string[]; note?: string } | null;
+          buildHealth?: BuildHealth | null;
         };
       }>('/api/admin/content/batch', {
         files: targets.map((t) => ({
@@ -160,7 +160,7 @@
       const failed = d.data.results.filter((r) => !r.ok);
       pushProblems = failed.map((r) => ({ path: r.path, error: r.error ?? '未知原因' }));
       const h = d.data.buildHealth;
-      if (h && h.ran && !h.ok) buildBroken = { errors: h.errors ?? [], note: h.note ?? '' };
+      if (healthBroken(h)) buildBroken = { errors: h.errors ?? [], note: h.note ?? '' };
       drafts = drafts.filter((x) => !okPaths.has(x.path));
       // 正在编辑的这篇推上去了：把基准与 sha 对齐，否则会一直显示未保存 / 下次必冲突
       const mine = d.data.results.find((r) => r.ok && r.path === file);

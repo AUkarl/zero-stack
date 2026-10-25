@@ -5,7 +5,7 @@ import { getConfig, getConfigBool, getConfigInt } from './config';
 import { runDueBroadcastJobs } from './broadcast';
 import { pushNewPostsToSubscribers } from './feed-push';
 import { cleanSummary } from './feed-summary';
-import { readRepoFile, repoBackend, writeRepoFile } from './repo';
+import { readRepoFile, repoBackend, runLocalBuildCheck, writeRepoFile } from './repo';
 import { normalizeFriendUrl, parseLinksYaml, type LinkSite } from './links-yaml';
 import { linksFilePath } from './friends-file';
 import { triggerPagesBuild } from './git';
@@ -93,7 +93,13 @@ export async function runScheduledJobs(env: Env, cron: string): Promise<JobOutco
   if (changedFiles.length) {
     await run('pages:build', async () => {
       const r = await triggerPagesBuild(env);
-      return r.triggered ? `已触发构建（${changedFiles.join('、')}）` : `未触发构建：${r.error ?? '未知原因'}`;
+      /* cron 是这套系统里唯一「没人看着却往仓库写构建期数据」的路径：它写 data/poststats.json
+         与友链那两份 JSON，首页精选与「最热」在构建时读它们。以前它连一次构建都不检查。
+         现在本地桥在的话顺带跑一次体检，结果直接拼进这轮任务的 outcome ——
+         后台「运行状况」卡片显示的就是这段文字，构建被 cron 写坏了站长第二天打开就看得见。 */
+      const health = await runLocalBuildCheck(env);
+      const tail = health?.ran ? (health.ok ? '；构建体检通过' : `；⚠ 构建体检失败：${(health.errors ?? [])[0] ?? health.note ?? ''}`) : '';
+      return `${r.triggered ? `已触发构建（${changedFiles.join('、')}）` : `未触发构建：${r.error ?? '未知原因'}`}${tail}`;
     });
   }
 

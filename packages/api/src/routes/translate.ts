@@ -21,7 +21,7 @@ import { providerCatalog, translateStatus, translateText } from '../services/tra
 import { rateLimit } from '../lib/rate-limit';
 import { listRepoDir, readRepoFile, writeRepoFile } from '../services/repo';
 import { buildMarkdown, parseFrontMatter, postsDir, slugFromPath, type Front } from '../services/frontmatter';
-import { triggerPagesBuild } from '../services/git';
+import { finishRepoWrites } from '../services/git';
 import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
@@ -279,7 +279,10 @@ app.post('/publish', async (c) => {
   });
   if (!write.success) fail(502, write.error ?? '写入仓库失败');
 
-  const build = await triggerPagesBuild(c.env);
+  /* 翻译写出的是整篇新文章（新路径、新 front matter），与后台存稿一样能让 Hugo 整站失败，
+     所以走同一个收尾：请求重建 + 本地跑一次构建体检。以前这里只 triggerPagesBuild，
+     翻译失败在界面上完全看不出来。 */
+  const { build, buildHealth } = await finishRepoWrites(c.env, 1);
 
   await writeAudit(c.env, {
     actor: admin,
@@ -291,6 +294,7 @@ app.post('/publish', async (c) => {
       overwritten: Boolean(existing),
       committedAt: write.committedAt ?? null,
       build,
+      buildHealth,
     },
     ip: clientIp(c),
   });
@@ -301,6 +305,7 @@ app.post('/publish', async (c) => {
     committedAt: write.committedAt ?? null,
     overwritten: Boolean(existing),
     build,
+    buildHealth,
   });
 });
 

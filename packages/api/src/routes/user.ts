@@ -15,7 +15,7 @@ import { users } from '../db/schema';
 import { writeAudit } from '../services/audit';
 import { withAdminAuthorBits } from '../services/admin-author';
 import { getConfig, getConfigBool } from '../services/config';
-import { triggerPagesBuild } from '../services/git';
+import { finishRepoWrites } from '../services/git';
 import { avatarForEmail } from '../lib/avatar';
 import { setOwnerProfile } from './frontend';
 import { requireUser } from '../middleware/auth';
@@ -106,7 +106,7 @@ app.patch('/profile', async (c) => {
    * 头像没填时按邮箱给一张（后台头像模板优先，其次 Gravatar→Cravatar→QQ），
    * 与评论侧同一条链；关于页那边拿到的是地址，图挂了它自己回落 params。
    */
-  let ownerSync: { ok: boolean; changed: boolean; detail: string; build?: Awaited<ReturnType<typeof triggerPagesBuild>> } | null = null;
+  let ownerSync: { ok: boolean; changed: boolean; detail: string; build?: Awaited<ReturnType<typeof finishRepoWrites>>['build']; buildHealth?: Awaited<ReturnType<typeof finishRepoWrites>>['buildHealth'] } | null = null;
   if (user.role === 'admin') {
     const mail = (user.email || '').trim().toLowerCase();
     const template = (await getConfig(c.env, 'avatarTemplate'))?.trim() ?? '';
@@ -115,7 +115,8 @@ app.patch('/profile', async (c) => {
       .then(async (r) => {
         // 真写了文件才值得再跑一次构建；本来就是这样就原样回报，不动仓库也不重建
         if (!r.ok || !r.changed) return r;
-        return { ...r, build: await triggerPagesBuild(c.env).catch((e) => ({ triggered: false, error: e instanceof Error ? e.message : '触发失败' })) };
+        const done = await finishRepoWrites(c.env, 1).catch(() => ({ build: null, buildHealth: null }));
+        return { ...r, build: done.build, buildHealth: done.buildHealth };
       })
       .catch((e) => ({ ok: false, changed: false, detail: e instanceof Error ? e.message : '写入失败' }));
   }

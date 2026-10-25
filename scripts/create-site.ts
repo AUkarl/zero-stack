@@ -443,6 +443,62 @@ jobs:
           apiToken: \${{ secrets.CF_API_TOKEN }}
           accountId: \${{ secrets.CF_ACCOUNT_ID }}
           command: pages deploy public --project-name=${a.repoName}
+
+      # —— 把构建结果报给自己的后端 ——
+      # 为什么要这一对：后端跑在 workerd 里，起不了 hugo 子进程，所以「站点构建挂了、前台停在上一版」
+      # 这件事在后台本来是看不见的（每笔保存都回「已保存」）。只有跑构建的这一侧知道结果，就让它报上来。
+      # 两步都是 continue-on-error —— 回报本身出问题绝不能把站点部署带崩。
+      # 没配 BUILD_REPORT_TOKEN 时后端会回 500 并写明怎么开，这一步就安静跳过。
+      - name: 回报构建结果（成功）
+        if: \${{ success() }}
+        continue-on-error: true
+        env:
+          API_BASE: \${{ secrets.API_BASE_URL }}
+          REPORT_TOKEN: \${{ secrets.BUILD_REPORT_TOKEN }}
+        run: bash scripts/build-report.sh success ""
+
+      - name: 回报构建结果（失败）
+        if: \${{ failure() }}
+        continue-on-error: true
+        env:
+          API_BASE: \${{ secrets.API_BASE_URL }}
+          REPORT_TOKEN: \${{ secrets.BUILD_REPORT_TOKEN }}
+        run: |
+          # 把最后几十行日志带上去，后台那行红字才知道是哪一篇文件的问题
+          hugo --minify 2>&1 | tail -40 > /tmp/hugo-failure.log || true
+          bash scripts/build-report.sh failure "\$(cat /tmp/hugo-failure.log)"
+`;
+}
+
+/**
+ * 回报脚本：内容仓里带一份 scripts/build-report.sh（与上面那段 workflow 配对）。
+ * 用 curl 调后端 POST /api/admin/build-report；令牌与地址任一没配就直接退出 0（当作没这回事）。
+ */
+function buildReportScript(): string {
+  return `#!/usr/bin/env bash
+# 把内容仓的构建结果报给自己的后端（POST /api/admin/build-report）。
+# 由 .github/workflows/deploy-site.yml 在成功/失败两条路上各调一次；任何出错都不该影响部署，
+# 所以全程 || true。地址优先用 Secret API_BASE_URL，没有就从站点的 params.toml 里读 apiBaseURL。
+set -uo pipefail
+STATUS="\${1:-success}"
+DETAIL="\${2:-}"
+API_BASE="\${API_BASE:-}"
+if [ -z "\$API_BASE" ]; then
+  API_BASE=\$(grep -h '^apiBaseURL' config/_default/params.toml themes/zero/config/_default/params.toml 2>/dev/null | head -1 | sed -E 's/.*= *"([^"]*)".*/\\1/')
+fi
+TOKEN="\${REPORT_TOKEN:-}"
+if [ -z "\$API_BASE" ] || [ -z "\$TOKEN" ]; then
+  echo "未配 API_BASE_URL / BUILD_REPORT_TOKEN，跳过构建结果回报（后端因此看不到站点是否停在旧版，不影响部署）"
+  exit 0
+fi
+BODY=\$(printf '{"status":"%s","sha":"%s","branch":"%s","error":"%s"}' \\
+  "\$STATUS" "\${GITHUB_SHA:-}" "\${GITHUB_REF_NAME:-main}" \\
+  "\$(printf '%s' "\$DETAIL" | head -c 2000 | tr '\\n\\r"' '  ' | tr -d '\\\\\\\\')")
+curl -sS -m 20 -X POST "\\$\{API_BASE%/}/api/admin/build-report" \\
+  -H 'content-type: application/json' \\
+  -H "x-build-report-token: \$TOKEN" \\
+  --data "\$BODY" || echo "构建结果回报没送出去（不影响部署）"
+exit 0
 `;
 }
 
@@ -829,6 +885,9 @@ wrangler.toml
 `);
   write(rel('.github/workflows/deploy.yml'), deployWorkflow(a));
   write(rel('.github/workflows/update-theme.yml'), updateThemeWorkflow(a));
+  /* 构建结果回报脚本：deploy.yml 的成功/失败两步都用 `bash scripts/build-report.sh` 调，
+     所以不需要执行位（Windows 上 chmod 也基本无效）。 */
+  write(rel('scripts/build-report.sh'), buildReportScript());
   write(rel('README.md'), `# ${a.siteName}
 
 私密内容仓库：文章 Markdown + 站点配置。主题以 git submodule 形式位于 \`themes/zero\`。

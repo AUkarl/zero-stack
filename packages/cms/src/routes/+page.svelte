@@ -30,6 +30,9 @@
     referrers: [],
   });
   let health = $state<any>(null);
+  /** 内容仓最近一次构建结果（CI 回报）。null = 从没回报过，界面不显示任何一行 */
+  let buildReport = $state<{ status: string; sha: string; branch: string; error: string; at: number } | null>(null);
+  let buildReportNotice = $state<string | null>(null);
   let error = $state('');
   let loading = $state(true);
 
@@ -37,13 +40,15 @@
     loading = true;
     error = '';
     try {
-      const [s, st, tr, dv, tp, hd] = await Promise.all([
+      const [s, st, tr, dv, tp, hd, br] = await Promise.all([
         get<{ data: Summary }>('/api/analytics/summary'),
         get<{ data: any }>('/api/admin/stats'),
         get<{ data: { day: string; views: number; visitors: number }[] }>('/api/analytics/trend?days=30'),
         get<{ data: Record<string, { k: string; n: number }[]> }>('/api/analytics/devices'),
         get<{ data: any }>('/api/analytics/top'),
         get<{ data: any }>('/api/admin/health-detail'),
+        // 构建回报是后加的，老站点没配令牌时它给 notice；这份失败不能把整个仪表板带崩
+        get<{ data: { last: typeof buildReport; notice: string | null } }>('/api/build-report').catch(() => null),
       ]);
       summary = s.data;
       content = {
@@ -55,6 +60,8 @@
       devices = dv.data;
       top = tp.data;
       health = hd.data;
+      buildReport = br?.data?.last ?? null;
+      buildReportNotice = br?.data?.notice ?? null;
       try {
         const cs = await get<{
           data: { posts: number; moments: number; postsDir: string; momentsDir: string; capped?: boolean; error?: string };
@@ -133,6 +140,16 @@
         ok: email.secretConfigured !== false,
         detail: `${email.provider ?? 'smtp'}${email.credentialSource ? ` · ${email.credentialSource}` : ''}`,
         tip: `凭据来源：${email.credentialSource ?? '未配置'}（后台填的密码与 wrangler secret 任一即可）；SMTP 主机 ${email.host || '未填'}，发件人 ${email.from || '未填'}`,
+      },
+      {
+        key: 'purge',
+        label: '边缘清缓存',
+        ok: chk.purge?.ok !== false,
+        detail: chk.purge?.detail ?? '',
+        tip:
+          '删文章 / 改地址后要把那条 URL 从 Cloudflare 边缘清掉。没配就得去控制台手动清一次 —— ' +
+          '不配不会报错，只会「后台删了、老链接还能打开 7 天，访客强刷也没用」。' +
+          '在「设置 → 内容仓库」填 Zone ID 与一个只给 Zone-Cache-Purge 权限的令牌。',
       },
     ];
   });
@@ -241,6 +258,38 @@
       {/each}
     </ol>
   </div>
+
+  <!--
+    内容仓构建结果。这一块补的是线上唯一剩下的那种「静默失败」：
+    站点构建挂了（Pages 构建失败就不换部署），后台每笔保存照样回「已保存」，
+    前台从此停在旧版。本地有桥能自己跑体检（见「文章」页那条红字），
+    线上跑不了子进程，只能由跑构建的那一侧报回来 —— 见 /api/build-report。
+  -->
+  {#if buildReport?.status === 'failure'}
+    <div class="card wide">
+      <h3>站点构建</h3>
+      <p class="err">
+        最近一次内容仓构建<strong>失败</strong>（{sinceText(buildReport.at)}，提交
+        {buildReport.sha?.slice(0, 7) || '未知'}{buildReport.branch ? ` / ${buildReport.branch}` : ''}）。
+        Pages 构建失败就不换部署，<strong>前台现在停在上一版</strong>，后台的保存与群发看起来都仍然正常。
+        {#if buildReport.error}
+          <br />构建日志末尾：<code class="log">{buildReport.error.slice(0, 800)}</code>
+        {/if}
+      </p>
+    </div>
+  {:else if buildReport}
+    <div class="card wide">
+      <div class="row spread">
+        <h3>站点构建</h3>
+        <span class="muted">最近一次构建成功（{sinceText(buildReport.at)}，提交 {buildReport.sha?.slice(0, 7) || '未知'}）</span>
+      </div>
+    </div>
+  {:else if buildReportNotice}
+    <div class="card wide">
+      <h3>站点构建</h3>
+      <p class="muted">{buildReportNotice}</p>
+    </div>
+  {/if}
 
   <div class="card wide">
     <div class="row spread">

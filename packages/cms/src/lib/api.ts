@@ -113,3 +113,31 @@ export function timeAgo(ts: number): string {
 export function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false });
 }
+
+/** 写接口回包里的构建体检字段（线上没跑体检时是 null） */
+export interface BuildHealth {
+  ran: boolean;
+  ok: boolean;
+  exit?: number;
+  errors?: string[];
+  note?: string;
+}
+
+/** 「这次写入把站点构建弄坏了没有」——判断只在这里做一次，页面只管显示明细 */
+export function healthBroken(h: BuildHealth | null | undefined): h is BuildHealth & { ran: true; ok: false } {
+  return !!h && h.ran === true && h.ok === false;
+}
+
+/**
+ * 把体检结果拼成一句给人看的话；**没跑成或线上没体检就回空串**（不制造噪音）。
+ *
+ * 为什么放在这一个文件：凡是往内容仓库写东西的后台操作，都可能在写好的同时把整站构建打死
+ * （Hugo 对某些 front matter / 数据文件是退出码 1，不是跳过那一篇）。以前每个页面各抄一份
+ * 判断，抄漏的那个页面就变成「保存成功、站点停了」——上一轮就是这么漏了投稿审核那条路。
+ * 现在页面只管把这句贴到该显示的地方。
+ */
+export function healthWarn(h: BuildHealth | null | undefined): string {
+  if (!healthBroken(h)) return '';
+  const first = (h.errors ?? [])[0] ?? h.note ?? '';
+  return `⚠ 内容已写进仓库，但站点构建失败，前台会停在上一版${first ? `：${first}` : ''}`;
+}
