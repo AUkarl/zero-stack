@@ -21,7 +21,8 @@ import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
 
-const BUILD_REPORT_KEY = '***';
+/** 与其它 CACHE 键同前缀（`zero:admin:posts`、`zero:subscribe-push:last`）；审计的 target 也用它 */
+const BUILD_REPORT_KEY = 'zero:build-report';
 /** 留 30 天：最后一次构建结果要能撑到站长想起来看它；成功一次就会被覆盖 */
 const BUILD_REPORT_TTL = 60 * 60 * 24 * 30;
 

@@ -193,6 +193,12 @@ export function appendFriends(text: string, entries: NewFriend[]): AppendResult 
       createdAlliance = true;
       continue;
     }
+    /* 段头写成流式空表 `friends: []` 时（出厂新站与「一条都没同步过」的文件就是这样），
+       在它后面直接挂块状条目会得到 `friends: []` + `  - name: …`，go-yaml 当场拒绝
+       （实测 `[10:3] value is not allowed in this context` → **整站构建失败**，
+       而接口当时回的是「已同意」。所以先把这一行收成光秃秃的 `friends:`，条目照原样跟在下面。 */
+    const head = /^([A-Za-z_][\w-]*): *\[[ \t]*\]([ \t]*(?:#.*)?)$/.exec(out[block.start]!);
+    if (head) out[block.start] = `${head[1]}:${head[2] ?? ''}`;
     // 从段尾往回跳过空行与注释：那些说明文字属于下一个键，不能被插到中间
     let insertAt = block.end;
     if (block.end - block.start <= 1) insertAt = block.start + 1;
@@ -351,6 +357,25 @@ export function validateLinksYaml(text: string): string | null {
   // ①③ 顶层必须是个映射键；散文行、`[[[`、`{…}` 都在这里挡掉
   if (!TOP_KEY_LINE.test(first)) {
     return `第 ${firstIndex + 1} 行不是友链文件的写法：顶层要按「friends:」「alliance:」两段来写，每段下面用「  - name: …」列条目（现在开头是「${first.trim().slice(0, 40)}」）`;
+  }
+
+  /* 流式空表后面又挂块状条目 —— `friends: []` 紧跟 `  - name: …` 是 go-yaml 一定拒绝的形状
+     （实测 `[3:3] value is not allowed in this context`，Hugo 整站构建失败、页面还照旧 200）。
+     写方已改成「先收光秃秃的键再挂条目」，这一道是给后台那个「整份覆盖」的编辑口兜底：
+     从别处粘来这种形状也必须当场拒绝，而不是等构建挂了才知道。 */
+  let flowEmptyKey: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const top = TOP_KEY_LINE.exec(line);
+    if (top) {
+      const v = String(top[2] ?? '').replace(/\s+#.*$/, '').trim();
+      flowEmptyKey = v === '[]' || v === '{}' ? String(top[1]) : null;
+      continue;
+    }
+    if (flowEmptyKey && /^\s+-\s*\S/.test(line)) {
+      return `第 ${i + 1} 行：「${flowEmptyKey}:」已经写成空表 [] 了，下面不能再挂条目 —— 要列条目就把这一行改成「${flowEmptyKey}:」，别在空表后面加条目（这样 Hugo 构建会整站失败）`;
+    }
   }
 
   for (let i = 0; i < lines.length; i++) {

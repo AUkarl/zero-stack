@@ -472,12 +472,13 @@ jobs:
 
 /**
  * 回报脚本：内容仓里带一份 scripts/build-report.sh（与上面那段 workflow 配对）。
- * 用 curl 调后端 POST /api/admin/build-report；令牌与地址任一没配就直接退出 0（当作没这回事）。
+ * 用 curl 调后端 POST /api/build-report —— **不带 /admin/**：`index.ts` 对 /api/admin/* 有一道统一登录闸，
+ * CI 没有会话 Cookie，打到那条路只会拿到 401「请先登录」，令牌逻辑根本轮不到执行。
  */
 function buildReportScript(): string {
   return `#!/usr/bin/env bash
-# 把内容仓的构建结果报给自己的后端（POST /api/admin/build-report）。
-# 由 .github/workflows/deploy-site.yml 在成功/失败两条路上各调一次；任何出错都不该影响部署，
+# 把内容仓的构建结果报给自己的后端（POST /api/build-report，在管理员登录闸之外，只认令牌）。
+# 由 .github/workflows/deploy.yml 在成功/失败两条路上各调一次；任何出错都不该影响部署，
 # 所以全程 || true。地址优先用 Secret API_BASE_URL，没有就从站点的 params.toml 里读 apiBaseURL。
 set -uo pipefail
 STATUS="\${1:-success}"
@@ -493,11 +494,14 @@ if [ -z "\$API_BASE" ] || [ -z "\$TOKEN" ]; then
 fi
 BODY=\$(printf '{"status":"%s","sha":"%s","branch":"%s","error":"%s"}' \\
   "\$STATUS" "\${GITHUB_SHA:-}" "\${GITHUB_REF_NAME:-main}" \\
-  "\$(printf '%s' "\$DETAIL" | head -c 2000 | tr '\\n\\r"' '  ' | tr -d '\\\\\\\\')")
-curl -sS -m 20 -X POST "\\$\{API_BASE%/}/api/admin/build-report" \\
+  "\$(printf '%s' "\$DETAIL" | head -c 2000 | tr '\\n\\r\\t"' '    ' | tr -d '\\\\\\\\')")
+# 请求体走 stdin，不塞进 curl 的参数里：Windows/Git-Bash 的 MSYS 会把「看起来像路径」的片段按系统
+# ANSI 码页(GBK)转一遍，构建日志里 content/zh/posts/中文标题.md 那句到后端就成了废字节；
+# Linux runner 上没这问题，但有人在本地照 CI 那行手跑，两边就该读出同一句话。顺带避开参数长度上限。
+printf '%s' "\$BODY" | curl -sS -m 20 -X POST "\$\{API_BASE%/}/api/build-report" \\
   -H 'content-type: application/json' \\
   -H "x-build-report-token: \$TOKEN" \\
-  --data "\$BODY" || echo "构建结果回报没送出去（不影响部署）"
+  --data-binary @- || echo "构建结果回报没送出去（不影响部署）"
 exit 0
 `;
 }
