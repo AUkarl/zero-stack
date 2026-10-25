@@ -63,7 +63,7 @@ import {
 } from '../services/friends-groups';
 import { DEFAULT_TEMPLATES, TEMPLATE_LABELS, TEMPLATE_VARS, queueEmail, renderEmail, sendEmail } from '../services/email';
 import { pushNewPostsToSubscribers } from '../services/feed-push';
-import { exportPostStats } from '../services/scheduler';
+import { exportPostStats, JOB_LABELS } from '../services/scheduler';
 import { newId } from '../lib/crypto';
 import type { AppEnv } from '../lib/app';
 
@@ -1970,7 +1970,7 @@ app.get('/health-detail', async (c) => {
    * 这里给的是 { recent: [...] } 对象，结果 {#if health.checks.cron?.length} 永远为假，
    * 表格里明明跑过的任务也一律显示「尚未执行过」。
    */
-  const jobs = await db
+  const jobsLatest = await db
     .select({
       name: jobRuns.name,
       status: jobRuns.status,
@@ -1983,6 +1983,9 @@ app.get('/health-detail', async (c) => {
       sql`${jobRuns.startedAt} = (select max(j2.started_at) from job_runs j2 where j2.name = ${jobRuns.name})`,
     )
     .orderBy(desc(jobRuns.startedAt));
+  /** 显示名由 scheduler 那一份名单给（见 services/scheduler.ts 的 JOB_LABELS）：
+   *  以前这份抄在后台里，任务改了名字界面上就退回英文键，10 条里 7 条没人看得懂。 */
+  const jobs = jobsLatest.map((j) => ({ ...j, label: JOB_LABELS[j.name] ?? j.name }));
 
   const checks: Record<string, unknown> = { apiLatencyMs: 0 };
   try {

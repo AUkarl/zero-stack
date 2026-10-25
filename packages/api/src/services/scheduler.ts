@@ -18,6 +18,26 @@ export interface JobOutcome {
   detail: string;
 }
 
+/**
+ * 任务的显示名。**名单以本文件里那些 `run('…')` 为准**，谁在这里加一行、谁就得在下面加一条 ——
+ * 上一版这份表抄在后台 `cms/src/routes/+page.svelte` 里，于是改了任务名没人记得两头改：
+ * 实测台架 10 个任务里 7 个在界面上显示成英文键，另有 3 条标签指向已经不存在的任务。
+ * 现在这里是一份，接口把 label 一起回给界面，界面只做 `label ?? name`。
+ * 守这条的是 测试1/tools/t1-40（扫源码比对两边，缺一个就判红）。
+ */
+export const JOB_LABELS: Record<string, string> = {
+  'friends:sync': '友链登记（从 links.yaml 导库）',
+  'friends:check': '友链健康检测',
+  'friends:feed': '朋友动态抓取',
+  'friends:files': '友链状态与图标落盘',
+  'broadcast:due': '群发到点执行',
+  'subscribe:push': '新文章推送订阅',
+  'poststats:export': '文章统计导出',
+  'stats:flush': '浏览量攒批落库',
+  'analytics:prune': '统计明细清理',
+  'pages:build': '请 Pages 重建站点',
+};
+
 /** Cron 入口：每个子任务独立记账，互不影响 */
 export async function runScheduledJobs(env: Env, cron: string): Promise<JobOutcome[]> {
   const outcomes: JobOutcome[] = [];
@@ -99,7 +119,15 @@ export async function runScheduledJobs(env: Env, cron: string): Promise<JobOutco
          后台「运行状况」卡片显示的就是这段文字，构建被 cron 写坏了站长第二天打开就看得见。 */
       const health = await runLocalBuildCheck(env);
       const tail = health?.ran ? (health.ok ? '；构建体检通过' : `；⚠ 构建体检失败：${(health.errors ?? [])[0] ?? health.note ?? ''}`) : '';
-      return `${r.triggered ? `已触发构建（${changedFiles.join('、')}）` : `未触发构建：${r.error ?? '未知原因'}`}${tail}`;
+      /* 口径与 services/git.ts 的 buildReceipt 一致：没配 Hook 而靠 Git 集成重建，**不是没触发**。
+         上一版这里只看 triggered，于是内容仓用 Git 直连构建的站（大多数站）每天在「运行状况」里
+         看到一句「未触发构建：没配 Pages 构建 Hook」，看着像故障 —— 而它其实刚提交了、也刚重建了。 */
+      const buildText = r.triggered
+        ? `已触发构建（${changedFiles.join('、')}）`
+        : r.viaCommit
+          ? `已提交，站点按 Git 集成重建（${changedFiles.join('、')}）；没配 Pages 构建 Hook，属正常`
+          : `未触发构建：${r.error ?? '未知原因'}`;
+      return `${buildText}${tail}`;
     });
   }
 

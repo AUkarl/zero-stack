@@ -96,14 +96,9 @@
     return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
   }
 
-  const JOB_LABELS: Record<string, string> = {
-    'friends:check': '友链健康检测',
-    'friends:feed': '朋友动态抓取',
-    'analytics:prune': '统计明细清理',
-    'stats:reconcile': '累计量对账',
-    'poststats': '文章统计导出',
-    'feed:push': '新文章推送订阅',
-  };
+  /* 定时任务的中文名由接口一起给（`jobs[].label`，名单在 API 的 services/scheduler.ts）。
+     这里以前自己抄了一份：任务改了名字这边不知道，界面上 10 条里 7 条显示成英文键，
+     另外 3 条标签指向根本不存在的任务 —— 两份名单迟早分家，所以现在只留一处。 */
 
   function sinceText(ts: number): string {
     const d = Math.floor(Date.now() / 1000) - ts;
@@ -329,7 +324,7 @@
             <tbody>
               {#each cronJobs as j (j.name)}
                 <tr>
-                  <td>{JOB_LABELS[j.name] ?? j.name}</td>
+                  <td>{j.label ?? j.name}</td>
                   <td><span class="badge" class:good={j.status === 'ok'} class:bad={j.status !== 'ok'}>{j.status}</span></td>
                   <td class="muted">{new Date(j.startedAt * 1000).toLocaleString('zh-CN', { hour12: false })}</td>
                   <td class="muted">{sinceText(j.startedAt)}</td>
