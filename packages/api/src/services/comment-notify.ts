@@ -16,6 +16,7 @@ import { postDrafts, users } from '../db/schema';
 import { canonSlug } from '../lib/slug';
 import { siteAuthorName } from './authors';
 import { getConfig, getConfigBool } from './config';
+import { resolveSiteName } from './site-name';
 import { queueEmail, renderEmail, sendEmail } from './email';
 import { commentEmailHtml } from './email-content';
 import { webUrlForSlug } from './frontmatter';
@@ -127,7 +128,7 @@ async function emailOfAuthor(env: Env, author: NotifyParent): Promise<string> {
 export async function notifyNewComment(input: NotifyInput): Promise<void> {
   const { env, slug, comment, parent } = input;
   try {
-    const siteName = (await getConfig(env, 'siteName')) ?? '';
+    const siteName = await resolveSiteName(env);
     const fromMail = (await getConfig(env, 'emailFrom'))?.trim() ?? '';
     /**
      * 站长那一封的收件人：以前硬用 emailFrom，于是「发给站长」的邮件其实是发给发件邮箱自己，

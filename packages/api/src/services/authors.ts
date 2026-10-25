@@ -15,6 +15,7 @@
  */
 
 import { getConfig } from './config';
+import { configuredSiteName } from './site-name';
 import { readRepoFile, writeRepoFile, type RepoBackend, type RepoFileResult } from './repo';
 import type { AuditAction } from './audit';
 import { canonHandle } from '../lib/slug';
@@ -660,7 +661,7 @@ export async function siteAuthorName(env: Env): Promise<string> {
   if (fromConfig) return fromConfig;
   const fromProfile = ((await ownerAuthorProfile(env))?.name ?? '').trim();
   if (fromProfile) return fromProfile;
-  return ((await getConfig(env, 'siteName')) ?? '').trim();
+  return await configuredSiteName(env);
 }
 export async function ownerAuthorProfile(env: Env): Promise<AuthorProfile | null> {
   const preferred = ((await getConfig(env, 'defaultAuthor')) ?? '').trim();

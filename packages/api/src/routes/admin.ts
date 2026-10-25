@@ -32,10 +32,12 @@ import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { deleteFile, listDir, readFile } from '../services/git';
 import { repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
-import { commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, walkFiles, writeRepoFile } from '../services/repo';
+import { buildHealthReceipt, commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, runLocalBuildCheck, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
 import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry } from '../services/media-variants';
+import { checkHugoDates, checkMediaKey, checkUploadBytes } from '../services/hugo-guard';
+import { resolveSiteName } from '../services/site-name';
 import {
   buildMarkdown,
   contentWebPath,
@@ -342,17 +344,28 @@ function escapeHtml(s: string): string {
  */
 const BAD_PATH_CHARS = /[\u0000-\u001f<>:"|?*]/;
 
-function safePath(p: string): string {
-  const clean = p.replace(/\\/g, '/').replace(/^\/+/, '');
-  if (!clean) fail(400, '缺少文件路径');
+/**
+ * 校验并归一内容路径。**不抛**，返回错误说明或归一后的路径。
+ * 批量写入必须走这一版：以前只有会抛的 safePath，于是一篇路径不合法就把整批打断，
+ * 调用方只拿到一句「路径不合法」，不知道是二十篇里的哪一篇（台架 2026-10-25 F-06）。
+ */
+function validateContentPath(p: string): { path: string } | { error: string } {
+  const clean = String(p ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!clean) return { error: '缺少文件路径' };
   const segs = clean.split('/');
-  if (segs.some((seg) => seg === '' || seg === '.' || seg === '..')) fail(400, '路径不合法');
-  if (segs[0] !== 'content') fail(400, '只能写入 content/ 下的 .md 文件');
-  if (!clean.endsWith('.md') || clean === '.md') fail(400, '只能写入 content/ 下的 .md 文件');
-  if (BAD_PATH_CHARS.test(clean)) fail(400, '文件名含有系统保留字符，请去掉 : " < > | ? * 与控制字符');
-  if (segs[segs.length - 1]!.trim() === '.md') fail(400, '文件名不能为空');
-  if (clean.length > 300) fail(400, '路径过长（上限 300 字符）');
-  return clean;
+  if (segs.some((seg) => seg === '' || seg === '.' || seg === '..')) return { error: '路径不合法（不许含空段、. 或 ..）' };
+  if (segs[0] !== 'content') return { error: '只能写入 content/ 下的 .md 文件' };
+  if (!clean.endsWith('.md') || clean === '.md') return { error: '只能写入 content/ 下的 .md 文件' };
+  if (BAD_PATH_CHARS.test(clean)) return { error: '文件名含有系统保留字符，请去掉 : " < > | ? * 与控制字符' };
+  if (segs[segs.length - 1]!.trim() === '.md') return { error: '文件名不能为空' };
+  if (clean.length > 300) return { error: '路径过长（上限 300 字符）' };
+  return { path: clean };
+}
+
+function safePath(p: string): string {
+  const r = validateContentPath(p);
+  if ('error' in r) fail(400, r.error);
+  return (r as { path: string }).path;
 }
 
 /** content/zh/posts/xxx.md 这类才是文章；时刻（content/zh/moments/…）是朋友圈式动态，没有标题 */
@@ -462,8 +475,10 @@ async function prepareContentItem(
   settings: Awaited<ReturnType<typeof repoTarget>>,
   item: ContentItem,
 ): Promise<PrepareResult> {
-  const path = safePath(item.path ?? '');
-  if (!path) return { ok: false, outcome: { ok: false, path: String(item.path ?? ''), reason: 'invalid', error: '路径不合法' } };
+  const asked = String(item.path ?? '');
+  const checked = validateContentPath(asked);
+  if ('error' in checked) return { ok: false, outcome: { ok: false, path: asked, reason: 'invalid', error: checked.error } };
+  const path = checked.path;
 
   let content: string;
   let futureDraft: string | null = null;
@@ -489,6 +504,11 @@ async function prepareContentItem(
     } else {
       throw new Error('缺少正文');
     }
+    /** Hugo 的口径在这里统一过一次：两种提交形状（front 与整篇 content）拼完都是同一份 markdown，
+        所以只在这一处判，不会再出现「一条路管了、另一条路漏了」。
+        日期写成 Hugo 认不了的样子是**整站构建失败**（退出码 1），不是这一篇不生成。 */
+    const dateErr = checkHugoDates(parseFrontMatter(content).front);
+    if (dateErr) throw new Error(dateErr);
   } catch (e) {
     return { ok: false, outcome: { ok: false, path, reason: 'invalid', error: e instanceof Error ? e.message : String(e) } };
   }
@@ -618,7 +638,7 @@ async function notifyPostSubscribers(env: Env, adminId: string, path: string, pa
   if (!/\/posts\//.test(path)) return { skipped: '只有文章可以群发' };
   if (isDraftFront(parsed.front)) return { skipped: '草稿不群发' };
 
-  const site = (await getConfig(env, 'siteName')) || '';
+  const site = await resolveSiteName(env);
   const title = String(parsed.front.title ?? path);
   /* 必须给绝对地址：只写 /posts/xxx/ 的话，邮件客户端会拿「自己的」域名甚至本地路径去解析，
      收件人点「阅读全文」打不开文章。站点域名没配时退化成相对路径，也比拼一个假域名好。 */
@@ -638,12 +658,20 @@ async function notifyPostSubscribers(env: Env, adminId: string, path: string, pa
   return { jobId, sent: run.sent, failed: run.failed };
 }
 
-/** 整批写完统一做的一次收尾：清后台文章列表缓存 + 触发一次站点重建 */
-async function finishContentWrite(env: Env, changed: number, triggerBuild: boolean): Promise<{ triggered?: boolean; error?: string } | null> {
-  if (!changed) return null;
+/** 整批写完统一做的一次收尾：清后台文章列表缓存 + 触发一次站点重建 + （本地后端）构建体检 */
+async function finishContentWrite(
+  env: Env,
+  changed: number,
+  triggerBuild: boolean,
+): Promise<{ build: { triggered?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
+  if (!changed) return { build: null, buildHealth: null };
   await kvDelete(env, POSTS_CACHE_KEY);
   // 前台是 Hugo 构建出来的静态页：不触发重建，新文章不会出现在列表里，改过的正文也不会变
-  return triggerBuild ? await triggerPagesBuild(env) : null;
+  const build = triggerBuild ? await triggerPagesBuild(env) : null;
+  /** 只有配了桥（本地开发）才有体检；线上跑同一条 hugo 命令，成败在 Cloudflare 那边，返回 null。
+   *  代价是本地每次保存多等一次构建（站点越大越明显），不想等就 `REPO_BRIDGE_DOCTOR=off pnpm repo:bridge`。 */
+  const buildHealth = await runLocalBuildCheck(env);
+  return { build, buildHealth };
 }
 
 app.put('/content/file', async (c) => {
@@ -667,8 +695,16 @@ app.put('/content/file', async (c) => {
     },
     ip: clientIp(c),
   });
-  const build = await finishContentWrite(c.env, 1, body?.triggerBuild !== false);
-  return ok({ ...outcome, note: outcome.futureDraft ? futureDraftNote(outcome.futureDraft) : null, build });
+  const { build, buildHealth } = await finishContentWrite(c.env, 1, body?.triggerBuild !== false);
+  const healthNote = buildHealthReceipt(buildHealth).replace(/^；/, '');
+  return ok({
+    ...outcome,
+    /* 回执里那句话是站主唯一会看的东西：只把 buildHealth 躺在字段上等于没做（后台不一定渲染它）。
+       所以体检失败要同时进正文。 */
+    note: [outcome.futureDraft ? futureDraftNote(outcome.futureDraft) : null, healthNote || null].filter(Boolean).join('；') || null,
+    build,
+    buildHealth,
+  });
 });
 
 /**
@@ -744,17 +780,18 @@ app.post('/content/batch', async (c) => {
     },
     ip: clientIp(c),
   });
-  const build = await finishContentWrite(c.env, done, input?.triggerBuild !== false);
+  const { build, buildHealth } = await finishContentWrite(c.env, done, input?.triggerBuild !== false);
   return ok({
     total: results.length,
     done,
     results,
     drafted,
     build,
-    message: done
+    buildHealth,
+    message: (done
       ? buildReceipt(build, `已推送 ${done}/${results.length} 篇`) +
         (drafted.length ? `；其中 ${drafted.length} 篇发布时间填在将来，已按草稿保存（到时间后取消草稿再保存一次才会上线）` : '')
-      : '没有推送成功，内容都留在本地暂存里',
+      : '没有推送成功，内容都留在本地暂存里') + buildHealthReceipt(buildHealth),
   });
 });
 
@@ -781,8 +818,12 @@ app.delete('/content/file', async (c) => {
      按标题 urlize 的，中文标题猜不准，靠 <title> 比对才可靠）。 */
   const ref = buildPageRef(path);
   let purgedBuild: string[] = [];
+  /** 「删掉了」与「本来就没有」必须分得开：清理脚本靠 success:true 会以为事情办完了（台架 F-05）。
+   *  下面为了取标题本来就要读一次，顺手把它当存在性判据，不多花一次请求。 */
+  let existed: boolean | null = null;
   if (ref) {
     const before = await readFile({ ...settings, path }).catch(() => null);
+    existed = Boolean(before);
     const title = before ? String(parseFrontMatter(before.content).front.title ?? '').trim() : '';
     purgedBuild = await pruneLocalBuild(settings, { ...ref, title });
   }
@@ -815,10 +856,21 @@ app.delete('/content/file', async (c) => {
     actor: admin,
     action: 'content',
     target: path,
-    detail: { event: 'delete', purged, purgedBuild, purge, build: build ? 'requested' : 'skipped' },
+    detail: { event: 'delete', purged, purgedBuild, purge, existed, build: build ? 'requested' : 'skipped' },
     ip: clientIp(c),
   });
-  return ok({ ...result, purged, purgedBuild, purge, build });
+  const kv = await runLocalBuildCheck(c.env);
+  const kvNote = buildHealthReceipt(kv).replace(/^；/, '');
+  return ok({
+    ...result,
+    existed,
+    purged,
+    purgedBuild,
+    purge,
+    build,
+    buildHealth: kv,
+    note: [existed === false ? '仓库里本来就没有这个文件，这次没有东西被删除' : null, kvNote || null].filter(Boolean).join('；') || null,
+  });
 });
 
 /* ---------------- 仓库配置文件：白名单内的整份读写 ---------------- */
@@ -926,7 +978,18 @@ app.put('/repo/file', async (c) => {
     detail: { event: 'repo-file.write', bytesBefore: current?.content.length ?? 0, bytes: content.length, sha: committed.sha, build },
     ip: clientIp(c),
   });
-  return ok({ path, sha: committed.sha, bytes: content.length, build, message: buildReceipt(build, `已写入仓库 ${path}`) });
+  /* 与文章同一套体检：这条通道写的是 params.toml / data/*.json / 审核规则，
+     一个非标量字段（台架 T7-02 的 head_html）同样能让整站构建挂掉，
+     而回执只说「已写入仓库」—— 写坏了在界面上和写成功一模一样。 */
+  const health = await runLocalBuildCheck(c.env);
+  return ok({
+    path,
+    sha: committed.sha,
+    bytes: content.length,
+    build,
+    buildHealth: health,
+    message: buildReceipt(build, `已写入仓库 ${path}`) + buildHealthReceipt(health),
+  });
 });
 
 /* ---------------- 媒体库：多桶（R2 绑定 + S3 兼容第三方） ---------------- */
@@ -971,10 +1034,16 @@ app.post('/media', async (c) => {
      图床直链域名不走那条「脚本类型降级」的代理，所以只能在这里拦。 */
   const type = checkUploadType(file.name);
   if (!type.ok) fail(400, type.error);
+  /** 白名单只看扩展名，挡不住「改了名的别种文件」：0 字节的件会在前台永远是一张破图，
+   *  而 `<html>` 改名 .png 混进图床域名是奔着执行去的。所以这里读真字节再判一次（上限 20MB，
+   *  整份进内存换掉流式分叉的那套复杂度；20MB 在 Worker 的额度内）。 */
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const byteErr = checkUploadBytes(type.ext, bytes);
+  if (byteErr) fail(400, byteErr);
   const key = `uploads/${new Date().toISOString().slice(0, 10)}/${newId()}.${type.ext}`;
   const stored = await putMediaObject(c.env, bucket, {
     key,
-    data: file.stream(),
+    data: bytes,
     contentType: type.contentType,
   });
 
@@ -1027,10 +1096,15 @@ app.post('/media/import', async (c) => {
      而不是把它们重新放回一个能在图床域名下执行的键上。 */
   const importType = checkUploadType(key);
   if (!importType.ok) fail(400, importType.error);
+  /** 也要过一遍字节真相：备份 JSON 是站主手上的文件，键名与内容对不上的件（0 字节、改了名的
+   *  标记语言）恢复进来等于把坏件重新放回能外链的域名上。 */
+  const importBytes = new Uint8Array(await file.arrayBuffer());
+  const importByteErr = checkUploadBytes(importType.ext, importBytes);
+  if (importByteErr) fail(400, `${key}：${importByteErr}`);
 
   const stored = await putMediaObject(c.env, bucket, {
     key,
-    data: file.stream(),
+    data: importBytes,
     contentType: importType.contentType,
   });
   await writeAudit(c.env, {
@@ -1119,6 +1193,10 @@ function mediaKeyAndBucket(url: string): { key: string; bucketId: string | null 
 app.get('/media/*', async (c) => {
   requireAdmin(c);
   const { key, bucketId } = mediaKeyAndBucket(c.req.url);
+  /** 键的长度与字符要先判：R2 对超长名回的是运行时错误（实测 1024 字符起），
+   *  以前一路冒到 onError 变成 500 还把 trace 号回给对方（台架 F-02）。 */
+  const keyErr = checkMediaKey(key);
+  if (keyErr) fail(400, `对象键不合法：${keyErr}`);
   const bucket = await resolveBucket(c.env, c.req.query('bucket') || bucketId || '');
   const object = await getMediaObject(c.env, bucket, key);
   if (!object) fail(404, '文件不存在');
@@ -1145,11 +1223,18 @@ app.post('/media/variant', async (c) => {
   const key = String(form?.get('key') ?? '').trim();
   if (!(file instanceof File)) fail(400, '未收到变体文件');
   if (!isValidVariantObjectKey(key)) fail(400, '变体键必须形如 variants/<母版键去扩展名>/h720.webp，且不许带 ..');
+  const variantKeyErr = checkMediaKey(key);
+  if (variantKeyErr) fail(400, `变体键不合法：${variantKeyErr}`);
   if (file.size > 5 * 1024 * 1024) fail(400, '单个变体不得超过 5MB');
   const type = checkUploadType(file.name);
   if (!type.ok || !/webp/i.test(type.contentType)) fail(400, '变体只接受 WebP');
+  /** 变体是浏览器 canvas 生成后回传的：读失败、编码不支持时会留下一份 0 字节或不是 webp 的件，
+   *  而清单一旦写上这个档，前台就会拿它当可用变体去 srcset 里引用。 */
+  const variantBytes = new Uint8Array(await file.arrayBuffer());
+  const variantErr = checkUploadBytes('webp', variantBytes);
+  if (variantErr) fail(400, `${key}：${variantErr}`);
   const bucket = await bucketFrom(c.env, c.req.url, form);
-  const stored = await putMediaObject(c.env, bucket, { key, data: file.stream(), contentType: 'image/webp' });
+  const stored = await putMediaObject(c.env, bucket, { key, data: variantBytes, contentType: 'image/webp' });
   await writeAudit(c.env, {
     actor: admin,
     action: 'media',
@@ -1174,6 +1259,8 @@ app.post('/media-variants', async (c) => {
   const origin = typeof body?.origin === 'string' ? body.origin : '';
   const raw = body?.entry as { a?: unknown; v?: unknown } | undefined;
   if (!isValidOriginKey(origin)) fail(400, 'origin 必须是 uploads/ 下的母版键，且不许带 ..');
+  const originKeyErr = checkMediaKey(origin);
+  if (originKeyErr) fail(400, `origin 键不合法：${originKeyErr}`);
   const aspect = Number(raw?.a);
   if (!Number.isFinite(aspect) || aspect <= 0 || aspect > 10) fail(400, 'entry.a 要写成宽/高（正数）');
   const vIn = (raw?.v ?? {}) as Record<string, unknown>;
@@ -1200,7 +1287,12 @@ app.post('/media-variants', async (c) => {
 app.delete('/media/*', async (c) => {
   const admin = requireAdmin(c);
   const { key, bucketId } = mediaKeyAndBucket(c.req.url);
+  const keyErr = checkMediaKey(key);
+  if (keyErr) fail(400, `对象键不合法：${keyErr}`);
   const bucket = await resolveBucket(c.env, c.req.query('bucket') || bucketId || '');
+  /** 先确认桶里真有这么个件再删：删除回 `deleted:true` 而不说「本来就没有」，
+   *  调用方（清理脚本、后台批量删）会把「什么都没删掉」当成删成功（台架 F-05）。 */
+  const existed = await mediaObjectExists(c.env, bucket, key);
   const removed = await deleteMediaObject(c.env, bucket, key);
   /* 母版删了，它的三档变体也要跟着删；否则桶里会慢慢攒一堆没人引用的孤儿 */
   let variantsDeleted = 0;
@@ -1212,10 +1304,17 @@ app.delete('/media/*', async (c) => {
     actor: admin,
     action: 'media',
     target: removed.key,
-    detail: { event: 'delete', bucket: bucket.id, via: objectPath(bucket, removed.key), variantsDeleted },
+    detail: { event: 'delete', bucket: bucket.id, via: objectPath(bucket, removed.key), variantsDeleted, existed },
     ip: clientIp(c),
   });
-  return ok({ key: removed.key, bucket: bucket.id, deleted: true, variantsDeleted });
+  return ok({
+    key: removed.key,
+    bucket: bucket.id,
+    deleted: true,
+    existed,
+    variantsDeleted,
+    ...(existed ? {} : { note: '桶里本来就没有这个键，这次没有东西被删除' }),
+  });
 });
 
 /* ---------------- 群发 ---------------- */
@@ -1289,7 +1388,7 @@ app.post('/email/test', async (c) => {
   if (!parsed.success) fail(400, '请填写收件人邮箱（合法地址）');
   const kind = parsed.data.kind ?? 'code';
   const html = await buildEmailPreview(env, kind, (await siteAuthorName(env)) || undefined);
-  const site = (await getConfig(env, 'siteName')) ?? '本站';
+  const site = await resolveSiteName(env);
   const res = await sendEmail(env, { to: parsed.data.to, subject: `【${site}】测试邮件（${kind}）`, html, kind: 'notice' });
   await writeAudit(env, {
     actor: admin,
@@ -1359,7 +1458,7 @@ function emailKindOf(raw: unknown): EmailKind | null {
  */
 async function buildEmailPreview(env: Env, kind: EmailKind, nickname?: string): Promise<string> {
   const home = ((await getConfig(env, 'siteUrl')) ?? env.SITE_URL ?? 'https://example.com').replace(/\/+$/, '');
-  const site = (await getConfig(env, 'siteName')) ?? '本站';
+  const site = await resolveSiteName(env);
   const base = { title: `【${site}】示例邮件`, nickname };
 
   if (kind === 'code') {
@@ -1469,7 +1568,7 @@ app.post('/subscribers/:id/confirm', async (c) => {
   let notified = false;
   let notifyError: string | undefined;
   if (parsed.data.sendMail) {
-    const siteName = (await getConfig(c.env, 'siteName')) ?? 'Zero';
+    const siteName = await resolveSiteName(c.env);
     const base = ((await getConfig(c.env, 'siteUrl')) ?? c.env.SITE_URL ?? '').replace(/\/+$/, '');
     const res = await queueEmail(c.env, {
       to: row.email,

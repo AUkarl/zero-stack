@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { commitRepoFiles, readRepoFile, repoBackend, writeRepoFile } from '../services/repo';
+import { buildHealthReceipt, commitRepoFiles, readRepoFile, repoBackend, runLocalBuildCheck, writeRepoFile } from '../services/repo';
 import { getAllConfig, getConfig, setConfig } from '../services/config';
 import { requireAdmin } from '../middleware/auth';
 import { buildReceipt, triggerPagesBuild } from '../services/git';
+import { invalidateSiteNameCache } from '../services/site-name';
 import { clientIp } from '../lib/http';
 import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
@@ -642,10 +643,16 @@ app.post('/', async (c) => {
     if (s.description.trim()) await setConfig(c.env, 'siteDescription', s.description.trim());
     if (s.logo.trim()) await setConfig(c.env, 'siteLogo', s.logo.trim());
     if (s.favicon.trim()) await setConfig(c.env, 'siteFavicon', s.favicon.trim());
+    /** 名字刚被站主改掉：site-name.ts 有一份 60 秒的 isolate 缓存，不清就会出现
+     *  「后台已改名、接下来一分钟的信还是旧名字」这种自己骗自己的窗口。 */
+    invalidateSiteNameCache();
   }
 
   const build = written.length && parsed.data.triggerBuild ? await triggerPagesBuild(c.env) : null;
   if (failed.length && !written.length) fail(502, `前端设置写入失败：${failed.join('；')}`);
+  /* 这一条通道写的就是 data/*.json：非标量字段（head_html 那种）会让 Hugo 整站失败，
+     而回执以前只说「已保存 N 个文件」。与文章保存共用同一个体检，别再各写一份口径。 */
+  const health = written.length ? await runLocalBuildCheck(c.env) : null;
 
   return ok({
     written,
@@ -653,9 +660,10 @@ app.post('/', async (c) => {
     /** 面板/脚本这次送的、schema 没登记的键（形如「基本信息.siteName」）：它们没有落盘。空数组=一切有效 */
     ignored,
     build,
-    message: written.length
+    buildHealth: health,
+    message: (written.length
       ? buildReceipt(build, `已保存 ${written.length} 个文件`) + (ignored.length ? `；另有 ${ignored.length} 个字段本站面板不认识，未保存` : '')
-      : '未保存任何文件',
+      : '未保存任何文件') + buildHealthReceipt(health),
   });
 });
 

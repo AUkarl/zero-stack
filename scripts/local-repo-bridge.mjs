@@ -16,6 +16,7 @@
 import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,7 +79,8 @@ const server = createServer(async (req, res) => {
   const route = (req.url || '').split('?')[0];
   const isHealth = req.method === 'GET' && route === '/health';
   // /purge-page 清的是整个产物目录，不带具体文件路径，不能在这里被「越界」检查拦掉
-  const noPathNeeded = isHealth || (req.method === 'POST' && route === '/purge-page');
+  // /doctor 同理：它跑的是整站构建，不针对某个文件
+  const noPathNeeded = isHealth || (req.method === 'POST' && (route === '/purge-page' || route === '/doctor'));
   const file = noPathNeeded ? null : abs(input.path ?? input.dir ?? '');
   if (!noPathNeeded && !file) return json(res, 400, { error: '路径越界，只能读写站点目录内' });
 
@@ -109,6 +111,47 @@ const server = createServer(async (req, res) => {
       case 'POST /delete': {
         await rm(file, { force: true });
         return json(res, 200, { ok: true, path: input.path });
+      }
+      /**
+       * 构建体检：真跑一次 `hugo --minify`，把「这次写入会不会把整站构建打失败」告诉后台。
+       * workerd 里起不了子进程，只有这个 Node 进程能跑；产物写进一次性目录，不碰 hugo server 正在用的 public/。
+       * 需要它是因为 Hugo 对某些值（比如 `date: 2026-10-25 12:00`）是**整站退出码 1**，
+       * 而后台每笔保存都回「已保存」，站主只会在很久之后发现站点停在旧版（台架 2026-10-25 F-01/O-06）。
+       */
+      case 'POST /doctor': {
+        if (String(process.env.REPO_BRIDGE_DOCTOR ?? '').toLowerCase() === 'off') {
+          return json(res, 200, { ran: false, ok: false, note: '桥接体检被 REPO_BRIDGE_DOCTOR=off 关着' });
+        }
+        const bin = process.env.HUGO_BIN || 'hugo';
+        const dest = join(ROOT, '.zero-doctor');
+        let r = null;
+        let spawnErr = '';
+        try {
+          r = spawnSync(bin, ['--minify', '-d', dest], {
+            cwd: ROOT,
+            encoding: 'utf8',
+            timeout: Number(process.env.HUGO_DOCTOR_TIMEOUT_MS || 90000),
+          });
+          if (r.error) spawnErr = String(r.error.message || r.error);
+        } catch (e) {
+          spawnErr = e instanceof Error ? e.message : String(e);
+        }
+        await rm(dest, { recursive: true, force: true }).catch(() => {});
+        if (spawnErr) {
+          return json(res, 200, { ran: false, ok: false, note: `hugo 没跑起来（${spawnErr.slice(0, 160)}）；不在 PATH 里就设 HUGO_BIN=<绝对路径>` });
+        }
+        const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+        const errors = out.split('\n').map((l) => l.trim()).filter((l) => /^ERROR\b/i.test(l)).slice(0, 5);
+        const code = r.status ?? 1;
+        return json(res, 200, {
+          ran: true,
+          ok: code === 0,
+          exit: code,
+          errors,
+          note: code === 0
+            ? '构建体检通过：这一笔写入没有把站点构建打坏'
+            : `构建失败（退出码 ${code}）。线上跑的是同一条命令，Pages 会停在上一版 —— 按上面的 ERROR 行改那一篇再保存`,
+        });
       }
       case 'POST /purge-page': {
         // 只清构建产物：public/<kind>/<目录>/index.html。

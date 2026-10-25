@@ -29,6 +29,7 @@ import { requireUser, sessionCookie } from '../middleware/auth';
 import { issueSession } from '../services/auth';
 import { writeAudit } from '../services/audit';
 import { getConfig, getConfigBool } from '../services/config';
+import { resolveSiteName } from '../services/site-name';
 import { generateSecret, openSecret, otpauthUri, protectSecret, verifyTotp } from '../services/totp';
 import {
   checkTotp,
@@ -158,7 +159,7 @@ app.get('/', async (c) => {
       redirectConfigured: Boolean(oauth.redirectUri),
       message: oauth.configured ? '' : githubUnavailableMessage(oauth),
     },
-    totpIssuer: (await getConfig(c.env, 'totpIssuer')) ?? (await getConfig(c.env, 'siteName')) ?? 'Zero',
+    totpIssuer: (await getConfig(c.env, 'totpIssuer')) ?? (await resolveSiteName(c.env)),
   });
 });
 
@@ -257,8 +258,7 @@ app.post('/totp/setup', async (c) => {
   const issuer =
     reqIssuer ||
     (await getConfig(c.env, 'totpIssuer')) ||
-    (await getConfig(c.env, 'siteName')) ||
-    'Zero';
+    (await resolveSiteName(c.env));
   return ok({
     secret,
     manualEntry: secret,

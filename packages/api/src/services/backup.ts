@@ -40,6 +40,8 @@ import { SPAM_PATTERN_FILE } from './moderation';
 import { readFileFrom, resolveRepoTarget, walkFiles, writeViaTarget, type RepoTarget } from './repo';
 import { triggerPagesBuild } from './git';
 import { listBuckets, listMediaObjects } from './media';
+import { parseFrontMatter } from './frontmatter';
+import { checkHugoDates } from './hugo-guard';
 
 export const BACKUP_VERSION = 2;
 
@@ -850,8 +852,17 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
       const localAddr: string[] = [];
       /** data/site.json 里被收成一句话的非标量字段（见 normalizeSiteJsonShape） */
       const shapeFixed: string[] = [];
+      /** Hugo 解析不了的日期：这种值不是「这一篇不生成」，是**整站构建失败**，恢复时必须挡在写盘之前 */
+      const badDates: string[] = [];
       for (const f of batch) {
         let content = f.content;
+        if (/\.md$/i.test(f.path)) {
+          const dateErr = checkHugoDates(parseFrontMatter(content).front);
+          if (dateErr) {
+            badDates.push(`${f.path}：${dateErr}`);
+            continue;
+          }
+        }
         const shaped = normalizeSiteJsonShape(f.path, content);
         if (shaped.notes.length) {
           content = shaped.content;
@@ -916,6 +927,11 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
       if (localAddr.length) {
         result.notes.push(
           `${localAddr.length} 个文件里还有源站的本机地址，访客打不开这类链接，请到后台逐个改：${localAddr.slice(0, 3).join('、')}${localAddr.length > 3 ? ' …' : ''}`,
+        );
+      }
+      if (badDates.length) {
+        result.notes.push(
+          `${badDates.length} 个 markdown 的日期 Hugo 解析不了（这种值会让**整站构建失败**，不是这一篇跳过），已跳过没写进仓库：${badDates.slice(0, 2).join('；')}${badDates.length > 2 ? ' …' : ''}`,
         );
       }
       /** 这一区还剩文件没写：把续跑坐标交回后台，由它接着发下一批（一次请求写二十几个文件会中途断） */

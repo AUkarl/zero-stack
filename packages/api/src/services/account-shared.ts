@@ -17,6 +17,7 @@ import { createDb } from '../db/client';
 import { accounts, users, verifications } from '../db/schema';
 import { randomOtp } from './auth';
 import { getConfig } from './config';
+import { resolveSiteName } from './site-name';
 import * as mailer from './email';
 import { openSecret, verifyTotp } from './totp';
 import { fail } from '../lib/errors';
@@ -63,7 +64,7 @@ export async function sendEmailOtp(
     createdAt: nowSec(),
   });
 
-  const siteName = (await getConfig(env, 'siteName')) ?? 'Zero';
+  const siteName = await resolveSiteName(env);
   const sent = await mailer.sendEmail(env, {
     to: email,
     subject: `【${siteName}】验证码 ${code}`,

@@ -111,6 +111,23 @@ app.use('*', async (c, next) => {
   c.res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
 });
 
+/* ---------------- 尾斜杠归一 ----------------
+ * `/api/security` 通、`/api/security/` 回 404 这种事（台架 F-07）对写调用方的人是最费解的一类错：
+ * 路径看着一模一样。按 REST 习惯带斜杠的人占多数，所以在这里归一而不是让它 404。
+ * 用 308：方法与请求体都不改，客户端自动跟一次。`/api/media/<桶>/<键>` 那种键里带斜杠的不受影响
+ * （它们的键不以斜杠结尾，且已由 checkMediaKey 挡过越界）。
+ *
+ * 位置必须在 cors 与安全头**之后**：hono 的这些中间件都是「等 next() 回来再写头」，
+ * 谁排在它们前面就地返回，响应就绕过了它们。放前面时 308 上没有任何 CORS 头，
+ * 而前台域与接口域不同是默认部署形状 —— 浏览器会把这个跳转整个拦掉，
+ * 「归一」只对同源调用生效，跨源的人看到的还是 Failed to fetch（第一轮实测就是这个）。
+ */
+app.use('/api/*', async (c, next) => {
+  const url = new URL(c.req.url);
+  if (url.pathname === '/api/' || !url.pathname.endsWith('/')) return next();
+  return c.redirect(`${url.origin}${url.pathname.replace(/\/+$/, '')}${url.search}`, 308);
+});
+
 /* ---------------- 会话解析：所有路由都能拿到可选的 user ---------------- */
 
 app.use('*', authMiddleware);

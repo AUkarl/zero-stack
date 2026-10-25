@@ -100,6 +100,12 @@ function accountPayload(row: UserRow) {
     email: me.email,
     isAdmin: me.role === 'admin',
     role: me.role,
+    /** 邮箱验证状态：只有 register 的回包带过 verified，/me 与 login 一直没带，
+     *  于是账号页想显示「邮箱已验证/未验证」只能自己再发一次请求猜（台架 F-09）。
+     *  两种命名一起给，与这个 DTO 里 account_slug/accountSlug 的老写法一致。 */
+    verified: me.emailVerified,
+    email_verified: me.emailVerified,
+    emailVerified: me.emailVerified,
     author_verified: me.authorVerified,
     can_publish: me.canPublish,
     can_author: me.canAuthor,

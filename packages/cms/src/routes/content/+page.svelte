@@ -49,6 +49,13 @@
   let hydrated = false;
   /** 推送结果里没成功的部分（冲突 / 失败），列在暂存面板里，改完可以再推 */
   let pushProblems = $state<{ path: string; error: string }[]>([]);
+  /**
+   * 本地后端的构建体检失败：这一条必须常驻，不能用那条 6 秒就消失的 notice。
+   * 「保存成功但站点构建挂了」是后台以前完全看不见的失败（台架 F-01 / O-06）：
+   * 一篇 front matter 日期写坏 = Hugo 整站失败，前台停在上一版，而每笔保存都回「已保存」。
+   * 线上部署跑不到体检（Worker 起不了子进程），这个状态就一直是 null，界面不会多出一行噪音。
+   */
+  let buildBroken = $state<{ errors: string[]; note: string } | null>(null);
 
   // 挂载后才读 localStorage（SSR 阶段没有 window）；之后队列有变动就同步写回
   $effect(() => {
@@ -127,6 +134,7 @@
     pushing = true;
     error = '';
     pushProblems = [];
+    buildBroken = null;
     try {
       const d = await post<{
         data: {
@@ -134,6 +142,7 @@
           done: number;
           message: string;
           results: { path: string; ok: boolean; sha?: string; error?: string }[];
+          buildHealth?: { ran: boolean; ok: boolean; errors?: string[]; note?: string } | null;
         };
       }>('/api/admin/content/batch', {
         files: targets.map((t) => ({
@@ -149,6 +158,8 @@
       const okPaths = new Set(d.data.results.filter((r) => r.ok).map((r) => r.path));
       const failed = d.data.results.filter((r) => !r.ok);
       pushProblems = failed.map((r) => ({ path: r.path, error: r.error ?? '未知原因' }));
+      const h = d.data.buildHealth;
+      if (h && h.ran && !h.ok) buildBroken = { errors: h.errors ?? [], note: h.note ?? '' };
       drafts = drafts.filter((x) => !okPaths.has(x.path));
       // 正在编辑的这篇推上去了：把基准与 sha 对齐，否则会一直显示未保存 / 下次必冲突
       const mine = d.data.results.find((r) => r.ok && r.path === file);
@@ -658,6 +669,18 @@
 {/if}
 
 {#if error}<p class="err">{error}</p>{/if}
+
+{#if buildBroken}
+  <p class="err">
+    内容已经写进仓库，但<strong>站点构建失败</strong>——前台还是上一版，这次发布的改动在页面上看不到。
+    {#if buildBroken.errors.length}
+      <br />按下面的文件改那一处，再保存一次：
+      {#each buildBroken.errors as line (line)}<br /><code>{line}</code>{/each}
+    {/if}
+    {#if buildBroken.note}<br />{buildBroken.note}{/if}
+    <br />最常见的是「发布时间」写成了 Hugo 认不了的样子（比如 <code>2026-10-25 12:00</code> 少秒）：要写 <code>2026-10-25</code> 或 <code>2026-10-25T12:00:00+08:00</code>。
+  </p>
+{/if}
 
 <div class="split">
   <div class="card files">

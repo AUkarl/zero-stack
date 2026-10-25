@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { createDb } from '../db/client';
 import { subscribers } from '../db/schema';
 import { getConfig, getConfigBool } from '../services/config';
+import { resolveSiteName } from '../services/site-name';
 import { newId, randomToken } from '../lib/crypto';
 import { fail, ok } from '../lib/errors';
 import { clientIp } from '../lib/http';
@@ -36,7 +37,7 @@ function confirmLink(c: { req: { url: string } }, token: string): string {
  * 接口自己回一页最省事：不依赖前台页面读查询参数（它并没有这种代码）。
  */
 async function donePage(env: Env, title: string, message: string): Promise<Response> {
-  const [site, home] = [((await getConfig(env, 'siteName')) ?? '').trim() || '本站', ((await getConfig(env, 'siteUrl')) ?? env.SITE_URL ?? '').trim()];
+  const [site, home] = [await resolveSiteName(env), ((await getConfig(env, 'siteUrl')) ?? env.SITE_URL ?? '').trim()];
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const back = home ? `<p><a href="${esc(home.replace(/\/+$/, ''))}/" style="color:#0d8368">回到 ${esc(site)} 首页</a></p>` : '';
   return new Response(
@@ -88,7 +89,7 @@ app.post('/', async (c) => {
 
   if (!doubleOptIn) return ok({ status, message: '订阅成功' });
 
-  const siteName = (await getConfig(env, 'siteName')) ?? 'Zero';
+  const siteName = await resolveSiteName(env);
   const html = await renderEmail(
     env,
     'subscribe',

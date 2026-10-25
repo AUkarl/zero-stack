@@ -342,6 +342,69 @@ async function bridge<T>(env: Env | undefined, op: string, payload: Record<strin
   return data;
 }
 
+/** 构建体检的结果：`ran:false` 表示这次没能跑起来（桥没起、没装 hugo、超时），不代表站点有问题 */
+export interface BuildHealth {
+  ran: boolean;
+  ok: boolean;
+  exit?: number;
+  errors?: string[];
+  note?: string;
+}
+
+/**
+ * 本地后端专属的「构建体检」：让桥接进程真跑一次 `hugo --minify`，把退出码与 ERROR 行带回来。
+ *
+ * 为什么要这么绕：workerd 里起不了子进程，而**内容仓的构建失败在后台是看不见的** ——
+ * 一篇 front matter 日期写坏了（Hugo 对它是整站失败，不是跳过这一篇），后台每笔保存都回「已保存」，
+ * 站主只在很久之后发现站点停在旧版。闸门（services/hugo-guard.ts）挡掉已知形状，这一条兜住没挡到的。
+ *
+ * 只在配了 GIT_LOCAL_HTTP 时有意义：线上（GitHub + Pages）的构建结果在 Cloudflare/GitHub 那一侧，
+ * Worker 够不着，返回 null 让调用方不发这个字段。
+ * 任何失败都只降级为 `ran:false`，体检本身绝不能把保存带崩。
+ */
+export async function runLocalBuildCheck(env: Env): Promise<BuildHealth | null> {
+  const base = localHttp(env);
+  if (!base) return null;
+  const token = (env as unknown as { REPO_BRIDGE_TOKEN?: string }).REPO_BRIDGE_TOKEN || '';
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (token) headers['x-repo-bridge'] = token;
+  try {
+    const res = await fetch(`${base}/doctor`, {
+      method: 'POST',
+      headers,
+      body: '{}',
+      signal: AbortSignal.timeout(20_000),
+    });
+    const data = (await res.json().catch(() => null)) as Partial<BuildHealth> | null;
+    if (!res.ok || !data) return { ran: false, ok: false, note: `桥接体检没答上来（HTTP ${res.status}）` };
+    return {
+      ran: data.ran === true,
+      ok: data.ok === true,
+      exit: typeof data.exit === 'number' ? data.exit : undefined,
+      errors: Array.isArray(data.errors) ? data.errors.slice(0, 3) : [],
+      note: data.note ?? '',
+    };
+  } catch (e) {
+    return { ran: false, ok: false, note: `桥接体检没跑成：${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/**
+ * 把体检结果写成一句给人看的话，拼进保存回执。
+ *
+ * 这一句是「静默失败」唯一的出口：内容仓构建失败时后台每笔保存都回「已保存」，
+ * 站主要等到很久以后才发现前台停在旧版。所以 ok:false 必须出现在回执正文里，
+ * 而不是只躺在那个 JSON 字段上等有人去读它。
+ * `ran:false` 与 null 都不加话 —— 线上跑不到体检（Worker 起不了子进程），
+ * 每次都补一句「本地没体检」只会让人以为坏了。
+ */
+export function buildHealthReceipt(h: BuildHealth | null | undefined): string {
+  if (!h || !h.ran) return '';
+  if (h.ok) return '；构建体检通过（本地实跑了一次 hugo）';
+  const first = (h.errors ?? [])[0] ?? h.note ?? '';
+  return `；⚠ 站点构建失败，前台会停在上一版${first ? `：${first}` : ''}`;
+}
+
 /** 仓库内的相对路径 → 本地绝对路径；越界（.. / 绝对路径）直接拒绝 */
 async function localPath(target: RepoTarget, rel: string): Promise<string> {
   const clean = normalizeRelPath(rel);
