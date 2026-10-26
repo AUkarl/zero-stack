@@ -41,7 +41,7 @@ export const TEMPLATE_VARS: Record<TemplateKind, { name: string; desc: string }[
   comment: [
     { name: '{author}', desc: '评论者昵称' },
     { name: '{where}', desc: '位置：文章标题或「时刻」' },
-    { name: '{parent}', desc: '被回复的那条原评论（整段：小标题 + 引用块）；不是回复时为空，这一行也就不会留下空壳' },
+    { name: '{parent}', desc: '被回复的那条原评论（整段：小标题 + 灰底块，不会被客户端折叠）；不是回复时为空，这一行也就不会留下空壳' },
     { name: '{content}', desc: '评论正文' },
     { name: '{url}', desc: '这条评论的锚点链接' },
     { name: '{title}', desc: '被评论的内容标题' },
@@ -95,12 +95,13 @@ export const DEFAULT_TEMPLATES: Record<TemplateKind, string> = {
 <p>不是你本人的订阅请求？忽略这封邮件即可，我们不会保存任何信息。</p>`,
 
   /*
-   * 两个引用块都带 `type="cite"`（RFC 4861 里专门用来标"这是引用的上文"）并左缩进：
-   * 「隐藏引用 / 折叠引用」那一行不是我们信里的内容，是收件端客户端自己加的 UI，
-   * 它按这类标记判断哪一段是引用。各家启发式都不公开，我们只能按标准写法标，标了才可能折叠。
+   * 两段正文都用带边框的 `<div>`，**不用 `<blockquote>`、不加 `type="cite"`、不做左缩进**：
+   * 那三条正是邮件客户端判定"这是引用"并自动挂上「隐藏引用 / 折叠引用」的启发式入口
+   * （Gmail 还会按 margin-left 的缩进量认引用）。站长要的是两段内容一定全部可见，
+   * 所以这里刻意不给自己留"看起来更标准但其实会被折叠"的写法。
    */
   comment: `{parent}<p><strong>{author}</strong> 在{where}留下一条新评论：</p>
-<blockquote type="cite" style="margin:12px 0 12px 16px;padding:12px 16px;background:#f5f6f6;border-left:3px solid #0d8368;border-radius:0 8px 8px 0">{content}</blockquote>
+<div style="margin:14px 0;padding:12px 16px;background:#f5f6f6;border-left:3px solid #0d8368;border-radius:0 8px 8px 0">{content}</div>
 <p style="margin:18px 0"><a href="{url}" style="${EMAIL_BUTTON_STYLE}">去看这条评论</a></p>
 <p style="font-size:12px;color:#8b949e">原文出处：{title}</p>`,
 

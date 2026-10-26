@@ -93,18 +93,20 @@ function prettyTitle(slug: string, known?: string | null): string {
 }
 
 /**
- * 「被回复的那条原评论」在信里的那一段：一行小标题 + 一个引用块。
+ * 「被回复的那条原评论」在信里的那一段：一行小标题 + 一个灰底块。
  * 正文用与新评论同一个渲染器（表情、图片、代码两段里是一个样），边框刻意比新回复那条淡：
  * 收件人要先看清"别人回了我哪一句"，再回想自己说过什么。
+ * 用 `<div>` 而不是 `<blockquote type="cite">`、也不做左缩进 —— 那几条是客户端挂
+ * 「隐藏引用 / 折叠引用」的入口，站长要的是这两段一定全部可见。
  */
 export function quotedCommentHtml(src: string, base: string): string {
   const body = commentEmailHtml(src, base);
   if (!body.trim()) return '';
   return (
     '<p style="margin:0 0 4px;font-size:13px;color:#8b949e">你原来的评论：</p>' +
-    '<blockquote type="cite" style="margin:0 0 16px 16px;padding:12px 16px;background:#f7f7f8;border-left:3px solid #c9ced6;border-radius:0 8px 8px 0">' +
+    '<div style="margin:0 0 16px;padding:12px 16px;background:#f7f7f8;border-left:3px solid #c9ced6;border-radius:0 8px 8px 0">' +
     body +
-    '</blockquote>'
+    '</div>'
   );
 }
 

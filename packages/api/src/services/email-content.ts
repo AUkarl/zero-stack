@@ -49,13 +49,23 @@ function escAttr(s: string): string {
 }
 
 /**
+ * 评论里以 `>` 开头的行会被渲染成 `<blockquote>`，而 `<blockquote>` / `type="cite"` / 左缩进
+ * 正是邮件客户端判定"这是引用"并挂上「隐藏引用 / 折叠引用」的入口。站主要的是信里内容一定全部可见，
+ * 所以只在**邮件这一侧**把它换成观感一样的 `<div>`（前台评论组件不动，那边折叠与否归前台管）。
+ */
+const QUOTE_DIV =
+  '<div style="margin:12px 0;padding:10px 14px;background:#f5f6f6;border-left:3px solid #c9ced6;border-radius:0 8px 8px 0">';
+
+/**
  * 评论正文 → 邮件 HTML。
  * siteBase 为空（站点地址还没配）时站内相对路径原样留着：那种链接点开必然 404，
  * 但正文本身（表情、图片、代码）不因此变差，好过为了拼地址把整段渲染跳过。
  */
 export function commentEmailHtml(src: string, siteBase: string): string {
   const base = siteBase.replace(/\/+$/, '');
-  const html = renderMarkdown(String(src ?? ''), { shortBase: base ? `${base}/posts/` : '/posts/' });
+  const html = renderMarkdown(String(src ?? ''), { shortBase: base ? `${base}/posts/` : '/posts/' })
+    .replace(/<blockquote>/g, QUOTE_DIV)
+    .replace(/<\/blockquote>/g, '</div>');
   const absolute = base ? html.replace(/(href|src)="\/(?!\/)/g, `$1="${base}/`) : html;
   const styled = styleImages(absolute);
   /* 远程图被客户端屏蔽时，行内 alt 只有一个词，容易被看成「没发出来」。
