@@ -1,9 +1,14 @@
 /**
  * comment-notify.ts — 新评论的三封邮件提醒
  *
- *   commentNotifyAdmin  → 提醒站长（收件人取 emailFrom）
+ *   commentNotifyAdmin  → 提醒站长（收件人取 adminNotifyEmail，没填回落 emailFrom）
  *   commentNotifyReply  → 回复了某条评论时，通知那条评论的作者
  *   commentNotifyAuthor → 文章被评论时，通知那篇文章的作者（共创投稿走 post_drafts 认领）
+ *
+ * 三条都**不通知评论者自己**：自己回复自己不发②，自己评论自己的共创文章不发③，
+ * 而①以前是唯一漏的那条 —— 站长（大多数站就是站主本人）每次发言都会给自己发一封「新评论待处理」，
+ * 待审核的那条也算。现在评论者是管理员账号、或评论者邮箱正好就是①那个收件地址时跳过①：
+ * 站主自己的发言只需要他自己知道，而别人评论他的文章照旧会通知他。
  *
  * 正文一律用 emailTemplateComment 渲染（{author} {where} {content} {url} {title} {siteName}），
  * 发送走 queueEmail：队列不可用时它自己退化成直发，任何失败都只写日志，
@@ -147,10 +152,15 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
       recipients.push({ ...r, to });
     };
 
-    // 1) 站长：待审核的也要提醒，不然评论卡在队列里没人看
+    // 1) 站长：待审核的也要提醒，不然评论卡在队列里没人看。
+    //    但「站长自己发的评论」不该再提醒站长自己 —— 台架实测过：以前站主每发一条评论就给自己来一封。
     if (adminEmail && (await getConfigBool(env, 'commentNotifyAdmin', true))) {
-      const ownerName = await siteAuthorName(env);
-      push({ to: adminEmail, where: `文章「${articleTitle}」`, subject: `【${siteName}】新评论待处理`, nickname: ownerName });
+      const who = await commenterIdentity(env, comment);
+      const notifyingHimself = who.isAdmin || who.emails.has(adminEmail.trim().toLowerCase());
+      if (!notifyingHimself) {
+        const ownerName = await siteAuthorName(env);
+        push({ to: adminEmail, where: `文章「${articleTitle}」`, subject: `【${siteName}】新评论待处理`, nickname: ownerName });
+      }
     }
 
     const visible = comment.status === 'approved';
@@ -224,8 +234,34 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
   }
 }
 
-async function sameAccount(env: Env, userId: string | null, email: string): Promise<boolean> {
-  if (!userId) return false;
+/**
+ * 评论者"自己"是哪几个地址、是不是管理员账号。
+ * 匿名评论只有填的邮箱；登录评论以账号邮箱为准（他填的可能是别人的），两个都收进集合里比。
+ */
+async function commenterIdentity(env: Env, comment: NotifyComment): Promise<{ emails: Set<string>; isAdmin: boolean }> {
+  const emails = new Set<string>();
+  const filled = comment.authorEmail?.trim().toLowerCase();
+  if (filled) emails.add(filled);
+  let isAdmin = false;
+  if (comment.authorId) {
+    try {
+      const db = createDb(env);
+      const rows = await db
+        .select({ email: users.email, role: users.role })
+        .from(users)
+        .where(eq(users.id, comment.authorId))
+        .limit(1);
+      const u = rows[0];
+      if (u?.email) emails.add(u.email.trim().toLowerCase());
+      isAdmin = u?.role === 'admin';
+    } catch (err) {
+      console.warn('[zero-api] 查询评论者身份失败', err);
+    }
+  }
+  return { emails, isAdmin };
+}
+
+async function sameAccount(env: Env, userId: string | null, email: string): Promise<boolean> {  if (!userId) return false;
   try {
     const db = createDb(env);
     const rows = await db.select({ id: users.id }).from(users).where(and(eq(users.id, userId), eq(users.email, email))).limit(1);

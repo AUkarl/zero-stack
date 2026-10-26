@@ -308,7 +308,7 @@
       title: '评论提醒与展示',
       desc: '提醒邮件走「发信方式」里配好的通道；关闭对应开关只是不再发信，评论本身不受影响。',
       fields: [
-        { key: 'commentNotifyAdmin', label: '新评论提醒管理员', kind: 'bool' },
+        { key: 'commentNotifyAdmin', label: '新评论提醒管理员', kind: 'bool', hint: '别人发评论、以及待审核的评论才提醒。**你自己发的评论与回复不会再提醒你自己** —— 以前站主每发一条就给自己来一封「新评论待处理」，那是这一条没排自己' },
         {
           key: 'adminNotifyEmail',
           label: '站长收件邮箱',
