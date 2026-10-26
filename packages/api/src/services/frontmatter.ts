@@ -353,6 +353,16 @@ export async function postsDir(env: Env): Promise<string> {
   return `${await contentRoot(env)}/zh/posts`;
 }
 
+/**
+ * 时刻目录（朋友圈式动态）。与 `postsDir` 同一条规矩：以后台「设置 → 内容仓库」为准，
+ * 缺省 `content/zh/moments`。以前只有文章那一份被认过，时刻的评论提醒因此查不到名字。
+ */
+export async function momentsDir(env: Env): Promise<string> {
+  const dir = await getConfig(env, 'githubMomentsDir');
+  if (dir) return dir.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  return `${await contentRoot(env)}/zh/moments`;
+}
+
 /* ------------------------------------------------------------------ 仓库读写 */
 
 export interface RepoFileResult {

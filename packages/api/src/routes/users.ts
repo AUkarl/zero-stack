@@ -6,7 +6,7 @@ import { comments, inviteCodes, users } from '../db/schema';
 import { hashPassword, randomPassword } from '../lib/crypto';
 import { destroyUserSessions } from '../services/auth';
 import { purgeUser } from '../services/account-purge';
-import { postTitles } from '../services/post-title';
+import { contentTitles } from '../services/content-title';
 import { writeAudit } from '../services/audit';
 import { requireAdmin } from '../middleware/auth';
 import { clientIp } from '../lib/http';
@@ -279,7 +279,7 @@ app.get('/:id/comments', async (c) => {
     .orderBy(sql`created_at desc`)
     .limit(50);
   /* 与审核队列同一个口径：给标题，认不到留空由界面回落到地址 */
-  const titles = await postTitles(c.env, rows.map((r) => r.postSlug));
+  const titles = await contentTitles(c.env, rows.map((r) => r.postSlug));
   return ok(rows.map((r) => ({ ...r, postTitle: titles.get(r.postSlug) ?? '' })));
 });
 

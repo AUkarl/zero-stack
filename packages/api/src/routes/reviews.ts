@@ -18,7 +18,7 @@ import { writeAudit } from '../services/audit';
 import { upsertAuthor, type AuthorSocialRow } from '../services/authors';
 import { withAdminAuthorBits } from '../services/admin-author';
 import { purgePageUrls, type PurgeResult } from '../services/cf-purge';
-import { purgePostTitleCache } from '../services/post-title';
+import { purgeContentTitleCache } from '../services/content-title';
 import { postWebPath, postsDir } from '../services/frontmatter';
 import { writeFile } from '../services/git';
 import { finishRepoWrites, repoTarget } from '../services/git';
@@ -326,7 +326,7 @@ draftsAdmin.post('/:id/approve', async (c) => {
   let buildHealth: BuildHealth | null = null;
   if (synced) {
     await rememberSubmitterAuthor(c.env, row.userId, admin);
-    await purgePostTitleCache(c.env, [path]);
+    await purgeContentTitleCache(c.env, [path]);
     buildHealth = (await finishRepoWrites(c.env, 1)).buildHealth;
   }
   await writeAudit(c.env, {
@@ -378,7 +378,7 @@ draftsAdmin.post('/:id/publish', async (c) => {
     .set({ slug, publishedPath: path, publishedAt: row.publishedAt ?? now, updatedAt: now })
     .where(eq(postDrafts.id, row.id));
   await rememberSubmitterAuthor(c.env, row.userId, admin);
-  await purgePostTitleCache(c.env, [path]);
+  await purgeContentTitleCache(c.env, [path]);
   const republishHealth = (await finishRepoWrites(c.env, 1)).buildHealth;
   await writeAudit(c.env, { actor: admin, action: 'draft', target: row.id, detail: { event: 'republish', slug, path, contentSha: result.sha, buildHealth: republishHealth }, ip: clientIp(c) });
   return ok({ id: row.id, synced: true, path, contentSha: result.sha ?? null, buildHealth: republishHealth });

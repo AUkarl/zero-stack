@@ -56,7 +56,7 @@ import { writeAudit } from '../services/audit';
 import { getConfig, getConfigBool } from '../services/config';
 import { deleteCommentSubtree } from '../services/comment-tree';
 import { inspectComment, type Verdict } from '../services/moderation';
-import { postTitle } from '../services/post-title';
+import { contentTitle } from '../services/content-title';
 import { PLACEHOLDER_PREFIX, fileNameProblem, normalizeFileName } from '../lib/postName';
 import { emailHash, hashPassword, newId, verifyPassword } from '../lib/crypto';
 import { clientIp, userAgent } from '../lib/http';
@@ -400,10 +400,10 @@ async function reactionTitles(env: Env, db: ReturnType<typeof createDb>, userId:
   }
   if (!want.size) return out;
 
-  /* 剩下的去仓库认。口径全在 services/post-title（扁平与页面包都认、认 linkTitle、按文章号缓存 24 小时），
+  /* 剩下的去仓库认。口径全在 services/content-title（扁平与页面包都认、认 linkTitle、按文章号缓存 24 小时），
      这里不再自己 parse 一份 —— 以前那一份只认扁平 `<名>.md`，页面包的文章在「我的主页」上就显示成日期串 slug。 */
   for (const slug of [...want].slice(0, 40)) {
-    const title = await postTitle(env, slug);
+    const title = await contentTitle(env, slug);
     if (title) out.set(slug, title);
   }
   return out;

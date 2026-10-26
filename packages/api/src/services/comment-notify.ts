@@ -12,7 +12,7 @@
  *
  * 正文一律用 emailTemplateComment 渲染（{author} {where} {parent} {content} {url} {title} {siteName}）：
  * ②那一封会带 {parent}（被回复的原评论整段），收件人不用点回站内就知道自己哪句被回了。
- * 标题从 services/post-title 认（front matter 的 title，按文章号缓存），认不到才回落到文件名。
+ * 标题从 services/content-title 认（文章与时刻分目录查）（front matter 的 title，按文章号缓存），认不到才回落到文件名。
  * 发送走 queueEmail：队列不可用时它自己退化成直发，任何失败都只写日志，
  * 绝不因为「通知没发出去」让用户的评论失败。
  */
@@ -26,7 +26,7 @@ import { getConfig, getConfigBool } from './config';
 import { resolveSiteName } from './site-name';
 import { queueEmail, renderEmail, sendEmail } from './email';
 import { commentEmailHtml } from './email-content';
-import { postTitle } from './post-title';
+import { contentKind, contentTitle } from './content-title';
 import { webUrlForSlug } from './frontmatter';
 
 export interface NotifyComment {
@@ -169,7 +169,9 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
      * 现在先取「设置 → 评论提醒与展示 → 站长收件邮箱」，没填才回落到发件邮箱 —— 大多数站两者本来就是同一个。
      */
     const adminEmail = (await getConfig(env, 'adminNotifyEmail'))?.trim() || fromMail;
-    const articleTitle = prettyTitle(slug, input.title || (await postTitle(env, slug)));
+    const articleTitle = prettyTitle(slug, input.title || (await contentTitle(env, slug)));
+    /** 时刻不是文章：信里说「在文章「06a652a8f19e」」既读不通也认不出，按地址分种类措辞 */
+    const noun = contentKind(slug) === 'moment' ? '时刻' : '文章';
     const base = await siteBase(env);
     const url = `${base}${webUrlForSlug(canonSlug(slug))}`;
 
@@ -187,7 +189,7 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
       const notifyingHimself = who.isAdmin || who.emails.has(adminEmail.trim().toLowerCase());
       if (!notifyingHimself) {
         const ownerName = await siteAuthorName(env);
-        push({ to: adminEmail, where: `文章「${articleTitle}」`, subject: `【${siteName}】新评论待处理`, nickname: ownerName });
+        push({ to: adminEmail, where: `${noun}「${articleTitle}」`, subject: `【${siteName}】新评论待处理`, nickname: ownerName });
       }
     }
 
@@ -204,7 +206,7 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
         if (to)
           push({
             to,
-            where: `文章「${articleTitle}」的评论下`,
+            where: `${noun}「${articleTitle}」的评论下`,
             subject: `【${siteName}】${comment.authorName} 回复了你的评论`,
             nickname: parent.authorName ?? '',
             parentHtml: quotedCommentHtml(parent.content, base),

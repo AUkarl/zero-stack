@@ -23,7 +23,7 @@ import {
 } from '../services/authors';
 import { deleteCommentSubtree } from '../services/comment-tree';
 import { notifySelfTest, quotedCommentHtml } from '../services/comment-notify';
-import { postTitles, purgePostTitleCache } from '../services/post-title';
+import { contentTitles, purgeContentTitleCache } from '../services/content-title';
 import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor, writeSwitchSnapshot } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
@@ -194,8 +194,8 @@ app.get('/comments', async (c) => {
       )
     : rows;
   /* 顺手把文章标题带上：审核时只看到 `/posts/20261025002/` 认不出是哪篇（站长的文件名就是日期串）。
-     标题走 services/post-title 那份 24 小时缓存，认不到留空，界面自己回落到地址。 */
-  const titles = await postTitles(c.env, filtered.map((r) => r.postSlug));
+     标题走 services/content-title 那份 24 小时缓存，认不到留空，界面自己回落到地址。 */
+  const titles = await contentTitles(c.env, filtered.map((r) => r.postSlug));
   return ok(filtered.map((r) => ({ ...r, postTitle: titles.get(r.postSlug) ?? '' })));
 });
 
@@ -678,8 +678,8 @@ async function finishContentWrite(
 ): Promise<{ build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
   if (!changed) return { build: null, buildHealth: null };
   await kvDelete(env, POSTS_CACHE_KEY);
-  /* 提醒信里的标题也缓存过，改了这一篇就得连那一格一起清（见 comment-notify 的 purgePostTitleCache） */
-  await purgePostTitleCache(env, paths);
+  /* 提醒信里的标题也缓存过，改了这一篇就得连那一格一起清（见 content-title 的 purgeContentTitleCache） */
+  await purgeContentTitleCache(env, paths);
   return finishRepoWrites(env, changed, triggerBuild);
 }
 
@@ -856,7 +856,7 @@ app.delete('/content/file', async (c) => {
   }
 
   await kvDelete(env, POSTS_CACHE_KEY);
-  await purgePostTitleCache(env, [path]);
+  await purgeContentTitleCache(env, [path]);
   const build = c.req.query('build') === '0' ? null : await triggerPagesBuild(env);
   /* 重建之外还要清边缘缓存：Pages 的 HTML 在 CDN 上是 7 天 max-age，
      不清的话「后台删了文章、前端还能打开」会一直复现，而且用户强刷也没用。
