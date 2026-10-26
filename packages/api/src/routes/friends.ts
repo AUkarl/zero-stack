@@ -64,8 +64,9 @@ app.get('/all', async (c) => {
 
 app.post('/', async (c) => {
   const admin = requireAdmin(c);
-  const { id, item } = await createFriend(c.env, admin, await c.req.json().catch(() => null), { ip: clientIp(c) });
-  return ok({ id, item });
+  // 原样回出去：只挑 {id, item} 会把 linksFile（那份 yaml 的写回结果 + 构建体检）丢了，
+  // 新增这一条就看不见「文件到底同步了没有」——改 / 删 / 排序都看得见，唯独这里看不见。
+  return ok(await createFriend(c.env, admin, await c.req.json().catch(() => null), { ip: clientIp(c) }));
 });
 
 app.patch('/:id', async (c) => {

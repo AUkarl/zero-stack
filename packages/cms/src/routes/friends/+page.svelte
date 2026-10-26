@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { del, fmtDate, get, mailNote, patch, post, timeAgo } from '#lib/api';
+  import { del, fmtDate, get, healthWarn, mailNote, patch, post, timeAgo, type BuildHealth } from '#lib/api';
 
   type Kind = 'friend' | 'alliance';
   const KIND_LABEL: Record<Kind, string> = { friend: '友链', alliance: '站点联盟' };
@@ -161,18 +161,23 @@
 
   /** 后台每次改动都会同步 data/links.yaml，接口把那一步的结果放在 linksFile 里带回来 */
   interface FileBacked {
-    linksFile?: { synced: boolean; error: string | null };
+    linksFile?: { synced: boolean; error: string | null; buildHealth?: BuildHealth | null };
   }
 
   /**
    * 前台「左邻右舍 / 站点联盟」是构建期读那份 yaml 的：
    * 库里改了而文件没改，页面上就还是老样子，所以这一步成不成必须让管理员看见。
+   * 而且**写进去了还不算**：那份 yaml 一旦写坏（实测过段头 `friends: []` 后面挂条目那种），
+   * Hugo 是整站构建失败、Pages 不换部署，所以 buildHealth 红的时候必须在这里点名 ——
+   * 判据与提示都用 lib/api.ts 那一份 healthWarn，别在这一页再手抄一句。
    */
   function reportFile(res: FileBacked | null | undefined, verb: string) {
     const f = res?.linksFile;
     notice = f?.synced ? `${verb}，已同步站点数据文件（等下一次构建刷新页面）` : `${verb}（只改了数据库）`;
     if (f && !f.synced) error = `站点数据文件没改：${f.error ?? '未知原因'}`;
-    setTimeout(() => (notice = ''), 5000);
+    const warn = f ? healthWarn(f.buildHealth) : '';
+    if (warn) notice = `${notice} ${warn}`;
+    setTimeout(() => (notice = ''), 8000);
   }
 
   async function checkNowPost() {

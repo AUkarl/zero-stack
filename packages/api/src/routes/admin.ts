@@ -2188,8 +2188,11 @@ app.get('/friends', async (c) => {
 
 app.post('/friends', async (c) => {
   const admin = requireAdmin(c);
-  const { id, item } = await createFriend(c.env, admin, await c.req.json().catch(() => null), { ip: clientIp(c) });
-  return ok({ id, item });
+  /* 原样把 createFriend 的结果回出去：以前这里只挑了 {id, item}，
+     于是 linksFile（那份 yaml 有没有写回去 + 构建体检）在新增这一条路上被丢掉 ——
+     改 / 删 / 排序都看得见「已同步 / 没同步」，唯独新增看不见，界面只能统一回一句
+     「只改了数据库」，而那恰好是错的（文件其实写了）。 */
+  return ok(await createFriend(c.env, admin, await c.req.json().catch(() => null), { ip: clientIp(c) }));
 });
 
 app.post('/friends/reorder', async (c) => {

@@ -11,7 +11,7 @@
 
 import { getConfig } from './config';
 import { readFile, repoTarget, writeFile } from './git';
-import type { RepoTarget } from './repo';
+import type { BuildHealth, RepoTarget } from './repo';
 import { appendFriends, normalizeFriendUrl, parseLinksYaml, removeFriend, replaceFriend, type NewFriend } from './links-yaml';
 
 export interface LinksFileResult {
@@ -21,6 +21,12 @@ export interface LinksFileResult {
   error: string | null;
   /** 这一版文件的 blob 号，下次乐观锁要比对的就是它（没提交时为 null） */
   sha?: string | null;
+  /**
+   * 这次写入后的构建体检（本地后端才有；线上 workerd 起不了子进程时为 null）。
+   * 这份文件是 Hugo 构建期读的数据文件，写坏了是整站构建失败，所以同步成功也必须把体检带回去 ——
+   *  applications 那条路早就这么做了，友链管理页那四条写入路径是漏的。
+   */
+  buildHealth?: BuildHealth | null;
 }
 
 /**

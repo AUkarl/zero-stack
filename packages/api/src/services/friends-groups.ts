@@ -17,7 +17,7 @@ import { friendPosts, friends } from '../db/schema';
 import { writeAudit } from './audit';
 import { addFriendToLinksFile, linksFileHas, removeFriendFromLinksFile, updateFriendInLinksFile, type LinksFileResult } from './friends-file';
 import { normalizeFriendUrl, type NewFriend } from './links-yaml';
-import { triggerPagesBuild } from './git';
+import { finishRepoWrites } from './git';
 import { newId } from '../lib/crypto';
 import { fail } from '../lib/errors';
 
@@ -118,8 +118,13 @@ function toFileEntry(row: {
  * 提交已经成功这件事不受影响；本地开发走目录回写，由 hugo server 直接看到。
  */
 async function applyLinksFile(env: Env, res: LinksFileResult): Promise<LinksFileResult> {
-  if (res.synced) await triggerPagesBuild(env);
-  return res;
+  if (!res.synced) return res;
+  /* 走唯一的收尾（请重建 + 跑一次构建体检），别只调 triggerPagesBuild 就把结果扔掉：
+     这一页每次增删改写的都是 data/links.yaml —— 那是 Hugo 构建期读的数据文件，
+     写坏了是整站构建失败（实测过一次：段头 `friends: []` 后面挂条目，接口回「已同步」、站点从这一刻静默停更）。
+     体检结论挂在 linksFile.buildHealth 上，后台用同一个 healthWarn() 说话。 */
+  const { buildHealth } = await finishRepoWrites(env, 1);
+  return { ...res, buildHealth };
 }
 
 /** 组内排序：sortOrder 升序 → 加入时间升序 → 名称兜底（保证顺序稳定可复现） */
@@ -296,6 +301,8 @@ export async function reorderFriends(env: Env, admin: FriendActor, body: unknown
 
   const updated: { id: string; kind: FriendKind; sortOrder: number }[] = [];
   const missing: string[] = [];
+  /** 真的换了组的那几条 —— 数据文件里的段落必须跟着搬 */
+  const moved: { row: FriendRow; kind: FriendKind }[] = [];
   for (const item of parsed.data.items) {
     const row = known.get(item.id);
     if (!row) {
@@ -304,19 +311,35 @@ export async function reorderFriends(env: Env, admin: FriendActor, body: unknown
     }
     const kind = normalizeFriendKind(item.kind);
     const patch: Record<string, unknown> = { sortOrder: item.sortOrder };
-    if (normalizeFriendKind(row.kind) !== kind) patch.kind = kind;
+    if (normalizeFriendKind(row.kind) !== kind) {
+      patch.kind = kind;
+      moved.push({ row, kind });
+    }
     await db.update(friends).set(patch).where(eq(friends.id, item.id));
     updated.push({ id: item.id, kind, sortOrder: item.sortOrder });
+  }
+
+  /* 本函数的注释写着「一次提交同时完成换组与改位置」，可以前只改库：
+     D1 里这条变成联盟了，data/links.yaml 里它还在 friends 段 —— 前台「站点联盟」是构建期从那份文件
+     并进来的，于是界面上动完了、站点上没动，又是一次「两份各管一半」。
+     新增 / 修改 / 删除三条都同步文件，唯独排序这条路漏了，现在补上（同一段落里的顺序变化
+     前台不读文件，不必动它，所以只有真换组才写）。 */
+  let linksFile: LinksFileResult | null = null;
+  for (const m of moved) {
+    linksFile = await applyLinksFile(
+      env,
+      await updateFriendInLinksFile(env, m.row.url, toFileEntry({ ...m.row, kind: m.kind })),
+    );
   }
 
   await writeAudit(env, {
     actor: admin,
     action: 'friend',
     target: updated.map((u) => u.id).join(','),
-    detail: { event: 'reorder', items: parsed.data.items, updated, missing },
+    detail: { event: 'reorder', items: parsed.data.items, updated, missing, moved: moved.length, linksFile },
     ip: meta.ip,
   });
-  return { updated: updated.length, missing, items: updated };
+  return { updated: updated.length, missing, items: updated, moved: moved.length, linksFile };
 }
 
 /** 单条读取 */
