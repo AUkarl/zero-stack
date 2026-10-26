@@ -41,6 +41,7 @@ export const TEMPLATE_VARS: Record<TemplateKind, { name: string; desc: string }[
   comment: [
     { name: '{author}', desc: '评论者昵称' },
     { name: '{where}', desc: '位置：文章标题或「时刻」' },
+    { name: '{parent}', desc: '被回复的那条原评论（整段：小标题 + 引用块）；不是回复时为空，这一行也就不会留下空壳' },
     { name: '{content}', desc: '评论正文' },
     { name: '{url}', desc: '这条评论的锚点链接' },
     { name: '{title}', desc: '被评论的内容标题' },
@@ -93,8 +94,13 @@ export const DEFAULT_TEMPLATES: Record<TemplateKind, string> = {
 <p style="margin:22px 0"><a href="{url}" style="${EMAIL_BUTTON_STYLE}">确认订阅</a></p>
 <p>不是你本人的订阅请求？忽略这封邮件即可，我们不会保存任何信息。</p>`,
 
-  comment: `<p><strong>{author}</strong> 在{where}留下一条新评论：</p>
-<blockquote style="margin:16px 0;padding:12px 16px;background:#f5f6f6;border-left:3px solid #0d8368;border-radius:0 8px 8px 0">{content}</blockquote>
+  /*
+   * 两个引用块都带 `type="cite"`（RFC 4861 里专门用来标"这是引用的上文"）并左缩进：
+   * 「隐藏引用 / 折叠引用」那一行不是我们信里的内容，是收件端客户端自己加的 UI，
+   * 它按这类标记判断哪一段是引用。各家启发式都不公开，我们只能按标准写法标，标了才可能折叠。
+   */
+  comment: `{parent}<p><strong>{author}</strong> 在{where}留下一条新评论：</p>
+<blockquote type="cite" style="margin:12px 0 12px 16px;padding:12px 16px;background:#f5f6f6;border-left:3px solid #0d8368;border-radius:0 8px 8px 0">{content}</blockquote>
 <p style="margin:18px 0"><a href="{url}" style="${EMAIL_BUTTON_STYLE}">去看这条评论</a></p>
 <p style="font-size:12px;color:#8b949e">原文出处：{title}</p>`,
 

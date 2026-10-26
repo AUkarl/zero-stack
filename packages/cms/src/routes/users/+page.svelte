@@ -42,6 +42,8 @@
   interface Cmt {
     id: string;
     postSlug: string;
+    /** 接口从内容仓库 front matter 认出来的标题；认不到为空，界面回落到地址 */
+    postTitle?: string;
     content: string;
     status: string;
     createdAt: number;
@@ -729,9 +731,9 @@
                   <div class="line">
                     <span class="badge {c.status === 'approved' ? 'good' : c.status === 'spam' ? 'bad' : 'pending'}">{c.status}</span>
                     {#if frontUrl(c.postSlug)}
-                      <a class="cmt-url" href={frontUrl(c.postSlug)} target="_blank" rel="noreferrer" title={c.postSlug}>{c.postSlug}</a>
+                      <a class="cmt-url" href={frontUrl(c.postSlug)} target="_blank" rel="noreferrer" title={c.postSlug}>{c.postTitle || c.postSlug}</a>
                     {:else}
-                      <span class="cmt-url muted" title="后台「设置 → 站点信息」里的站点地址为空，暂时给不出前台链接">{c.postSlug}</span>
+                      <span class="cmt-url muted" title="后台「设置 → 站点信息」里的站点地址为空，暂时给不出前台链接">{c.postTitle || c.postSlug}</span>
                     {/if}
                     <span class="cmt-body">{c.content.slice(0, 120)}</span>
                     <span class="muted small">{timeAgo(c.createdAt)}</span>

@@ -22,7 +22,8 @@ import {
   validateAuthorsYaml,
 } from '../services/authors';
 import { deleteCommentSubtree } from '../services/comment-tree';
-import { notifySelfTest, purgePostTitleCache } from '../services/comment-notify';
+import { notifySelfTest, quotedCommentHtml } from '../services/comment-notify';
+import { postTitles, purgePostTitleCache } from '../services/post-title';
 import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor, writeSwitchSnapshot } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
@@ -43,6 +44,7 @@ import {
   buildMarkdown,
   contentWebPath,
   excerpt,
+  frontTitle,
   futureFrontDate,
   orderFront,
   parseFrontMatter,
@@ -191,7 +193,10 @@ app.get('/comments', async (c) => {
           (r.spamReason ?? '').toLowerCase().includes(q),
       )
     : rows;
-  return ok(filtered);
+  /* 顺手把文章标题带上：审核时只看到 `/posts/20261025002/` 认不出是哪篇（站长的文件名就是日期串）。
+     标题走 services/post-title 那份 24 小时缓存，认不到留空，界面自己回落到地址。 */
+  const titles = await postTitles(c.env, filtered.map((r) => r.postSlug));
+  return ok(filtered.map((r) => ({ ...r, postTitle: titles.get(r.postSlug) ?? '' })));
 });
 
 app.post('/comments/:id/moderate', async (c) => {
@@ -640,7 +645,10 @@ async function notifyPostSubscribers(env: Env, adminId: string, path: string, pa
   if (isDraftFront(parsed.front)) return { skipped: '草稿不群发' };
 
   const site = await resolveSiteName(env);
-  const title = String(parsed.front.title ?? path);
+  /* 兜底绝不能是整条仓库路径：那会直接出现在订阅者信的主题与正文 <h2> 里
+     （`content/zh/posts/20261025002.md`）。写入侧对文章强制要求标题，所以走到这里
+     只可能是 front matter 解析不出来，那就退到文件名，和提醒信一个口径。 */
+  const title = String(parsed.front.title ?? '').trim() || path.split('/').pop()!.replace(/\.mdx?$/i, '') || '新文章';
   /* 必须给绝对地址：只写 /posts/xxx/ 的话，邮件客户端会拿「自己的」域名甚至本地路径去解析，
      收件人点「阅读全文」打不开文章。站点域名没配时退化成相对路径，也比拼一个假域名好。 */
   const link = await postEmailUrl(env, postWebPath(path));
@@ -1482,11 +1490,14 @@ async function buildEmailPreview(env: Env, kind: EmailKind, nickname?: string): 
       {
         author: '访客甲',
         where: `文章「《1984》阅读笔记」`,
+        /* 预览做成"回复"那一封的形状：站主在后台改模板时能一次看到「原评论 + 新回复」两段，
+           而不是只看到新回复、发出去才发现漏了 {parent} */
+        parent: quotedCommentHtml('这是你原来那条评论（示例）。新回复在它下面一段。', home),
         content: '这段是示例正文，用来看引用块与换行在信里的样子。\n第二行。',
         url: `${home}/posts/1984/`,
         title: '《1984》阅读笔记',
       },
-      base,
+      { ...base, rawKeys: ['content', 'parent'] },
     );
   }
   return await renderEmail(
@@ -1673,9 +1684,22 @@ app.get('/posts', async (c) => {
   } catch (e) {
     notice = `读取 ${dir} 失败：${e instanceof Error ? e.message : String(e)}`;
   }
-  const files = entries.filter((f) => f.type === 'file' && /\.mdx?$/i.test(f.name) && !/^_index\./i.test(f.name));
-  for (const f of files) {
-    const path = f.path || `${dir}/${f.name}`;
+  /* 两种布局都要认：扁平 `<名>.md` 与页面包 `<名>/index.md`。
+     以前只扫扁平那一种 —— 页面包的文章在群发下拉里根本不出现，统计页也认不出它的标题。 */
+  const candidates: { path: string; stem: string }[] = [];
+  for (const f of entries) {
+    if (/^_index\./i.test(f.name)) continue;
+    if (f.type === 'file' && /\.mdx?$/i.test(f.name)) {
+      candidates.push({ path: f.path || `${dir}/${f.name}`, stem: f.name.replace(/\.mdx?$/i, '') });
+    } else if (f.type === 'dir') {
+      const base = f.path || `${dir}/${f.name}`;
+      /* 两种扩展名都列上：读到哪个算哪个，另一个自然落空。同一篇文章只留一条（按 stem 去重） */
+      candidates.push({ path: `${base}/index.md`, stem: f.name }, { path: `${base}/index.mdx`, stem: f.name });
+    }
+  }
+  const seenStem = new Set<string>();
+  for (const { path, stem } of candidates) {
+    if (seenStem.has(stem)) continue;
     let file;
     try {
       file = await readRepoFile(env, path);
@@ -1685,10 +1709,11 @@ app.get('/posts', async (c) => {
     if (!file) continue;
     const { front } = parseFrontMatter(file.content);
     if (front.draft === true || String(front.draft).toLowerCase() === 'true') continue;
+    seenStem.add(stem);
     items.push({
       id: path,
       path,
-      title: String(front.title ?? '') || path.split('/').pop()!.replace(/\.mdx?$/i, ''),
+      title: frontTitle(front as Record<string, unknown>) || stem,
       date: String(front.date ?? ''),
       draft: false,
     });

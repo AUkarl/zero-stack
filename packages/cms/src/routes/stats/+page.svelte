@@ -102,7 +102,11 @@
       reactions = rx.data;
       const map: Record<string, string> = {};
       for (const p of ps.data ?? []) {
-        const stem = (p.path.match(/([^/]+)\.mdx?$/i) ?? [])[1] ?? '';
+        /* 两种布局都要认：扁平 `<名>.md` 直接用文件名，页面包 `<名>/index.md` 用上一层目录名。
+           以前只按 `.md` 文件名建键，页面包的文章在这页上就是一列「—」。 */
+        const segs = p.path.split('/').filter(Boolean);
+        const last = segs.pop() ?? '';
+        const stem = /^index\.mdx?$/i.test(last) ? (segs.pop() ?? '') : last.replace(/\.mdx?$/i, '');
         if (stem && /(^|\/)posts\//.test(p.path)) map[`/posts/${stem}/`] = p.title;
       }
       titles = map;

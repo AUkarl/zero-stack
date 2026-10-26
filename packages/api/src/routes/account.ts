@@ -55,9 +55,8 @@ import { userGroupName, withAdminAuthorBits } from '../services/admin-author';
 import { writeAudit } from '../services/audit';
 import { getConfig, getConfigBool } from '../services/config';
 import { deleteCommentSubtree } from '../services/comment-tree';
-import { parseFrontMatter, postsDir } from '../services/frontmatter';
 import { inspectComment, type Verdict } from '../services/moderation';
-import { listRepoDir, readRepoFile, type RepoEntry } from '../services/repo';
+import { postTitle } from '../services/post-title';
 import { PLACEHOLDER_PREFIX, fileNameProblem, normalizeFileName } from '../lib/postName';
 import { emailHash, hashPassword, newId, verifyPassword } from '../lib/crypto';
 import { clientIp, userAgent } from '../lib/http';
@@ -401,31 +400,11 @@ async function reactionTitles(env: Env, db: ReturnType<typeof createDb>, userId:
   }
   if (!want.size) return out;
 
-  let dir = '';
-  let entries: RepoEntry[] = [];
-  try {
-    dir = await postsDir(env);
-    entries = await listRepoDir(env, dir);
-  } catch {
-    return out; // 没配内容仓库：拿到的就是投稿表那一份，剩下按「没有标题」处理
-  }
-  const byName = new Map<string, string>();
-  for (const e of entries) {
-    if (e.type !== 'file' || !/\.mdx?$/i.test(e.name)) continue;
-    byName.set(e.name.replace(/\.mdx?$/i, ''), e.path || `${dir}/${e.name}`);
-  }
+  /* 剩下的去仓库认。口径全在 services/post-title（扁平与页面包都认、认 linkTitle、按文章号缓存 24 小时），
+     这里不再自己 parse 一份 —— 以前那一份只认扁平 `<名>.md`，页面包的文章在「我的主页」上就显示成日期串 slug。 */
   for (const slug of [...want].slice(0, 40)) {
-    const path = byName.get(slug.split('/').pop() ?? '');
-    if (!path) continue;
-    try {
-      const file = await readRepoFile(env, path);
-      if (!file) continue;
-      const { front } = parseFrontMatter(file.content);
-      const title = String(front.title ?? '').trim();
-      if (title) out.set(slug, title);
-    } catch {
-      /* 单篇读失败只少这一条的标题 */
-    }
+    const title = await postTitle(env, slug);
+    if (title) out.set(slug, title);
   }
   return out;
 }

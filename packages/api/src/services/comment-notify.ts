@@ -10,7 +10,9 @@
  * 待审核的那条也算。现在评论者是管理员账号、或评论者邮箱正好就是①那个收件地址时跳过①：
  * 站主自己的发言只需要他自己知道，而别人评论他的文章照旧会通知他。
  *
- * 正文一律用 emailTemplateComment 渲染（{author} {where} {content} {url} {title} {siteName}），
+ * 正文一律用 emailTemplateComment 渲染（{author} {where} {parent} {content} {url} {title} {siteName}）：
+ * ②那一封会带 {parent}（被回复的原评论整段），收件人不用点回站内就知道自己哪句被回了。
+ * 标题从 services/post-title 认（front matter 的 title，按文章号缓存），认不到才回落到文件名。
  * 发送走 queueEmail：队列不可用时它自己退化成直发，任何失败都只写日志，
  * 绝不因为「通知没发出去」让用户的评论失败。
  */
@@ -21,11 +23,11 @@ import { postDrafts, users } from '../db/schema';
 import { canonSlug } from '../lib/slug';
 import { siteAuthorName } from './authors';
 import { getConfig, getConfigBool } from './config';
-import { kvDelete, kvGet, kvPut } from './kv-cache';
 import { resolveSiteName } from './site-name';
 import { queueEmail, renderEmail, sendEmail } from './email';
 import { commentEmailHtml } from './email-content';
-import { postsDir, readRepoFileQuiet, titleFromMarkdown, webUrlForSlug } from './frontmatter';
+import { postTitle } from './post-title';
+import { webUrlForSlug } from './frontmatter';
 
 export interface NotifyComment {
   id: string;
@@ -42,6 +44,11 @@ export interface NotifyParent {
   authorName: string;
   authorEmail: string | null;
   authorId: string | null;
+  /**
+   * 被回复那条评论的正文。以前这里只留了"是谁"，正文在接口边界就被丢掉了，
+   * 于是回复提醒信里只有新回复、没有"我原来说了什么"——收件人得点回站内才知道上下文。
+   */
+  content: string;
 }
 
 export interface NotifyInput {
@@ -61,6 +68,8 @@ interface Recipient {
   subject: string;
   /** 邮件称呼「亲爱的 X」；留空写「朋友」 */
   nickname?: string;
+  /** 只有「被回复那条评论的作者」需要它：信里先给出他原来说了什么，再给新回复 */
+  parentHtml?: string;
 }
 
 /** 站点绝对地址：优先后台配置，其次 wrangler var，最后请求 origin（这里拿不到请求，兜个空） */
@@ -81,6 +90,22 @@ function prettyTitle(slug: string, known?: string | null): string {
   const seg = decodeURIComponent(lastSegment(slug));
   const cleaned = seg.replace(/\.(md|html)$/i, '').replace(/[-_]+/g, ' ').trim();
   return cleaned || '这篇文章';
+}
+
+/**
+ * 「被回复的那条原评论」在信里的那一段：一行小标题 + 一个引用块。
+ * 正文用与新评论同一个渲染器（表情、图片、代码两段里是一个样），边框刻意比新回复那条淡：
+ * 收件人要先看清"别人回了我哪一句"，再回想自己说过什么。
+ */
+export function quotedCommentHtml(src: string, base: string): string {
+  const body = commentEmailHtml(src, base);
+  if (!body.trim()) return '';
+  return (
+    '<p style="margin:0 0 4px;font-size:13px;color:#8b949e">你原来的评论：</p>' +
+    '<blockquote type="cite" style="margin:0 0 16px 16px;padding:12px 16px;background:#f7f7f8;border-left:3px solid #c9ced6;border-radius:0 8px 8px 0">' +
+    body +
+    '</blockquote>'
+  );
 }
 
 /** 按 post_drafts 认领文章作者：共创投稿的文章才有记录，站长的文章没有 */
@@ -142,7 +167,7 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
      * 现在先取「设置 → 评论提醒与展示 → 站长收件邮箱」，没填才回落到发件邮箱 —— 大多数站两者本来就是同一个。
      */
     const adminEmail = (await getConfig(env, 'adminNotifyEmail'))?.trim() || fromMail;
-    const articleTitle = prettyTitle(slug, input.title || (await postTitleFromRepo(env, slug)));
+    const articleTitle = prettyTitle(slug, input.title || (await postTitle(env, slug)));
     const base = await siteBase(env);
     const url = `${base}${webUrlForSlug(canonSlug(slug))}`;
 
@@ -180,6 +205,7 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
             where: `文章「${articleTitle}」的评论下`,
             subject: `【${siteName}】${comment.authorName} 回复了你的评论`,
             nickname: parent.authorName ?? '',
+            parentHtml: quotedCommentHtml(parent.content, base),
           });
       }
     }
@@ -215,11 +241,14 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
           where: r.where,
           /* 表情与图片按前台那套渲染成 <img>，信里不再是 [weibo:smile] 这种字面标记 */
           content: commentEmailHtml(comment.content, base),
+          /* 回复信里先给"你原来的评论"，再给新回复；非回复那封这里是空串，模板那一行不留空壳 */
+          parent: r.parentHtml ?? '',
           url,
           title: articleTitle,
           siteName,
         },
-        { title: r.subject, nickname: r.nickname, rawKeys: ['content'] },
+        /* parent 与 content 同样是"调用方已经渲染并转义过"的那一段 HTML */
+        { title: r.subject, nickname: r.nickname, rawKeys: ['content', 'parent'] },
       );
       await queueEmail(env, {
         to: r.to,
@@ -232,57 +261,6 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
     }
   } catch (err) {
     console.warn('[zero-api] 评论邮件提醒失败（不影响评论）', err);
-  }
-}
-
-/**
- * 文章的真标题：读仓库里那一篇的 front matter。
- *
- * 以前调用方没传标题时，`prettyTitle` 直接拿 slug 末段顶上 —— 站主的文章文件名就是日期串
- * （`content/zh/posts/20261025002.md`），于是一封提醒信里两处都写成「20261025002」，
- * 收件人根本不知道是哪篇被评论了。
- *
- * 结果按文章号缓存一天：标题几乎不变，而每条新评论都去仓库读一个文件不划算
- * （GitHub 那侧是一次 Contents API 调用）。没配仓库 / 文件名与 slug 不一致（front matter 另写了 slug）
- * 时照旧回落到文件名，不会比现在更差；认不到也短暂记一笔，免得无主评论反复打仓库。
- */
-async function postTitleFromRepo(env: Env, slug: string): Promise<string> {
-  const seg = lastSegment(slug);
-  if (!seg) return '';
-  const key = postTitleCacheKey(seg);
-  const cached = await kvGet(env, key);
-  if (typeof cached === 'string') return cached;
-  const dir = await postsDir(env);
-  let title = '';
-  for (const p of [`${dir}/${seg}.md`, `${dir}/${seg}/index.md`]) {
-    const file = await readRepoFileQuiet(env, p);
-    if (!file?.content) continue;
-    title = titleFromMarkdown(file.content);
-    if (title) break;
-  }
-  await kvPut(env, key, title, title ? 24 * 3600 : 600);
-  return title;
-}
-
-/** 标题缓存的键只在这一处拼：写入侧要清的是同一格，手抄一份字符串迟早和这边不一致。 */
-export function postTitleCacheKey(stem: string): string {
-  return `zero:post-title:${stem}`;
-}
-
-/**
- * 改了/删了哪几篇文章 → 清掉这几篇的标题缓存。
- * 加缓存就得配清缓存：后台把标题改了，提醒信不能还写着旧标题等 24 小时。
- * 只有文章目录里的 .md 才有这一格（数据文件、友链那些不用管）；bundle 形态认 index.md 的上一层。
- */
-export async function purgePostTitleCache(env: Env, paths: string[]): Promise<void> {
-  const dir = await postsDir(env);
-  for (const raw of paths) {
-    const rel = String(raw ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
-    if (!rel.startsWith(`${dir}/`) || !rel.endsWith('.md')) continue;
-    const segs = rel.slice(dir.length + 1).split('/');
-    const file = segs.pop() ?? '';
-    const stem = file === 'index.md' ? (segs.pop() ?? '') : file.slice(0, -3);
-    if (stem) await kvDelete(env, postTitleCacheKey(stem));
   }
 }
 
@@ -368,12 +346,19 @@ export async function notifySelfTest(env: Env, to: string): Promise<NotifySelfTe
     '这是一封由后台「通知链路自检」发出的样例信，用来确认新评论提醒的通道、模板与收件人。' +
     `发信时间是 ${new Date().toISOString()}。收到它就说明这条链路是通的。`;
 
-  const send = async (label: string, recipient: string, subject: string, nickname: string, where: string): Promise<NotifySelfTestRow> => {
+  const send = async (
+    label: string,
+    recipient: string,
+    subject: string,
+    nickname: string,
+    where: string,
+    parentHtml = '',
+  ): Promise<NotifySelfTestRow> => {
     const html = await renderEmail(
       env,
       'comment',
-      { author: '测试用户', where, content: sample, url: `${base}/`, title: '通知链路自检', siteName },
-      { title: subject, nickname, rawKeys: ['content'] },
+      { author: '测试用户', where, content: sample, parent: parentHtml, url: `${base}/`, title: '通知链路自检', siteName },
+      { title: subject, nickname, rawKeys: ['content', 'parent'] },
     );
     const res = await sendEmail(env, { to: recipient, subject, html, from: fromMail || undefined, kind: 'notice' });
     return { label, to: recipient, subject, sent: res.success, error: res.error ?? null, detail: res.detail ?? null, logId: res.logId ?? null };
@@ -391,14 +376,16 @@ export async function notifySelfTest(env: Env, to: string): Promise<NotifySelfTe
       '文章「通知链路自检」',
     ),
   );
-  // 第 2 封：用户那封（回复提醒）
+  // 第 2 封：用户那封（回复提醒）—— 刻意做成"回复"的形状，把被回复的原评论也带上，
+  // 这样点一次自检就能看到新排版（两段引用、各带一个 type="cite" 的引用块）
   rows.push(
     await send(
-      '用户那一封（commentNotifyReply）',
+      '用户那一封（commentNotifyReply，含被回复的原评论）',
       to,
       `【${siteName}】测试用户 回复了你的评论`,
       to,
       '文章「通知链路自检」的评论下',
+      quotedCommentHtml('这是你原来那条评论。自检信把它引在上方，是为了让你当场看清「原评论 + 新回复」两段排版。', base),
     ),
   );
 

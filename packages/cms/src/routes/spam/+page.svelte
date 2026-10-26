@@ -30,6 +30,8 @@
   interface Cmt {
     id: string;
     postSlug: string;
+    /** 接口从内容仓库 front matter 认出来的标题；认不到为空，界面回落到地址 */
+    postTitle?: string;
     authorName: string;
     authorEmail: string | null;
     content: string;
@@ -609,10 +611,11 @@
               <td class="clip">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</td>
               <td>
                 {#if frontUrl(r.postSlug)}
-                  <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postSlug}</a>
+                  <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postTitle || r.postSlug}</a>
                 {:else}
-                  <span class="muted">{r.postSlug}</span>
+                  <span class="muted">{r.postTitle || r.postSlug}</span>
                 {/if}
+                {#if r.postTitle}<div class="muted small">{r.postSlug}</div>{/if}
               </td>
               <td>{r.spamScore ?? '—'}</td>
               <td class="clip">{r.spamReason || '—'}</td>

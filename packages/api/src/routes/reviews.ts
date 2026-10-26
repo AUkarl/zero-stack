@@ -18,7 +18,7 @@ import { writeAudit } from '../services/audit';
 import { upsertAuthor, type AuthorSocialRow } from '../services/authors';
 import { withAdminAuthorBits } from '../services/admin-author';
 import { purgePageUrls, type PurgeResult } from '../services/cf-purge';
-import { purgePostTitleCache } from '../services/comment-notify';
+import { purgePostTitleCache } from '../services/post-title';
 import { postWebPath, postsDir } from '../services/frontmatter';
 import { writeFile } from '../services/git';
 import { finishRepoWrites, repoTarget } from '../services/git';

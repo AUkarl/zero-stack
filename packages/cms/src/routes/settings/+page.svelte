@@ -282,25 +282,23 @@
           key: 'emailTemplateCode',
           label: '① 验证码模板',
           kind: 'textarea',
-          hint: '可用 {code} 验证码、{minutes} 有效分钟、{siteName} 站点名',
         },
         {
           key: 'emailTemplateSubscribe',
           label: '② 订阅确认模板',
           kind: 'textarea',
-          hint: '可用 {url} 确认链接、{siteName} 站点名、{email} 待确认邮箱',
         },
         {
           key: 'emailTemplateComment',
           label: '③ 新评论提醒模板',
           kind: 'textarea',
-          hint: '可用 {author} 评论者、{where} 位置、{content} 正文、{url} 锚点链接、{title} 原文标题、{siteName} 站点名',
+          hint: '回复提醒那一封会多出「你原来的评论」那一段（占位符 {parent}，非回复时不留痕）',
         },
         {
           key: 'emailTemplateNotice',
           label: '④ 其它通知模板（默认信）',
           kind: 'textarea',
-          hint: '审核结果、新文章推送等都走这一封。可用 {intro} 开头一句、{content} 正文、{title} 标题、{url} 链接、{action} 按钮文字、{siteName} 站点名',
+          hint: '审核结果、新文章推送等都走这一封',
         },
       ],
     },
@@ -334,6 +332,12 @@
 
   /** 四封正文的默认文本由后端给出（与代码里那份同源），这里缓存一次供「填回默认」用 */
   let emailDefaults = $state<Record<string, string>>({});
+  /**
+   * 每封能用的占位符表也来自后端同一份 TEMPLATE_VARS。
+   * 以前这四个字段的提示语是这里手抄的，接口加了 {parent} 后台却还写着旧的六个，
+   * 站主照提示写模板就会漏参数 —— 一份事实不该在这里抄第二遍。
+   */
+  let emailVars = $state<Record<string, { name: string; desc: string }[]>>({});
 
   /** 预览地址带后台登录态打开，看到的就是收件人实际收到的样子 */
   function emailPreviewUrl(kind: EmailKind): string {
@@ -422,11 +426,13 @@
 
   async function loadEmailTemplates() {
     try {
-      const d = await get<{ data: { defaults: Record<string, string> } }>('/api/admin/email/templates');
+      const d = await get<{ data: { defaults: Record<string, string>; vars?: Record<string, { name: string; desc: string }[]> } }>('/api/admin/email/templates');
       emailDefaults = d.data.defaults || {};
+      emailVars = d.data.vars || {};
     } catch {
       // 拿不到默认文本只影响「填回默认」按钮，编辑与保存照常
       emailDefaults = {};
+      emailVars = {};
     }
   }
 
@@ -439,6 +445,9 @@
     { label: '阿里企业邮箱', host: 'smtp.qiye.aliyun.com', port: '465', secure: 'true' },
     { label: '腾讯企业邮箱', host: 'smtp.exmail.qq.com', port: '465', secure: 'true' },
   ];
+
+  /** 配置键 → 模板种类：emailTemplateComment → comment（后端那份占位符表按种类给） */
+  const tplKind = (key: string) => key.replace(/^emailTemplate/, '').toLowerCase();
 
   /** 一节显示哪几个字段：顺序按 keys 给，fields 只是键的元数据来源 */
   function sectionFields(group: Group, s: Section): Field[] {
@@ -633,6 +642,14 @@
           {/if}
         {/if}
         {#if f.hint}<span class="muted hint">{f.hint}</span>{/if}
+        {#if (emailVars[tplKind(f.key)] ?? []).length}
+          <span class="muted hint">
+            可用占位符：
+            {#each emailVars[tplKind(f.key)] as v (v.name)}
+              <code>{v.name}</code>{v.desc}
+            {/each}
+          </span>
+        {/if}
       </div>
     {/each}
   </div>

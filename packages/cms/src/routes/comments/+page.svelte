@@ -6,6 +6,8 @@
   interface Row {
     id: string;
     postSlug: string;
+    /** 接口按文章号从内容仓库的 front matter 认出来的标题；认不到为空，界面回落到地址 */
+    postTitle?: string;
     content: string;
     authorName: string;
     authorEmail: string | null;
@@ -85,12 +87,14 @@
            渲染器整段先转义 HTML，评论里写的 <script> 只会变成字面文本。 -->
       <div class="content">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</div>
       <div class="row slug">
+        <!-- 先给标题：站长的文章文件名就是日期串，光看地址认不出是哪篇被评论了 -->
         {#if frontUrl(r.postSlug)}
-          <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postSlug}</a>
+          <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postTitle || r.postSlug}</a>
         {:else}
           <!-- siteUrl 没配时不做成链接：拼出来的相对路径会在后台自己的域名下 404 -->
-          <span class="muted" title="后台「设置 → 站点信息」里的站点地址为空，暂时给不出前台链接">{r.postSlug}</span>
+          <span class="muted" title="后台「设置 → 站点信息」里的站点地址为空，暂时给不出前台链接">{r.postTitle || r.postSlug}</span>
         {/if}
+        {#if r.postTitle}<span class="muted">{r.postSlug}</span>{/if}
       </div>
       <div class="ops">
         {#if r.status !== 'approved'}<button class="sm primary" onclick={() => void act(r.id, 'approve')}>通过</button>{/if}

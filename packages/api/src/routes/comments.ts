@@ -16,7 +16,7 @@ import { requireAdmin, tokenFromRequest } from '../middleware/auth';
 import { bannedByToken } from '../services/auth';
 import { inspectComment, type Verdict } from '../services/moderation';
 import { deleteCommentSubtree } from '../services/comment-tree';
-import { notifyNewComment } from '../services/comment-notify';
+import { notifyNewComment, type NotifyParent } from '../services/comment-notify';
 import { commentLikeStatsForSlug, toggleCommentLike } from './likes';
 /**
  * 首字母色块的算法**只在 comment 包里存一份**（前端也要用同一个口径才能保住既有颜色），
@@ -624,7 +624,7 @@ app.post('/', async (c) => {
 
   let depth = 1;
   let rootId: string | null = null;
-  let parent: { authorName: string; authorEmail: string | null; authorId: string | null } | null = null;
+  let parent: NotifyParent | null = null;
   if (body.parentId) {
     const parents = await db
       .select({
@@ -636,6 +636,8 @@ app.post('/', async (c) => {
         authorName: comments.authorName,
         authorEmail: comments.authorEmail,
         authorId: comments.authorId,
+        /* 提醒信要把"你原来那条评论"一起引出来，正文得跟着带出去 */
+        content: comments.content,
       })
       .from(comments)
       .where(eq(comments.id, body.parentId))
@@ -650,7 +652,7 @@ app.post('/', async (c) => {
     const maxDepth = await getConfigInt(env, 'commentMaxDepth', 6);
     if (maxDepth > 0 && depth > maxDepth) fail(400, `回复层级已达上限（最多 ${maxDepth} 层），请回到顶层继续讨论`);
     rootId = hit.rootId ?? hit.id;
-    parent = { authorName: hit.authorName, authorEmail: hit.authorEmail, authorId: hit.authorId };
+    parent = { authorName: hit.authorName, authorEmail: hit.authorEmail, authorId: hit.authorId, content: hit.content };
   }
 
   const link = normalizeLink(body.link);
