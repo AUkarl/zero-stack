@@ -68,10 +68,11 @@ export function commentEmailHtml(src: string, siteBase: string): string {
     .replace(/<\/blockquote>/g, '</div>');
   const absolute = base ? html.replace(/(href|src)="\/(?!\/)/g, `$1="${base}/`) : html;
   const styled = styleImages(absolute);
-  /* 远程图被客户端屏蔽时，行内 alt 只有一个词，容易被看成「没发出来」。
-     带表情就补一行说明，并给一个能点开的地址（收件人自己决定要不要放行图片）。 */
-  if (siteBase && /zc-emoji-img/.test(styled)) {
-    return `${styled}<p style="margin:.5rem 0 0;font-size:.82em;color:#8a8a8a">这封里有表情图片；邮件客户端没显示的话，到评论页看就是完整的：<a href="${base}/">${base.replace(/^https?:\/\//, '')}</a></p>`;
+  /* 远程图被客户端屏蔽时，行内 alt 只有一个词，容易被看成「没发出去」，所以补一句说明。
+     这句里不给裸网址、也不做成链接（站长定的措辞）：信本来就在评论页那个按钮上方，
+     再放一行域名只是多一处可点、还可能被客户端切成奇怪的样子。 */
+  if (/zc-emoji-img/.test(styled)) {
+    return `${styled}<p style="margin:.5rem 0 0;font-size:.82em;color:#8a8a8a">邮件中含表情图片，如邮件客户端未显示，点击下方按钮查看完整内容。</p>`;
   }
   return styled;
 }
