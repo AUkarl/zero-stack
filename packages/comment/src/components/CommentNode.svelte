@@ -86,7 +86,7 @@
   const displayName = $derived(node.authorName || t('anonymous'));
   const replyToName = $derived(String(node.replyToName || '').trim());
   const isReply = $derived(Boolean(node.parentId));
-  const info = $derived(showMeta ? infoLine(node, lang) : '');
+  const info = $derived(showMeta ? infoLine(node) : '');
   /** 只有作者本人（或带 ownerKey 的访客）能看见未通过的条目，所以这里两种状态都要给角标 */
   const held = $derived(node.status === 'pending' || node.status === 'spam');
   const edited = $derived(Boolean(node.editedAt));

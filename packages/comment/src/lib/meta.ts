@@ -2,71 +2,38 @@
  * meta.ts — 评论的访客维度展示（属地 / 浏览器 / 系统）与头像退化
  *
  * 字段来自后端 visitorMeta()：
- *   country = cf.country（ISO 码，CN/US…）、city = cf.city（英文名）、
+ *   country = cf.country（ISO 码，CN/US…）、city = cf.city（CF 给的英文名，缺 city 时是 cf.region）、
  *   browser/os 解析不出来时是 'other'，device 是 mobile|tablet|desktop（前台第三行不展示设备）。
  * 本地 dev 没有 cf 属地就是空串 —— 空就整段不显示，绝不编造。
  */
 
-import { isEnglish } from './i18n';
-
-const COUNTRY_ZH: Record<string, string> = {
-  CN: '中国', HK: '中国香港', MO: '中国澳门', TW: '中国台湾',
-  US: '美国', CA: '加拿大', MX: '墨西哥', BR: '巴西', AR: '阿根廷',
-  JP: '日本', KR: '韩国', SG: '新加坡', MY: '马来西亚', TH: '泰国',
-  VN: '越南', PH: '菲律宾', ID: '印度尼西亚', IN: '印度', IL: '以色列',
-  AE: '阿联酋', SA: '沙特阿拉伯', RU: '俄罗斯', UA: '乌克兰', TR: '土耳其',
-  GB: '英国', IE: '爱尔兰', FR: '法国', DE: '德国', IT: '意大利', ES: '西班牙',
-  PT: '葡萄牙', NL: '荷兰', BE: '比利时', CH: '瑞士', AT: '奥地利', SE: '瑞典',
-  NO: '挪威', DK: '丹麦', FI: '芬兰', IS: '冰岛', PL: '波兰', CZ: '捷克',
-  GR: '希腊', HU: '匈牙利', RO: '罗马尼亚', AU: '澳大利亚', NZ: '新西兰',
-  ZA: '南非', EG: '埃及', NG: '尼日利亚',
-};
-
-const COUNTRY_EN: Record<string, string> = {
-  CN: 'China', US: 'United States', JP: 'Japan', KR: 'South Korea', GB: 'United Kingdom',
-  FR: 'France', DE: 'Germany', CA: 'Canada', AU: 'Australia', SG: 'Singapore',
-};
-
-function countryName(code: string, lang?: string): string {
-  const c = String(code || '').trim().toUpperCase();
-  if (!c) return '';
-  if (isEnglish(lang)) return COUNTRY_EN[c] || c;
-  return COUNTRY_ZH[c] || c;
+/**
+ * 属地一律「国家代码 + 英文名」，国内外同一格式：`CN Shandong`、`US New York`。
+ *
+ * 这里以前带一张省级中文表去翻 cf.city：表只有 33 条**省级**区划，字段却是**市级**地名，
+ * 于是直辖市恰好命中显示「中国 上海」，地级市表里没有就原样漏拼音显示「中国 Shenzhen」——
+ * 同一条规则下中英混排，看的是运气。站长把口径改成不翻译：一张表都不留，
+ * 也就不会再有"表不全就漏出另一种文字"这类问题。
+ *
+ * 名字里出现的中日韩字符一律剔掉（老数据或导入来的行可能存着中文属地）：
+ * 这样"这一行只有字母数字与常见标点"对任何输入都成立，而不是只对 CF 今天给的英文成立。
+ * 拉丁文的重音字母（São Paulo）算字母，留着。
+ */
+export function placeLabel(country: string | null | undefined, city: string | null | undefined): string {
+  const c = String(country ?? '').trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+  const t = dropCJK(String(city ?? '')).replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+/u, '').slice(0, 60).trim();
+  return [c, t].filter(Boolean).join(' ');
 }
 
-/**
- * 第三行次要信息里的「位置」：属地国家名 + 城市（cf 给的是英文城市/省名，中文下翻译一遍）。
- * 拿不到的一律不塞进去，全拿不到就是空串。
- */
-export function placeLabel(country: string | null | undefined, city: string | null | undefined, lang?: string): string {
-  const c = countryName(String(country || '').trim(), lang);
-  const t = cityLabel(String(city || '').trim(), lang);
-  // 中文按「国家 城市」顺排，英文按惯用的「City, Country」
-  return isEnglish(lang) ? [t, c].filter(Boolean).join(', ') : [c, t].filter(Boolean).join(' ');
-}
-
-/**
- * cf 的 city 对国内 IP 给的是拼音/英文名，中文站直接贴出来很出戏，先过一层一级区划翻译；
- * 表里没有的（境外城市等）原样显示，绝不瞎猜。
- */
-const CITY_ZH: Record<string, string> = {
-  Beijing: '北京', Shanghai: '上海', Tianjin: '天津', Chongqing: '重庆',
-  Guangdong: '广东', Jiangsu: '江苏', Zhejiang: '浙江', Shandong: '山东',
-  Henan: '河南', Hebei: '河北', Shanxi: '山西', Anhui: '安徽',
-  Fujian: '福建', Jiangxi: '江西', Hunan: '湖南', Hubei: '湖北',
-  Sichuan: '四川', Guizhou: '贵州', Yunnan: '云南', Shaanxi: '陕西',
-  Gansu: '甘肃', Qinghai: '青海', Hainan: '海南', Liaoning: '辽宁',
-  Jilin: '吉林', Heilongjiang: '黑龙江', Guangxi: '广西', Inner: '内蒙古',
-  Ningxia: '宁夏', Xinjiang: '新疆', Xizang: '西藏', Tibet: '西藏',
-  Hong: '香港', Kowloon: '九龙', Macau: '澳门', Taipei: '台北', Kaohsiung: '高雄',
-};
-
-function cityLabel(raw: string, lang?: string): string {
-  const v = raw.trim();
-  if (!v || isEnglish(lang)) return v;
-  // "Inner Mongolia" 这种带空格的，先按第一段查表
-  const hit = CITY_ZH[v] ?? CITY_ZH[v.split(' ')[0]];
-  return hit ?? v;
+/** 中日韩区间的码点：汉字（含扩展 A 与兼容表意）、假名、中日韩标点与全角形式 */
+function dropCJK(s: string): string {
+  return [...s]
+    .filter((ch) => {
+      const p = ch.codePointAt(0) ?? 0;
+      return !((p >= 0x3000 && p <= 0x30ff) || (p >= 0x3400 && p <= 0x4dbf)
+        || (p >= 0x4e00 && p <= 0x9fff) || (p >= 0xf900 && p <= 0xfaff) || (p >= 0xff00 && p <= 0xffef));
+    })
+    .join('');
 }
 
 const BROWSER_ZH: Record<string, string> = {  Chrome: 'Chrome', Edge: 'Edge', Safari: 'Safari', Firefox: 'Firefox',
@@ -89,17 +56,14 @@ function cleanName(raw: string | null | undefined, table: Record<string, string>
  * 正文下面那行小字里「位置 · 浏览器 · 系统」这三段（时间由调用方拼在最前面）。
  * 拿不到的一律不塞进去，全拿不到就是空串。
  */
-export function infoLine(
-  node: {
-    country?: string | null;
-    city?: string | null;
-    browser?: string | null;
-    os?: string | null;
-  },
-  lang?: string,
-): string {
+export function infoLine(node: {
+  country?: string | null;
+  city?: string | null;
+  browser?: string | null;
+  os?: string | null;
+}): string {
   return [
-    placeLabel(node.country, node.city, lang),
+    placeLabel(node.country, node.city),
     cleanName(node.browser, BROWSER_ZH),
     cleanName(node.os, OS_ZH),
   ]
