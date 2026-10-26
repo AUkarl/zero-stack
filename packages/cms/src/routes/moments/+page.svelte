@@ -24,6 +24,8 @@
   interface Moment {
     path: string;
     name: string;
+    /** 仓库里这一篇当前的版本号：保存时必须带回去，否则后端按「新建撞名」判冲突拒绝覆盖 */
+    sha: string;
     date: string;
     draft: boolean;
     body: string;
@@ -48,6 +50,8 @@
 
   // 发布表单
   let editing = $state('');
+  /** 正在编辑的那一篇的版本号（新发的时刻是空串）。后端拿它做乐观锁，不带就按撞名拒覆盖 */
+  let sha = $state('');
   let body = $state('');
   let location = $state('');
   let date = $state(nowInput());
@@ -88,8 +92,8 @@
       const docs = await Promise.all(
         recent.map(async (f) => {
           try {
-            const r = await get<{ data: { content: string } }>(`/api/admin/content/file?path=${encodeURIComponent(f.path)}`);
-            return toMoment(f, r.data.content);
+            const r = await get<{ data: { content: string; sha: string } }>(`/api/admin/content/file?path=${encodeURIComponent(f.path)}`);
+            return toMoment(f, r.data.content, r.data.sha);
           } catch {
             return null;
           }
@@ -106,13 +110,14 @@
     }
   }
 
-  function toMoment(f: Entry, raw: string): Moment {
+  function toMoment(f: Entry, raw: string, fileSha = ''): Moment {
     const parts = splitFrontMatter(raw);
     const doc = parseFront(parts.front);
     const s = doc.scalars;
     return {
       path: f.path,
       name: f.name,
+      sha: fileSha,
       date: s.date ?? '',
       draft: (s.draft ?? 'false') === 'true',
       body: parts.body,
@@ -293,6 +298,9 @@
     try {
       const res = await put<{ data: { sha?: string; note?: string | null } }>('/api/admin/content/file', {
         path,
+        /* 编辑已有那一篇必须带版本号：后端把「不带 sha 且文件已存在」按新建撞名拒绝覆盖（R39 加的锁）。
+           时刻编辑器以前只取了接口返回的 content、把 sha 丢了，所以改一条已发布的时刻必定 409。 */
+        ...(sha ? { sha } : {}),
         front: {
           ...(titleWanted ? { title: titleWanted } : {}),
           date: fromDateInput(date) || date,
@@ -335,6 +343,7 @@
 
   function resetForm() {
     editing = '';
+    sha = '';
     body = '';
     location = '';
     date = nowInput();
@@ -356,6 +365,7 @@
 
   function edit(m: Moment) {
     editing = m.path;
+    sha = m.sha;
     body = m.body;
     location = m.location;
     date = toInputDateTime(m.date) || nowInput();
