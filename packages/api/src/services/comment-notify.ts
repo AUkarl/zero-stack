@@ -21,10 +21,11 @@ import { postDrafts, users } from '../db/schema';
 import { canonSlug } from '../lib/slug';
 import { siteAuthorName } from './authors';
 import { getConfig, getConfigBool } from './config';
+import { kvDelete, kvGet, kvPut } from './kv-cache';
 import { resolveSiteName } from './site-name';
 import { queueEmail, renderEmail, sendEmail } from './email';
 import { commentEmailHtml } from './email-content';
-import { webUrlForSlug } from './frontmatter';
+import { postsDir, readRepoFileQuiet, titleFromMarkdown, webUrlForSlug } from './frontmatter';
 
 export interface NotifyComment {
   id: string;
@@ -141,7 +142,7 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
      * 现在先取「设置 → 评论提醒与展示 → 站长收件邮箱」，没填才回落到发件邮箱 —— 大多数站两者本来就是同一个。
      */
     const adminEmail = (await getConfig(env, 'adminNotifyEmail'))?.trim() || fromMail;
-    const articleTitle = prettyTitle(slug, input.title);
+    const articleTitle = prettyTitle(slug, input.title || (await postTitleFromRepo(env, slug)));
     const base = await siteBase(env);
     const url = `${base}${webUrlForSlug(canonSlug(slug))}`;
 
@@ -231,6 +232,57 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
     }
   } catch (err) {
     console.warn('[zero-api] 评论邮件提醒失败（不影响评论）', err);
+  }
+}
+
+/**
+ * 文章的真标题：读仓库里那一篇的 front matter。
+ *
+ * 以前调用方没传标题时，`prettyTitle` 直接拿 slug 末段顶上 —— 站主的文章文件名就是日期串
+ * （`content/zh/posts/20261025002.md`），于是一封提醒信里两处都写成「20261025002」，
+ * 收件人根本不知道是哪篇被评论了。
+ *
+ * 结果按文章号缓存一天：标题几乎不变，而每条新评论都去仓库读一个文件不划算
+ * （GitHub 那侧是一次 Contents API 调用）。没配仓库 / 文件名与 slug 不一致（front matter 另写了 slug）
+ * 时照旧回落到文件名，不会比现在更差；认不到也短暂记一笔，免得无主评论反复打仓库。
+ */
+async function postTitleFromRepo(env: Env, slug: string): Promise<string> {
+  const seg = lastSegment(slug);
+  if (!seg) return '';
+  const key = postTitleCacheKey(seg);
+  const cached = await kvGet(env, key);
+  if (typeof cached === 'string') return cached;
+  const dir = await postsDir(env);
+  let title = '';
+  for (const p of [`${dir}/${seg}.md`, `${dir}/${seg}/index.md`]) {
+    const file = await readRepoFileQuiet(env, p);
+    if (!file?.content) continue;
+    title = titleFromMarkdown(file.content);
+    if (title) break;
+  }
+  await kvPut(env, key, title, title ? 24 * 3600 : 600);
+  return title;
+}
+
+/** 标题缓存的键只在这一处拼：写入侧要清的是同一格，手抄一份字符串迟早和这边不一致。 */
+export function postTitleCacheKey(stem: string): string {
+  return `zero:post-title:${stem}`;
+}
+
+/**
+ * 改了/删了哪几篇文章 → 清掉这几篇的标题缓存。
+ * 加缓存就得配清缓存：后台把标题改了，提醒信不能还写着旧标题等 24 小时。
+ * 只有文章目录里的 .md 才有这一格（数据文件、友链那些不用管）；bundle 形态认 index.md 的上一层。
+ */
+export async function purgePostTitleCache(env: Env, paths: string[]): Promise<void> {
+  const dir = await postsDir(env);
+  for (const raw of paths) {
+    const rel = String(raw ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!rel.startsWith(`${dir}/`) || !rel.endsWith('.md')) continue;
+    const segs = rel.slice(dir.length + 1).split('/');
+    const file = segs.pop() ?? '';
+    const stem = file === 'index.md' ? (segs.pop() ?? '') : file.slice(0, -3);
+    if (stem) await kvDelete(env, postTitleCacheKey(stem));
   }
 }
 

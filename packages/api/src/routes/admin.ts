@@ -22,7 +22,7 @@ import {
   validateAuthorsYaml,
 } from '../services/authors';
 import { deleteCommentSubtree } from '../services/comment-tree';
-import { notifySelfTest } from '../services/comment-notify';
+import { notifySelfTest, purgePostTitleCache } from '../services/comment-notify';
 import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor, writeSwitchSnapshot } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
@@ -666,9 +666,12 @@ async function finishContentWrite(
   env: Env,
   changed: number,
   triggerBuild: boolean,
+  paths: string[],
 ): Promise<{ build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
   if (!changed) return { build: null, buildHealth: null };
   await kvDelete(env, POSTS_CACHE_KEY);
+  /* 提醒信里的标题也缓存过，改了这一篇就得连那一格一起清（见 comment-notify 的 purgePostTitleCache） */
+  await purgePostTitleCache(env, paths);
   return finishRepoWrites(env, changed, triggerBuild);
 }
 
@@ -693,7 +696,7 @@ app.put('/content/file', async (c) => {
     },
     ip: clientIp(c),
   });
-  const { build, buildHealth } = await finishContentWrite(c.env, 1, body?.triggerBuild !== false);
+  const { build, buildHealth } = await finishContentWrite(c.env, 1, body?.triggerBuild !== false, [body?.path ?? '']);
   const healthNote = buildHealthReceipt(buildHealth).replace(/^；/, '');
   return ok({
     ...outcome,
@@ -778,7 +781,7 @@ app.post('/content/batch', async (c) => {
     },
     ip: clientIp(c),
   });
-  const { build, buildHealth } = await finishContentWrite(c.env, done, input?.triggerBuild !== false);
+  const { build, buildHealth } = await finishContentWrite(c.env, done, input?.triggerBuild !== false, results.map((r) => r.path));
   return ok({
     total: results.length,
     done,
@@ -845,6 +848,7 @@ app.delete('/content/file', async (c) => {
   }
 
   await kvDelete(env, POSTS_CACHE_KEY);
+  await purgePostTitleCache(env, [path]);
   const build = c.req.query('build') === '0' ? null : await triggerPagesBuild(env);
   /* 重建之外还要清边缘缓存：Pages 的 HTML 在 CDN 上是 7 天 max-age，
      不清的话「后台删了文章、前端还能打开」会一直复现，而且用户强刷也没用。

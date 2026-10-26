@@ -69,6 +69,17 @@ export function parseFrontMatter(md: string): ParsedMarkdown {
   return { front: parseYaml(m[1] ?? ''), body: src.slice(m[0].length) };
 }
 
+/**
+ * 一篇文章的标题：front matter 的 title（其次 linkTitle），没有就回空串，由调用方决定怎么兜底。
+ * 放这一份文件里而不是各调用点手抄：提醒邮件要它（信里别写文件名），
+ * 而"从 md 里认标题"这件事本身就该只有一种做法。
+ */
+export function titleFromMarkdown(md: string): string {
+  const front = parseFrontMatter(md).front as Record<string, unknown>;
+  const raw = front.title ?? front.linkTitle;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
 /** YAML 子集：顶层标量 / 块数组 / 行内数组 / 一层映射 */
 function parseYaml(raw: string): Front {
   const data: Front = {};
