@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, patch, post, put } from '#lib/api';
+  import { get, healthWarn, patch, post, put, type BuildHealth } from '#lib/api';
   import { session } from '#lib/session.svelte';
   import MediaPicker from '../content/MediaPicker.svelte';
   import { EP, LOGIN_POLICIES, POLICY_LABELS, errText } from './endpoints';
@@ -283,7 +283,10 @@
           path: string;
           created: boolean;
           defaultAuthor?: { ok: boolean; detail: string };
-          build?: { triggered: boolean; error?: string };
+          build?: { triggered: boolean; viaCommit?: boolean; error?: string };
+          buildHealth?: BuildHealth | null;
+          /** 重建状态的成句话（services/git.ts 的 buildReceipt 拼的），界面只显示它 */
+          receipt?: string;
         };
       }>(EP.authorsMe, {
         name: authorName.trim(),
@@ -296,16 +299,19 @@
       });
       authorDefault = authorHandle;
       /* 署名的真实来源是仓库里的 data/site.json，构建没触发就只是「改了但前台看不到」，
-         所以把两件事的结果都写进提示，而不是含糊一句「构建后生效」。 */
+         所以把两件事的结果都写进提示，而不是含糊一句「构建后生效」。
+         重建那半句直接用接口拼好的 receipt —— 后台不再自己判 triggered：
+         Git 直连构建的站提交即重建，自己判会把每次都正常的保存说成「没触发，请手动重建」。 */
       const da = d.data?.defaultAuthor;
-      const build = d.data?.build;
       const parts = [`作者资料已写入 ${d.data?.path ?? 'data/authors.yaml'}${d.data?.created ? '（新增条目）' : ''}`];
       parts.push(
         da?.ok
           ? `默认作者标识已同步到 ${da.detail}`
           : `默认作者标识没能写进仓库（${da?.detail ?? '接口没回结果'}），前台署名不会跟着变，请到「前端管理 → 站点信息」检查`,
       );
-      parts.push(build?.triggered ? '已触发站点重建，构建完成后前台生效' : `站点重建没触发（${build?.error ?? '接口没回结果'}），请稍后手动重建`);
+      parts.push(d.data?.receipt || '站点重建状态接口没回结果，这次改动要等下一次构建才可见');
+      const warn = healthWarn(d.data?.buildHealth);
+      if (warn) parts.push(warn);
       notice = parts.join('；');
     } catch (e) {
       error = errText(e);

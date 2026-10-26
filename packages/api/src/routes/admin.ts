@@ -1898,18 +1898,23 @@ app.put('/authors/me', async (c) => {
     ok: false,
     detail: e instanceof Error ? e.message : '写入失败',
   }));
-  const build = await triggerPagesBuild(c.env).catch((e) => ({
-    triggered: false,
-    error: e instanceof Error ? e.message : '触发失败',
-  }));
+  /* 这一笔改了两份构建期文件：data/authors.yaml 与 data/site.json（前台署名读它）。
+     以前只请了一次重建、不跑体检 —— 写坏了界面也回「已保存」。现在走统一收尾。 */
+  const done = await finishRepoWrites(c.env, 1).catch(() => ({ build: null, buildHealth: null }));
+  const build = done.build;
+  const buildHealth = done.buildHealth;
   await writeAudit(c.env, {
     actor: admin,
     action: 'authorRequest',
     target: handle,
-    detail: { event: 'self-author-profile', path: written.path, created: written.created, defaultAuthor: siteDefault, build },
+    detail: { event: 'self-author-profile', path: written.path, created: written.created, defaultAuthor: siteDefault, build, buildHealth },
     ip: clientIp(c),
   });
-  return ok({ ...written, handle, defaultAuthor: siteDefault, build });
+  /* 回执文字用 services/git.ts 的 buildReceipt 拼，别在后台再手抄一遍三档判断：
+     后台那份抄本只看 triggered，于是 Git 直连构建的站（大多数站）每次保存都被提示
+     「站点重建没触发，请稍后手动重建」—— R37 修接口回执、R61 修 cron 回执，这是第三处。 */
+  const receipt = buildReceipt(done.build, `作者资料已写入 ${written.path ?? 'data/authors.yaml'}`);
+  return ok({ ...written, handle, defaultAuthor: siteDefault, build, buildHealth, receipt });
 });
 
 /**
@@ -1946,14 +1951,34 @@ app.put('/authors/file', async (c) => {
   });
   if (!result.success) fail(502, result.error ?? '作者表写入失败');
 
+  /* 这份文件是我们自己的行扫描解析（parseAuthorsYaml）认下来才写的 —— 但「我们认得」不等于
+     go-yaml 认得：整份覆盖口粘来一个 `zhizhi: {`（流式映射没闭合）之类，我们的扫描当它是普通键值，
+     Hugo 却是 failed to load data → **整站构建失败**，而接口回的是「已保存」。
+     所以这一条必须跑构建体检 —— 闸门只覆盖 links.yaml，这里就是唯一的兜底。 */
+  const done = await finishRepoWrites(c.env, 1).catch(() => ({ build: null, buildHealth: null }));
+
   await writeAudit(c.env, {
     actor: admin,
     action: 'authorRequest',
     target: result.path ?? (await authorsFilePath(c.env)),
-    detail: { event: 'authors-file', backend: result.backend, bytes: parsed.data.content.length, sha: result.sha ?? null },
+    detail: {
+      event: 'authors-file',
+      backend: result.backend,
+      bytes: parsed.data.content.length,
+      sha: result.sha ?? null,
+      build: done.build,
+      buildHealth: done.buildHealth,
+    },
     ip: clientIp(c),
   });
-  return ok({ path: result.path, sha: result.sha ?? null, backend: result.backend, bytes: parsed.data.content.length });
+  return ok({
+    path: result.path,
+    sha: result.sha ?? null,
+    backend: result.backend,
+    bytes: parsed.data.content.length,
+    build: done.build,
+    buildHealth: done.buildHealth,
+  });
 });
 
 /* ---------------- 运行状况与数据统计 ---------------- */

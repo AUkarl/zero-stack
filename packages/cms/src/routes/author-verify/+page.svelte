@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { del, get, post } from '#lib/api';
+  import { del, get, healthWarn, post, type BuildHealth } from '#lib/api';
   import { fmtDate, timeAgo } from '#lib/api';
 
   interface Social {
@@ -67,13 +67,23 @@
     error = '';
     try {
       const handle = form.handle.trim();
-      await post(`/api/admin/author-requests/${r.id}/approve`, {
-        penName: form.penName.trim() || undefined,
-        handle: handle || undefined,
-        bio: form.bio.trim() || undefined,
-        note: form.note.trim() || undefined,
-      });
+      /* 通过认证 = 整份重写 data/authors.yaml（Hugo 构建期读它）。
+         这条路上线前既没请重建也没体检，接口只回「已通过」，写坏了没人报；
+         现在结论在 authorFile.buildHealth 上，红的话用同一份 healthWarn 说人话。 */
+      const d = await post<{ data?: { authorFile?: { ok: boolean; error?: string; buildHealth?: BuildHealth | null } } }>(
+        `/api/admin/author-requests/${r.id}/approve`,
+        {
+          penName: form.penName.trim() || undefined,
+          handle: handle || undefined,
+          bio: form.bio.trim() || undefined,
+          note: form.note.trim() || undefined,
+        },
+      );
+      const af = d?.data?.authorFile;
       notice = `${form.penName.trim() || r.penName} 已通过认证${handle ? `，署名标识 ${handle}` : ''}`;
+      if (af && !af.ok) error = `认证已通过，但作者表没写进去：${af.error ?? '未知原因'}`;
+      const warn = af ? healthWarn(af.buildHealth) : '';
+      if (warn) notice = `${notice} ${warn}`;
       open = null;
       await load();
     } catch (e) {

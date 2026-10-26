@@ -663,7 +663,14 @@ authorsAdmin.post('/:id/approve', async (c) => {
    * 资料落到 data/authors.yaml（前台作者卡片与赞赏入口读这个文件）。
    * 写失败不打断审核：权限位和结论已经落库，错误原文回给后台，管理员补好料再点一次即可。
    */
-  let authorFile: { ok: boolean; path?: string; created?: boolean; error?: string };
+  let authorFile: {
+    ok: boolean;
+    path?: string;
+    created?: boolean;
+    error?: string;
+    build?: Awaited<ReturnType<typeof finishRepoWrites>>['build'];
+    buildHealth?: Awaited<ReturnType<typeof finishRepoWrites>>['buildHealth'];
+  };
   try {
     const email = account.email ?? '';
     const written = await upsertAuthor(
@@ -685,6 +692,13 @@ authorsAdmin.post('/:id/approve', async (c) => {
       { actor: admin, ip: clientIp(c) },
     );
     authorFile = { ok: true, path: written.path, created: written.created };
+    /* 认证通过 = 整份重写 data/authors.yaml —— 那是 Hugo 构建期读的数据文件，写坏了是
+       「前台作者卡片与全站署名一起空白」，而这条路以前既没请重建也没体检：接口只回「已通过」。
+       （草稿通过那条里的 rememberSubmitterAuthor 也写这份文件，但那条已经统一收过一次尾，
+       所以只有这一条自己收尾，别一次点击跑两遍 hugo。） */
+    const done = await finishRepoWrites(c.env, 1);
+    authorFile.build = done.build;
+    authorFile.buildHealth = done.buildHealth;
   } catch (e) {
     authorFile = { ok: false, error: errorMessage(e) };
   }
