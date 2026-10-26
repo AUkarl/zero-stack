@@ -37,6 +37,7 @@ import {
 } from '../db/schema';
 import { SECRET_KEYS, getConfig, invalidateConfigCache } from './config';
 import { SPAM_PATTERN_FILE } from './moderation';
+import { purgeContentTitleCache } from './content-title';
 import { readFileFrom, resolveRepoTarget, runLocalBuildCheck, walkFiles, writeViaTarget, type BuildHealth, type RepoTarget } from './repo';
 import { triggerPagesBuild } from './git';
 import { listBuckets, listMediaObjects } from './media';
@@ -739,6 +740,8 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
   }
 
   let wroteFiles = false;
+  /* 恢复会把文章/时刻整篇换掉：标题缓存必须跟着清，否则提醒信与后台列表最长 24h 还显示旧标题 */
+  const wrotePaths: string[] = [];
 
   for (const section of payload.sections) {
     if (!wanted.has(section.id)) continue;
@@ -914,7 +917,7 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
                  小结就成了「全部写成」，而仓库里其实少了一份。 */
               fr.write--;
             }
-            else wroteFiles = true;
+            else { wroteFiles = true; wrotePaths.push(f.path); }
           } catch (e) {
             fr.conflicts.push(`${f.path}：${briefError(e)}`);
           }
@@ -949,6 +952,8 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
 
     outcome.sections.push(result);
   }
+
+  if (!dryRun && wrotePaths.length) await purgeContentTitleCache(env, wrotePaths);
 
   /* 分批时只在某个区真正写完的那一次触发重建，别每批都点一次构建 */
   if (!dryRun && wroteFiles && !outcome.resume) {

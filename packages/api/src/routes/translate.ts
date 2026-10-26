@@ -20,6 +20,7 @@ import { writeAudit } from '../services/audit';
 import { providerCatalog, translateStatus, translateText } from '../services/translate';
 import { rateLimit } from '../lib/rate-limit';
 import { listRepoDir, readRepoFile, writeRepoFile } from '../services/repo';
+import { purgeContentTitleCache } from '../services/content-title';
 import { buildMarkdown, parseFrontMatter, postsDir, slugFromPath, type Front } from '../services/frontmatter';
 import { finishRepoWrites } from '../services/git';
 import type { AppEnv } from '../lib/app';
@@ -278,6 +279,8 @@ app.post('/publish', async (c) => {
     audit: false,
   });
   if (!write.success) fail(502, write.error ?? '写入仓库失败');
+  /* 勾了「覆盖已存在文件」时这一笔换掉的是同一路径的文章：标题可能变了，提醒信那格的缓存要跟着清 */
+  await purgeContentTitleCache(c.env, [newPath]);
 
   /* 翻译写出的是整篇新文章（新路径、新 front matter），与后台存稿一样能让 Hugo 整站失败，
      所以走同一个收尾：请求重建 + 本地跑一次构建体检。以前这里只 triggerPagesBuild，

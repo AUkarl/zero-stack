@@ -186,5 +186,11 @@ export async function renderEmail(
     { siteName: shell.siteName, siteUrl: shell.siteUrl, ...vars },
     opts.rawKeys,
   );
-  return wrapEmailShell(body, shell, { title: opts.title, actionNote: opts.actionNote });
+  /*
+   * {parent} 是 R66 新加的占位符：站长若在这之前自己改过那封模板，模板里不会有它，
+   * 于是"回复信带上你原来的评论"只在默认模板下成立（自检却照样宣称有）。
+   * 模板里没写就把这一段拼到正文最前面 —— 段内容已经渲染并转义过，与 {content} 同一种处理。
+   */
+  const withParent = vars.parent && !template.includes('{parent}') ? `${vars.parent}${body}` : body;
+  return wrapEmailShell(withParent, shell, { title: opts.title, actionNote: opts.actionNote });
 }

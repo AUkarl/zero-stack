@@ -25,7 +25,7 @@ import { siteAuthorName } from './authors';
 import { getConfig, getConfigBool } from './config';
 import { resolveSiteName } from './site-name';
 import { queueEmail, renderEmail, sendEmail } from './email';
-import { commentEmailHtml } from './email-content';
+import { commentEmailHtml, emojiHintHtml, hasEmojiImage } from './email-content';
 import { contentKind, contentTitle } from './content-title';
 import { webUrlForSlug } from './frontmatter';
 
@@ -235,7 +235,11 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
 
     if (!recipients.length) return;
 
+    const contentHtml = commentEmailHtml(comment.content, base);
     for (const r of recipients) {
+      /* 表情提示整封只加一次：以前它挂在每段渲染里，回复信有两段就出现两遍 */
+      const parentHtml = r.parentHtml ?? '';
+      const content = hasEmojiImage(contentHtml + parentHtml) ? contentHtml + emojiHintHtml() : contentHtml;
       // {where} 每封不同，逐收件人各渲染一次最省心
       const html = await renderEmail(
         env,
@@ -244,9 +248,9 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
           author: comment.authorName || '匿名',
           where: r.where,
           /* 表情与图片按前台那套渲染成 <img>，信里不再是 [weibo:smile] 这种字面标记 */
-          content: commentEmailHtml(comment.content, base),
+          content,
           /* 回复信里先给"你原来的评论"，再给新回复；非回复那封这里是空串，模板那一行不留空壳 */
-          parent: r.parentHtml ?? '',
+          parent: parentHtml,
           url,
           title: articleTitle,
           siteName,

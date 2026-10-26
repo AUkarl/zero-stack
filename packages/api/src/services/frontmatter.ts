@@ -303,8 +303,11 @@ export function postWebPath(path: string): string {
   const segs = String(path ?? '').replace(/\\/g, '/').split('/').filter(Boolean);
   const at = segs.indexOf('posts');
   if (at < 0) return `/${segs.slice(1).join('/')}`;
-  const slug = (segs[segs.length - 1] ?? '').replace(/\.mdx?$/i, '');
-  return `/posts/${slug}/`;
+  const file = segs[segs.length - 1] ?? '';
+  /* 页面包 `<名>/index.md` 的站内地址是 /posts/<名>/ —— Hugo 发布的就是这个地址。
+     以前只取末段，页面包算出来是 /posts/index/，群发信里的「阅读全文」点开是 404。 */
+  if (/^index\.mdx?$/i.test(file) && segs.length >= 2) return `/posts/${segs[segs.length - 2]}/`;
+  return `/posts/${file.replace(/\.mdx?$/i, '')}/`;
 }
 
 /**

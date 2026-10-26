@@ -67,12 +67,19 @@ export function commentEmailHtml(src: string, siteBase: string): string {
     .replace(/<blockquote>/g, QUOTE_DIV)
     .replace(/<\/blockquote>/g, '</div>');
   const absolute = base ? html.replace(/(href|src)="\/(?!\/)/g, `$1="${base}/`) : html;
-  const styled = styleImages(absolute);
-  /* 远程图被客户端屏蔽时，行内 alt 只有一个词，容易被看成「没发出去」，所以补一句说明。
-     这句里不给裸网址、也不做成链接（站长定的措辞）：信本来就在评论页那个按钮上方，
-     再放一行域名只是多一处可点、还可能被客户端切成奇怪的样子。 */
-  if (/zc-emoji-img/.test(styled)) {
-    return `${styled}<p style="margin:.5rem 0 0;font-size:.82em;color:#8a8a8a">邮件中含表情图片，如邮件客户端未显示，点击下方按钮查看完整内容。</p>`;
-  }
-  return styled;
+  return styleImages(absolute);
+}
+
+/**
+ * 表情被屏蔽时补的那句说明（站长定的措辞：不给网址、不做链接）。
+ * 由调用方在**整封信**这一层加一次 —— 以前放在 commentEmailHtml 里，
+ * 回复信有"原评论 + 新回复"两段就各追加一遍，同一句话出现两次。
+ */
+export function emojiHintHtml(): string {
+  return '<p style="margin:.5rem 0 0;font-size:.82em;color:#8a8a8a">邮件中含表情图片，如邮件客户端未显示，点击下方按钮查看完整内容。</p>';
+}
+
+/** 这段 HTML 里有没有表情图（决定要不要加上面那句） */
+export function hasEmojiImage(html: string): boolean {
+  return /zc-emoji-img/.test(String(html ?? ''));
 }

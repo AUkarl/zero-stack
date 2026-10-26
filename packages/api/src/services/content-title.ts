@@ -20,6 +20,7 @@
  */
 import { kvDelete, kvGet, kvPut } from './kv-cache';
 import { momentsDir, postsDir, readRepoFileQuiet, titleFromMarkdown } from './frontmatter';
+import { listRepoDir } from './repo';
 
 export type ContentKind = 'post' | 'moment';
 
@@ -54,10 +55,38 @@ function firstLine(md: string): string {
   return clean.length > 30 ? `${clean.slice(0, 30)}…` : clean;
 }
 
+/** 目录索引：文章号 → 仓库路径（buildRepoIndex 的产出） */
+export interface RepoIndex {
+  post: Map<string, string>;
+  moment: Map<string, string>;
+}
+
 /**
- * 按地址认名字（文章或时刻自动分）；全认不到回空串。
+ * 一次列目录，得到「文章号 → 仓库路径」的索引。
+ * 列表页一次要认几十条，逐个试四条候选路径就是几十×4 次仓库往返；有了索引每条只读一个文件。
  */
-export async function contentTitle(env: Env, slug: string): Promise<string> {
+export async function buildRepoIndex(env: Env): Promise<RepoIndex> {
+  const index: RepoIndex = { post: new Map(), moment: new Map() };
+  for (const kind of ['post', 'moment'] as ContentKind[]) {
+    const dir = kind === 'moment' ? await momentsDir(env) : await postsDir(env);
+    let entries: { name: string; path?: string; type: string }[] = [];
+    try {
+      entries = await listRepoDir(env, dir);
+    } catch {
+      entries = [];
+    }
+    const map = index[kind];
+    for (const e of entries) {
+      if (/^_index\./i.test(e.name)) continue;
+      if (e.type === 'file' && /\.mdx?$/i.test(e.name)) map.set(e.name.replace(/\.mdx?$/i, ''), e.path || `${dir}/${e.name}`);
+      else if (e.type === 'dir') map.set(e.name, `${e.path || `${dir}/${e.name}`}/index.md`);
+    }
+  }
+  return index;
+}
+
+/** 按地址认名字（文章或时刻自动分）；全认不到回空串。传了 index 就不必每条试四条候选路径（列表页用） */
+export async function contentTitle(env: Env, slug: string, index?: RepoIndex): Promise<string> {
   const stem = contentStem(slug);
   if (!stem) return '';
   const kind = contentKind(slug);
@@ -65,15 +94,20 @@ export async function contentTitle(env: Env, slug: string): Promise<string> {
   const cached = await kvGet(env, key);
   if (typeof cached === 'string') return cached;
   const dir = kind === 'moment' ? await momentsDir(env) : await postsDir(env);
+  const known = index?.[kind].get(stem);
+  const candidates = known
+    ? [known, known.includes('/index.') ? known : known.replace(/\.md$/, '.mdx')]
+    : [`${dir}/${stem}.md`, `${dir}/${stem}.mdx`, `${dir}/${stem}/index.md`, `${dir}/${stem}/index.mdx`];
   let title = '';
-  for (const p of [`${dir}/${stem}.md`, `${dir}/${stem}.mdx`, `${dir}/${stem}/index.md`, `${dir}/${stem}/index.mdx`]) {
+  for (const p of candidates) {
     const file = await readRepoFileQuiet(env, p);
     if (!file?.content) continue;
     title = titleFromMarkdown(file.content);
     if (!title && kind === 'moment') title = firstLine(file.content);
     if (title) break;
   }
-  await kvPut(env, key, title, title ? 24 * 3600 : 600);
+  /* 认不到别十分钟就重试一遍：所有写路径都会清这一格，未命中缓存长一点是安全的 */
+  await kvPut(env, key, title, title ? 24 * 3600 : 6 * 3600);
   return title;
 }
 
@@ -92,9 +126,12 @@ const TITLE_LOOKUP_POOL = 8;
 export async function contentTitles(env: Env, slugs: Iterable<string>): Promise<Map<string, string>> {
   const want = [...new Set([...slugs].filter(Boolean))].slice(0, TITLE_LOOKUP_CAP);
   const out = new Map<string, string>();
+  if (!want.length) return out;
+  /* 列目录只做一次：冷启动一页评论从"几十×4 次仓库读"降到"2 次列目录 + 每号一个文件" */
+  const index = await buildRepoIndex(env);
   for (let i = 0; i < want.length; i += TITLE_LOOKUP_POOL) {
     const chunk = want.slice(i, i + TITLE_LOOKUP_POOL);
-    const got = await Promise.all(chunk.map((slug) => contentTitle(env, slug)));
+    const got = await Promise.all(chunk.map((slug) => contentTitle(env, slug, index)));
     chunk.forEach((slug, n) => {
       if (got[n]) out.set(slug, got[n]!);
     });
