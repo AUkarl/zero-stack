@@ -939,7 +939,7 @@ async function main(): Promise<void> {
   write(rel('content/zh/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
   /* 站内搜索：索引在构建期生成到 /search/index.json（主题 layouts/search/list.json），
      HTML 与 JSON 两种输出都要在这里声明；导航里的「搜索」由主题在检测到这一页时自动补。 */
-  write(rel('content/zh/search/_index.md'), '---\ntitle: "搜索"\noutputs: ["HTML", "JSON"]\n---\n');
+  write(rel('content/zh/search/_index.md'), '---\ntitle: "搜索"\noutputs: ["HTML", "JSON"]\nrobots: "noindex, follow"\n---\n');
   write(rel('static/images/.gitkeep'), '');
   const apiBase = (a.apiBaseURL ?? '').trim().replace(/\/+$/, '');
   /** 缓存规则与安全响应头：生成时就带上，省得站长发第一个月才发现 CDN 把 CSS 存了三天、改名后还在吐旧的 */
