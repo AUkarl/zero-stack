@@ -6,7 +6,7 @@ import { getConfigBool } from '../services/config';
 import { ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { clientIp } from '../lib/http';
-import { runScheduledJobs } from '../services/scheduler';
+import { JOB_LABELS, runScheduledJobs } from '../services/scheduler';
 import {
   createFriend,
   deleteFriend,
@@ -90,7 +90,19 @@ app.post('/reorder', async (c) => {
 app.post('/check', async (c) => {
   requireAdmin(c);
   const outcomes = await runScheduledJobs(c.env, 'manual-friends-check');
-  return ok(outcomes.filter((o) => o.name.startsWith('friends:')));
+  /*
+   * 「立即检测」除了跑友链那几件，还可能改 links.yaml / 图标、于是触发一次站点重建。
+   * 以前这里只回 friends:*，那次构建的结论被滤掉 —— 点完按钮看不到「这次构建到底成没成」。
+   * 现在把 pages:build 一起回（带中文名）；这一轮没改任何文件时补一条"不需要重建"的说明，
+   * 让按钮的回执永远能回答「构建这一环怎么样」。
+   */
+  const picked = outcomes
+    .filter((o) => o.name.startsWith('friends:') || o.name === 'pages:build')
+    .map((o) => ({ ...o, label: JOB_LABELS[o.name] ?? o.name }));
+  if (!picked.some((o) => o.name === 'pages:build')) {
+    picked.push({ name: 'pages:build', label: JOB_LABELS['pages:build'] ?? 'pages:build', ok: true, detail: '这一轮没有任何文件改动，不需要重建站点' });
+  }
+  return ok(picked);
 });
 
 /** 后台：友链健康详情 */

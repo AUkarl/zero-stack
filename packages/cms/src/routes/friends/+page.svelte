@@ -185,8 +185,9 @@
     error = '';
     checkResult = [];
     try {
-      const d = await post<{ data: { name: string; ok: boolean; detail: string }[] }>('/api/friends/check');
-      checkResult = (d.data || []).map((o) => `${o.ok ? '✓' : '✕'} ${o.name}：${o.detail}`);
+      /* 回执里现在带 pages:build（这一轮构建成没成）与中文名 label —— 以前只显示英文任务名，构建那条还被滤掉 */
+      const d = await post<{ data: { name: string; label?: string; ok: boolean; detail: string }[] }>('/api/friends/check');
+      checkResult = (d.data || []).map((o) => `${o.ok ? '✓' : '✕'} ${o.label || o.name}：${o.detail}`);
       await loadFriends();
     } catch (e) {
       error = msg(e);

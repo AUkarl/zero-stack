@@ -157,10 +157,80 @@ export function parseAuthorsYaml(text: string): AuthorsMap {
  * parseAuthorsYaml 对外手写的怪东西是宽容的（宁可留原值也不报错），
  * 后台「保存作者表」这一步却要把话说清楚，免得写进去一份前台渲染不出来的文件。
  */
+/**
+ * 值以 `{` 或 `[` 开头时的括号配平（可跨行）。
+ *
+ * 为什么需要：作者表用的是自家行扫描，`x: {`、`tags: [a, b` 这类**流式映射/数组没闭合**的写法
+ * 我们认成普通键值放行，而 go-yaml 直接 `failed to load data` → 整站构建失败。
+ * 这里只查"值以流式括号开头"的那些，普通文本里的花括号不碰（YAML 的 plain scalar 允许它们，
+ * 判严了会误伤作者简介里的大括号）。
+ */
+function flowBracketProblem(raw: string): string | null {
+  const lines = String(raw ?? '').replace(/\r\n/g, '\n').replace(/\t/g, '  ').split('\n');
+  /** >=0 表示正处于块标量（| / >）里：缩进比它深的行都是内容，整行跳过 */
+  let blockIndent = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const indent = line.length - line.trimStart().length;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (blockIndent >= 0) {
+      if (indent > blockIndent) continue;
+      blockIndent = -1;
+    }
+    if (trimmed.startsWith('#')) continue;
+    const body = stripInlineComment(trimmed);
+    if (!body) continue;
+    /* 块标量开头：`key: |`、`key: >-`、`- >2` —— 后面的行都是字面内容 */
+    if (/(^|:\s*|-\s*)[|>][+\-]?\d*\s*$/.test(body)) {
+      blockIndent = indent;
+      continue;
+    }
+
+    const kv = splitKeyValue(body);
+    const value = (kv ? kv.value : isSeqItem(body) ? body.replace(/^-\s*/, '') : '').trim();
+    const open = value[0];
+    if (open !== '{' && open !== '[') continue;
+
+    /* 从这一行的 `{` / `[` 开始，逐字符配对，可以跨行 */
+    const stack: string[] = [];
+    let quote: string | null = null;
+    let done = false;
+    for (let li = i; li < lines.length && !done; li++) {
+      const text = li === i ? lines[li]! : lines[li]!;
+      const from = li === i ? text.indexOf(open) : 0;
+      for (let ci = from; ci < text.length; ci++) {
+        const ch = text[ci]!;
+        if (quote) {
+          if (ch === '\\' && quote === '"') { ci++; continue; }
+          if (ch === quote) quote = null;
+          continue;
+        }
+        if (ch === '#' && (ci === 0 || /[\s]/.test(text[ci - 1]!))) break; // 行内注释到行尾
+        if (ch === '"' || ch === "'") { quote = ch; continue; }
+        if (ch === '{' || ch === '[') { stack.push(ch); continue; }
+        if (ch === '}' || ch === ']') {
+          const top = stack.pop();
+          if ((ch === '}' && top !== '{') || (ch === ']' && top !== '[')) {
+            return `第 ${i + 1} 行的流式括号对不上：${trimmed.slice(0, 60)}`;
+          }
+          if (!stack.length) { done = true; break; }
+        }
+      }
+    }
+    if (!done) return `第 ${i + 1} 行的流式映射/数组没闭合（go-yaml 会整站构建失败）：${trimmed.slice(0, 60)}`;
+  }
+  return null;
+}
+
 export function validateAuthorsYaml(text: string): string | null {
   const raw = String(text ?? '').replace(/\r\n/g, '\n');
   const contentLines = raw.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'));
   if (!contentLines.length) return null; // 只有注释或空文件：当作空表放行，前台自己回退
+
+  const flowBad = flowBracketProblem(raw);
+  if (flowBad) return flowBad;
 
   const entries = scanLines(raw.replace(/\t/g, '  ')).entries;
   if (!entries.length) return '一行作者条目都没认出来：顶层要写成「作者标识:」，资料缩进两空格';
