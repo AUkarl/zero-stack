@@ -15,10 +15,8 @@ import {
   getAuthorsFile,
   parseAuthorsYaml,
   putAuthorsFile,
-  readAuthorsSnapshot,
   readAuthorProfile,
   resolveAuthorHandle,
-  restoreAuthorsSnapshot,
   siteAuthorName,
   upsertAuthor,
   validateAuthorsYaml,
@@ -2009,61 +2007,6 @@ app.put('/authors/file', async (c) => {
     bytes: parsed.data.content.length,
     build: done.build,
     buildHealth: done.buildHealth,
-  });
-});
-
-/**
- * GET /api/admin/authors/prev —— 有没有可撤销的上一份作者表（只回元信息，正文不走接口）。
- * 每次写作者表（整份保存、作者认证、站长资料保存）之前都会留一份旧文本，这里给后台判按钮状态。
- */
-app.get('/authors/prev', async (c) => {
-  requireAdmin(c);
-  const snapshot = await readAuthorsSnapshot(c.env);
-  if (!snapshot) return ok({ exists: false });
-  return ok({
-    exists: true,
-    path: snapshot.path,
-    bytes: snapshot.content.length,
-    savedAt: snapshot.savedAt,
-    actor: snapshot.actor ?? '',
-    reason: snapshot.reason ?? '',
-  });
-});
-
-/**
- * POST /api/admin/authors/rollback —— 把作者表退回上一次保存之前的内容。
- * 写回前照常体检（快照本身写坏时不覆盖现网），写回后照常跑构建体检 —— 这条路径同样可能触发整站构建失败。
- * 写回动作本身又会留一份「撤销前」的快照，撤销错了还能再撤销回来。
- */
-app.post('/authors/rollback', async (c) => {
-  const admin = requireAdmin(c);
-  const restored = await restoreAuthorsSnapshot(c.env, { actor: admin, ip: clientIp(c), audit: false }).catch((e) =>
-    fail(400, errorMessage(e)),
-  );
-  const done = await finishRepoWrites(c.env, 1).catch(() => ({ build: null, buildHealth: null }));
-  await writeAudit(c.env, {
-    actor: admin,
-    action: 'authorRequest',
-    target: restored.result.path ?? (await authorsFilePath(c.env)),
-    detail: {
-      event: 'authors-rollback',
-      backend: restored.result.backend,
-      sha: restored.result.sha ?? null,
-      restoredFrom: { path: restored.snapshot.path, savedAt: restored.snapshot.savedAt, bytes: restored.snapshot.content.length },
-      build: done.build,
-      buildHealth: done.buildHealth,
-    },
-    ip: clientIp(c),
-  });
-  return ok({
-    path: restored.result.path,
-    sha: restored.result.sha ?? null,
-    backend: restored.result.backend,
-    bytes: restored.snapshot.content.length,
-    restoredFrom: { savedAt: restored.snapshot.savedAt, path: restored.snapshot.path },
-    build: done.build,
-    buildHealth: done.buildHealth,
-    receipt: buildReceipt(done.build, `作者表已退回 ${restored.snapshot.savedAt || '上一次保存'} 之前的内容`),
   });
 });
 

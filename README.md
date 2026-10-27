@@ -219,7 +219,7 @@ Worker 让桥在站点目录里真跑一次 `hugo --minify -d .zero-doctor`，�
 「fine-grained PAT（`Contents: write`）提交 → Pages 构建 Hook 重建」，
 代码里两条路径都在 `packages/api/src/services/repo.ts`，行为一致。
 
-### 6. 冒烟测试（匿名 38 项 + 3 跳过；带 Cookie 99 项）
+### 6. 冒烟测试（匿名 37 项 + 3 跳过；带 Cookie 97 项）
 
 ```bash
 pnpm smoke                                               # 同上，只是包一层
@@ -230,7 +230,7 @@ ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh     # 追加后台接口
 `ADMIN_COOKIE` 从浏览器登录后台后复制。匿名那一档不写库、不删数据，
 匿名评论那条结尾自己用 `ownerKey` 删掉；给了 Cookie 会先建一篇临时文章
 （点赞与收藏要核对文章在站上真的存在），跑完删掉。全绿输出是
-`通过 38 / 失败 0 / 跳过 3`（匿名）与 `通过 99 / 失败 0 / 跳过 0`（带 Cookie）。
+`通过 37 / 失败 0 / 跳过 3`（匿名）与 `通过 97 / 失败 0 / 跳过 0`（带 Cookie）。
 「跳过」是这条需要脚本当前拿不到的条件（比如没 Cookie 就建不出文章、
 匿名读不到后台的 `avatarTemplate`），既不算通过也不算失败 —— 汇总里会逐条写明原因。
 
@@ -607,7 +607,7 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 | `pnpm build:comment` | 产出 `packages/comment/dist/zero-comment.js`，再由主题 `scripts/sync-comment.mjs` 复制过去 |
 | `pnpm db:migrate:local` / `:remote` | 单独应用迁移 |
 | `pnpm check` | `typecheck:scripts` → `-r typecheck` → `-r build`，与 `ci.yml` 一致 |
-| `pnpm smoke` / `bash scripts/smoke.sh` | 接口冒烟（匿名 38 项 + 3 跳过；带 `ADMIN_COOKIE` 99 项），结尾自清临时文章 |
+| `pnpm smoke` / `bash scripts/smoke.sh` | 接口冒烟（匿名 37 项 + 3 跳过；带 `ADMIN_COOKIE` 97 项），结尾自清临时文章 |
 
 更细的生产步骤、故障排查与 GitHub Actions 模板见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。
 

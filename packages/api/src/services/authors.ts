@@ -20,7 +20,6 @@ import { readRepoFile, writeRepoFile, type RepoBackend, type RepoFileResult } fr
 import type { AuditAction } from './audit';
 import { canonHandle } from '../lib/slug';
 import { isEmail } from '../lib/avatar';
-import { kvGet, kvPut } from './kv-cache';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -822,72 +821,12 @@ export async function ownerAuthorProfile(env: Env): Promise<AuthorProfile | null
 export async function putAuthorsFile(env: Env, text: string, opts: AuthorsWriteOptions = {}): Promise<RepoFileResult> {
   const path = await authorsFilePath(env);
   const message = (opts.message ?? '').trim() || `zero-cms: 更新作者资料表 ${path}`;
-  // 写之前留一份旧文本：作者表是「一键清空全站署名」最容易发生的地方，后台要能一键退回去
-  const before = await readRepoFile(env, path).catch(() => null);
-  if (before && before.content !== String(text ?? '')) {
-    await saveAuthorsSnapshot(env, {
-      path,
-      content: before.content,
-      sha: before.sha ?? '',
-      savedAt: new Date().toISOString(),
-      actor: String(opts.actor?.name ?? opts.actor?.id ?? '').slice(0, 80),
-      reason: message.slice(0, 160),
-    });
-  }
   return writeRepoFile(env, path, String(text ?? ''), message, {
     actor: opts.actor ?? null,
     ip: opts.ip,
     action: opts.action ?? 'authorRequest',
     audit: opts.audit,
   });
-}
-
-/* ---------------------------------------------------- 上一次保存的快照（可撤销） */
-
-/** 只留最近一份：撤销是「刚才那次保存写坏了」的应急出口，不需要历史版本树 */
-const AUTHORS_PREV_KEY = 'zero:authors:prev';
-const AUTHORS_PREV_TTL = 30 * 24 * 60 * 60;
-
-export interface AuthorsSnapshot {
-  path: string;
-  content: string;
-  sha: string;
-  savedAt: string;
-  actor?: string;
-  reason?: string;
-}
-
-export async function readAuthorsSnapshot(env: Env): Promise<AuthorsSnapshot | null> {
-  const value = await kvGet(env, AUTHORS_PREV_KEY);
-  if (!value || typeof value !== 'object') return null;
-  const s = value as Partial<AuthorsSnapshot>;
-  if (typeof s.content !== 'string' || !s.content.trim()) return null;
-  return {
-    path: String(s.path ?? AUTHORS_FILE_DEFAULT),
-    content: s.content,
-    sha: String(s.sha ?? ''),
-    savedAt: String(s.savedAt ?? ''),
-    actor: s.actor ? String(s.actor) : undefined,
-    reason: s.reason ? String(s.reason) : undefined,
-  };
-}
-
-async function saveAuthorsSnapshot(env: Env, snapshot: AuthorsSnapshot): Promise<void> {
-  await kvPut(env, AUTHORS_PREV_KEY, snapshot, AUTHORS_PREV_TTL);
-}
-
-/** 撤销接口用：把快照文本写回仓库（写入本身会再留一份「撤销前」的快照，撤销错了还能再改回来） */
-export async function restoreAuthorsSnapshot(env: Env, opts: AuthorsWriteOptions = {}): Promise<{ result: RepoFileResult; snapshot: AuthorsSnapshot }> {
-  const snapshot = await readAuthorsSnapshot(env);
-  if (!snapshot) throw new Error('没有可撤销的上一次保存（快照只保留最近一次，且最多 30 天）');
-  const problem = validateAuthorsYaml(snapshot.content);
-  if (problem) throw new Error(`上一次保存的快照本身解析失败，未写回：${problem}`);
-  const result = await putAuthorsFile(env, snapshot.content, {
-    ...opts,
-    message: (opts.message ?? '').trim() || `zero-cms: 撤销上一次作者表保存${snapshot.savedAt ? `（回到 ${snapshot.savedAt}）` : ''}`,
-  });
-  if (!result.success) throw new Error(result.error ?? '作者表写回失败');
-  return { result, snapshot };
 }
 
 /**

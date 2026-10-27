@@ -164,7 +164,7 @@ fi
 section '守卫：管理员接口未登录必须 401'
 for p in /api/admin/config /api/admin/content /api/admin/users /api/admin/subscribers \
          /api/admin/posts /api/admin/media/buckets /api/admin/broadcast/jobs \
-         /api/admin/spam/pattern-file /api/admin/deletions /api/admin/authors/prev /api/account/overview /api/security; do
+         /api/admin/spam/pattern-file /api/admin/deletions /api/account/overview /api/security; do
   req GET "$p" 401 '' "401 $p"
 done
 
@@ -236,7 +236,6 @@ SMOKE_UTF8_JSON
   req GET '/api/admin/media/buckets' 200 '' '存储桶列表（脱敏）' "$ADMIN_COOKIE"
   printf '%s' "$BODY_TEXT" | grep -q 'secretAccessKey' && printf '  \033[33m!\033[0m 存储桶响应里出现了 secretAccessKey，请核对脱敏\n'
   req GET '/api/admin/authors/file' 200,404 '' '作者表读取' "$ADMIN_COOKIE"
-  req GET '/api/admin/authors/prev' 200 '' '作者表撤销点（上一次保存的快照）' "$ADMIN_COOKIE"
   req GET '/api/admin/drafts?status=pending' 200 '' '投稿列表' "$ADMIN_COOKIE"
   req GET '/api/admin/friends' 200 '' '友链与站点联盟分组列表' "$ADMIN_COOKIE"
   req GET '/api/admin/stats' 200 '' '后台统计汇总' "$ADMIN_COOKIE"
