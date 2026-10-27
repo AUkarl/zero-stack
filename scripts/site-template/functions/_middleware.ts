@@ -23,6 +23,12 @@
  *
  * 想再多管一个页面：往 GATED 里加一行「路径前缀 → 开关键」，键必须真是 /api/config 暴露出来的那个
  * （后台「设置」里得有对应的开关，否则这里判不到关，页面照旧正常出）。
+ * 加了 GATED 还要同步 static/_routes.json 的 include（只把归开关管的路径交给这一层），
+ * 否则新页面的请求根本进不到这里，开关对它不生效。
+ *
+ * 哪些请求会进这一层由 static/_routes.json 决定：只有 GATED 里的前缀与 /sitemap.xml 会，
+ * 首页、文章页、静态资源都走 Pages 静态层（每个请求少一次函数调用）。所以安全响应头
+ * 在 static/_headers 里还有一份给静态响应用的 —— **改 CSP 时两份一起改**。
  */
 const API_BASE = '__ZERO_API_BASE__';
 

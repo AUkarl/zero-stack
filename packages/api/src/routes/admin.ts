@@ -15,8 +15,10 @@ import {
   getAuthorsFile,
   parseAuthorsYaml,
   putAuthorsFile,
+  readAuthorsSnapshot,
   readAuthorProfile,
   resolveAuthorHandle,
+  restoreAuthorsSnapshot,
   siteAuthorName,
   upsertAuthor,
   validateAuthorsYaml,
@@ -2010,6 +2012,61 @@ app.put('/authors/file', async (c) => {
   });
 });
 
+/**
+ * GET /api/admin/authors/prev —— 有没有可撤销的上一份作者表（只回元信息，正文不走接口）。
+ * 每次写作者表（整份保存、作者认证、站长资料保存）之前都会留一份旧文本，这里给后台判按钮状态。
+ */
+app.get('/authors/prev', async (c) => {
+  requireAdmin(c);
+  const snapshot = await readAuthorsSnapshot(c.env);
+  if (!snapshot) return ok({ exists: false });
+  return ok({
+    exists: true,
+    path: snapshot.path,
+    bytes: snapshot.content.length,
+    savedAt: snapshot.savedAt,
+    actor: snapshot.actor ?? '',
+    reason: snapshot.reason ?? '',
+  });
+});
+
+/**
+ * POST /api/admin/authors/rollback —— 把作者表退回上一次保存之前的内容。
+ * 写回前照常体检（快照本身写坏时不覆盖现网），写回后照常跑构建体检 —— 这条路径同样可能触发整站构建失败。
+ * 写回动作本身又会留一份「撤销前」的快照，撤销错了还能再撤销回来。
+ */
+app.post('/authors/rollback', async (c) => {
+  const admin = requireAdmin(c);
+  const restored = await restoreAuthorsSnapshot(c.env, { actor: admin, ip: clientIp(c), audit: false }).catch((e) =>
+    fail(400, errorMessage(e)),
+  );
+  const done = await finishRepoWrites(c.env, 1).catch(() => ({ build: null, buildHealth: null }));
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'authorRequest',
+    target: restored.result.path ?? (await authorsFilePath(c.env)),
+    detail: {
+      event: 'authors-rollback',
+      backend: restored.result.backend,
+      sha: restored.result.sha ?? null,
+      restoredFrom: { path: restored.snapshot.path, savedAt: restored.snapshot.savedAt, bytes: restored.snapshot.content.length },
+      build: done.build,
+      buildHealth: done.buildHealth,
+    },
+    ip: clientIp(c),
+  });
+  return ok({
+    path: restored.result.path,
+    sha: restored.result.sha ?? null,
+    backend: restored.result.backend,
+    bytes: restored.snapshot.content.length,
+    restoredFrom: { savedAt: restored.snapshot.savedAt, path: restored.snapshot.path },
+    build: done.build,
+    buildHealth: done.buildHealth,
+    receipt: buildReceipt(done.build, `作者表已退回 ${restored.snapshot.savedAt || '上一次保存'} 之前的内容`),
+  });
+});
+
 /* ---------------- 运行状况与数据统计 ---------------- */
 
 app.get('/health-detail', async (c) => {
@@ -2114,6 +2171,37 @@ app.get('/health-detail', async (c) => {
     secretConfigured: await emailOtpAvailable(env),
     credentialSource,
   };
+
+  /* 近 24 小时的发信结果：以前只看「凭据在不在」，一封封失败都盖在绿灯下面，
+     直到收件人自己来问。email_logs 里本来就有每条的状态，这里顺手统计一次。 */
+  try {
+    const since24 = Math.floor(Date.now() / 1000) - 86400;
+    const [day] = await db
+      .select({
+        sent: sql<number>`sum(case when ${emailLogs.status} = 'sent' then 1 else 0 end)`,
+        failed: sql<number>`sum(case when ${emailLogs.status} = 'failed' then 1 else 0 end)`,
+        queued: sql<number>`sum(case when ${emailLogs.status} = 'queued' then 1 else 0 end)`,
+      })
+      .from(emailLogs)
+      .where(gte(emailLogs.createdAt, since24));
+    const lastFail = await db
+      .select({ at: emailLogs.createdAt, error: emailLogs.error })
+      .from(emailLogs)
+      .where(and(eq(emailLogs.status, 'failed'), gte(emailLogs.createdAt, since24)))
+      .orderBy(desc(emailLogs.createdAt))
+      .limit(1);
+    checks.email = {
+      ...(checks.email as Record<string, unknown>),
+      last24h: {
+        sent: Number(day?.sent ?? 0),
+        failed: Number(day?.failed ?? 0),
+        queued: Number(day?.queued ?? 0),
+        lastError: lastFail[0] ? { at: lastFail[0].at, error: lastFail[0].error ?? '' } : null,
+      },
+    };
+  } catch (e) {
+    checks.email = { ...(checks.email as Record<string, unknown>), last24h: { error: errorMessage(e) } };
+  }
 
   /* 边缘缓存清除的配对状态。为什么算进运行状况：这两项没配时**不是报错**，而是删掉的文章
      在 CDN 上按 7 天 max-age 继续能访问（强刷也没用），而那只在「删除的回包备注」里说过一次，

@@ -117,6 +117,20 @@
   const pillDefs = $derived.by(() => {
     const chk = health?.checks ?? {};
     const email = chk.email ?? {};
+    const day = email.last24h ?? {};
+    const dayDetail =
+      typeof day.failed === 'number' && day.failed > 0
+        ? ` · 24h 失败 ${day.failed}`
+        : typeof day.sent === 'number' && day.sent > 0
+          ? ` · 24h 成功 ${day.sent}`
+          : '';
+    const dayTip =
+      typeof day.sent === 'number'
+        ? `近 24 小时：成功 ${day.sent}、失败 ${day.failed ?? 0}、待发 ${day.queued ?? 0}` +
+          (day.lastError ? `；最近一次失败 ${new Date(Number(day.lastError.at) * 1000).toLocaleString()}：${day.lastError.error || '无错误说明'}` : '')
+        : day.error
+          ? `近 24 小时发信统计读取失败：${day.error}`
+          : '';
     return [
       { key: 'd1', label: '数据库', ok: chk.d1?.ok !== false, detail: chk.d1?.detail ?? '', tip: 'D1 连通性：select 1 是否成功' },
       { key: 'r2', label: '对象存储', ok: chk.r2?.ok !== false, detail: chk.r2?.detail ?? '', tip: '只数私有桶（绑定 R2，默认 zero-media）里的对象：分页翻完，超过 5 万个标 +。公开桶与 media 桶不在此列' },
@@ -132,9 +146,11 @@
       {
         key: 'email',
         label: '发信',
-        ok: email.secretConfigured !== false,
-        detail: `${email.provider ?? 'smtp'}${email.credentialSource ? ` · ${email.credentialSource}` : ''}`,
-        tip: `凭据来源：${email.credentialSource ?? '未配置'}（后台填的密码与 wrangler secret 任一即可）；SMTP 主机 ${email.host || '未填'}，发件人 ${email.from || '未填'}`,
+        /* 只失败、没有一封成功 = 发信真的坏了，标红；偶发一两封失败（坏收件地址之类）
+           只把次数写在胶囊上，不让仪表盘整天挂着「异常」。 */
+        ok: email.secretConfigured !== false && !(typeof day.failed === 'number' && day.failed > 0 && !(day.sent > 0)),
+        detail: `${email.provider ?? 'smtp'}${email.credentialSource ? ` · ${email.credentialSource}` : ''}${dayDetail}`,
+        tip: `凭据来源：${email.credentialSource ?? '未配置'}（后台填的密码与 wrangler secret 任一即可）；SMTP 主机 ${email.host || '未填'}，发件人 ${email.from || '未填'}${dayTip ? `；${dayTip}` : ''}`,
       },
       {
         key: 'purge',

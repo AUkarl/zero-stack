@@ -22,6 +22,9 @@ export const EP = {
   securityGroup: '/api/security/group',
   /** GET / PUT 站长本人的作者资料（data/authors.yaml 里自己那一条） */
   authorsMe: '/api/admin/authors/me',
+  /** GET 有没有可撤销的上一份作者表（只回元信息）/ POST 退回上一次保存之前的内容 */
+  authorsPrev: '/api/admin/authors/prev',
+  authorsRollback: '/api/admin/authors/rollback',
   /** POST 改密码唯一入口：{ current, next, second, code? } */
   password: '/api/account/password',
   /** POST 发验证码：{ email, scene: 'register'|'login'|'reset'|'password' } */

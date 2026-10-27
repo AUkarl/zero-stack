@@ -507,13 +507,58 @@ exit 0
 }
 
 /**
+ * 与 functions/_middleware.ts 里那份 CSP 逐字一致（那边是静态层之外的响应、这份是静态响应用的）。
+ * 两份必须一起改：改一边不改另一边，表现是「首页被拦、被关停的 404 页不拦」这种只在部分页面出现的怪事。
+ */
+function siteCsp(apiBase: string): string {
+  const externalScripts =
+    'https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://gcore.jsdelivr.net https://unpkg.com https://giscus.app https://qzonestyle.gtimg.cn';
+  const externalStyles = 'https://cdn.jsdelivr.net https://unpkg.com';
+  let origin = '';
+  try {
+    const u = new URL(apiBase);
+    if (u.protocol === 'http:' || u.protocol === 'https:') origin = u.origin;
+  } catch {
+    origin = '';
+  }
+  let siblings = '';
+  if (origin) {
+    const host = new URL(origin).hostname;
+    if (host !== 'localhost' && !/^[0-9.]+$/.test(host)) {
+      const apex = host.split('.').slice(-2).join('.');
+      siblings = ` https://*.${apex} wss://*.${apex}`;
+    }
+  }
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline' ${externalScripts}`,
+    `style-src 'self' 'unsafe-inline' ${externalStyles}`,
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    `connect-src 'self'${origin ? ` ${origin}${siblings}` : ' https:'}`,
+    "media-src 'self' https: blob:",
+    "frame-src 'self' https:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+  ].join('; ');
+}
+
+/**
  * Cloudflare Pages 的响应头规则，写在站点根的 static/_headers（Hugo 原样拷进产物根目录）。
  *
  * 只给「改内容就会换名字」的资源上长缓存；HTML 一律回源校验 —— 后台发了文、改了开关，
  * 访客下一跳就该看到新页面，不能让 CDN 拿着旧的顶几天（这是站长的硬口径：不许让开关晚生效）。
  * Pages 会把多条命中规则的同名头**拼接**，所以下面几条刻意互不重叠。
+ *
+ * 安全响应头也在这里再写一份：`_routes.json` 把文章页、首页这些静态页面放给了 Pages 的静态层
+ * （不再进 Functions 中间件，省掉每个请求 ~0.4s 的函数开销），静态层只有这份 `_headers` 能补头。
+ * 两份必须逐字一致（CSP 里 connect-src 的接口域是从 API_BASE 推出来的，见下面的函数）；
+ * 中间件那份管「关停功能的 404」，这份管其它所有静态响应。
  */
-const SITE_HEADERS = `# 带内容指纹的样式与脚本：文件名带 hash，内容一变名字就变，可以放心存一年
+function siteHeaders(apiBase: string): string {
+  return `# 带内容指纹的样式与脚本：文件名带 hash，内容一变名字就变，可以放心存一年
 /css/*
   Cache-Control: public, max-age=31536000, immutable
 
@@ -533,10 +578,33 @@ const SITE_HEADERS = `# 带内容指纹的样式与脚本：文件名带 hash，
 /fa/*
   Cache-Control: public, max-age=604800
 
-# HTML 本身：始终回源校验，文章删除或改名后立即生效
+# 显式请求 .html 的那几个地址：始终回源校验。
+# （清洁地址 /posts/x/ 的请求路径不带 .html，命中的是 Pages 自己的默认缓存口径，不归这条管；
+#   也不能写成 /* —— Pages 会把命中规则的同名头拼在一起，/* 会把 max-age=0 加到上面的 css/js 上。）
 /*.html
   Cache-Control: public, max-age=0, must-revalidate
+
+# 安全响应头：必须与 functions/_middleware.ts 的 applySecurityHeaders 逐字一致
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)
+  Content-Security-Policy: ${siteCsp(apiBase)}
 `;
+}
+
+/**
+ * 边缘那一层只留「会变的」页面：被开关键管着的那几个前缀和站点地图。
+ * 其它路径（首页、文章、归档、静态资源）全部交给 Pages 的静态层 —— 那里的响应走 CDN 缓存，
+ * 比每个请求都进一次 Functions 中间件快得多；安全头由 _headers 补上。
+ * 前缀两条都写：/links 与 /links/、以及 /links/index.html 这种直连写法都要继续受开关管。
+ */
+function siteRoutes(): string {
+  const gated = ['/links', '/moments', '/subscribe', '/account', '/work', '/about'];
+  const include = [...gated.flatMap((p) => [p, `${p}/*`]), '/sitemap.xml'];
+  return `${JSON.stringify({ version: 1, include, exclude: [] }, null, 2)}\n`;
+}
 
 const SAMPLE_POST = `---
 title: "Hello World"
@@ -870,14 +938,19 @@ async function main(): Promise<void> {
   // 而前端登录成功后普通用户正是跳这里
   write(rel('content/zh/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
   write(rel('static/images/.gitkeep'), '');
-  /** 缓存规则：生成时就带上，省得站长发第一个月才发现 CDN 把 CSS 存了三天、改名后还在吐旧的 */
-  write(rel('static/_headers'), SITE_HEADERS);
+  const apiBase = (a.apiBaseURL ?? '').trim().replace(/\/+$/, '');
+  /** 缓存规则与安全响应头：生成时就带上，省得站长发第一个月才发现 CDN 把 CSS 存了三天、改名后还在吐旧的 */
+  write(rel('static/_headers'), siteHeaders(apiBase));
   /**
    * 边缘 404 中间件：后台把某个功能关掉时，那个页面直接 404 且带 noindex（旧链接与搜索引擎都拦掉）。
    * 只有配了后端才有意义（开关在 /api/config 里），纯静态站不生成这个文件。
+   * 配套的 _routes.json 只把「归开关管的页面 + 站点地图」交给 Functions，其余（首页、文章、静态资源）
+   * 走 Pages 静态层 —— 每个请求少一次函数调用的耗时；安全头由上面的 _headers 补。
    */
-  const apiBase = (a.apiBaseURL ?? '').trim().replace(/\/+$/, '');
-  if (apiBase) write(rel('functions/_middleware.ts'), switchGuard(apiBase));
+  if (apiBase) {
+    write(rel('functions/_middleware.ts'), switchGuard(apiBase));
+    write(rel('static/_routes.json'), siteRoutes());
+  }
   write(rel('.gitignore'), `.hugo_build.lock
 public/
 resources/
@@ -1110,6 +1183,12 @@ hugo server -D
   note(`· zero-stack 的 packages/api/wrangler.jsonc 里 ALLOWED_ORIGINS 加上 ${a.siteUrl}，然后 pnpm deploy:api（不加就是后台一请求就被 CORS 拒掉）`);
   note(`· 后台「设置 → 内容仓库」填 owner=${a.githubUser} / repo=${a.repoName}，并存一个有 contents:write 的 token（密钥只进 worker secret，不进仓库）`);
   note(`· 主题侧的接口地址已经写在生成好的 config/_default/params.toml 里（apiBaseURL = ${a.apiBaseURL}），不用再改`);
+  todo('（建议）把「站点构建失败」回报到后台：生成好的 deploy.yml 已经带了两步回报，缺的是两边同名的令牌');
+  note('自己在终端生成一串随机值，下面两条命令都粘同一串：');
+  note('TOKEN=$(openssl rand -hex 24)');
+  note(`cd zero-stack/packages/api && npx wrangler secret put BUILD_REPORT_TOKEN   # 粘贴同一串`);
+  note(`gh secret set BUILD_REPORT_TOKEN --repo ${a.githubUser}/${a.repoName}      # 内容仓的 Actions Secrets，也粘贴同一串`);
+  note('（API 地址脚本会从 params.toml 的 apiBaseURL 读，不用另配；不配令牌功能一切正常，只是后台看不到「Pages 构建挂了、前台停在旧版」）');
 }
 
 /** 只有直接被执行时才跑生成流程；被 import（比如建仓那步的验证脚本）时不能顺带把站生成一遍 */

@@ -126,7 +126,7 @@ fi
 
 req POST /api/comments 400 "{\"postSlug\":\"${SMOKE_SLUG}noemail/\",\"content\":\"缺邮箱必须被拒\"}" '缺邮箱 → 400'
 req POST /api/comments 400 "{\"postSlug\":\"${SMOKE_SLUG}badmail/\",\"content\":\"邮箱格式错\",\"email\":\"not-a-mail\"}" '邮箱格式错 → 400'
-req GET "/api/comments${SMOKE_SLUG}?owners=%7B%22${SMOKE_ID}%22%3A%22${OWNER_KEY}%22%7D&depth=6" 200 '' '带 ownerKey 能看见自己的待审评论'
+req GET "/api/comments${SMOKE_SLUG%/}?owners=%7B%22${SMOKE_ID}%22%3A%22${OWNER_KEY}%22%7D&depth=6" 200 '' '带 ownerKey 能看见自己的待审评论'
 printf '%s' "$BODY_TEXT" | grep -Eq '"ipHash":|"ip_hash":' \
   && { FAIL=$((FAIL + 1)); FAILED+=('评论响应泄漏了 ipHash'); printf '  \033[31m✗\033[0m %-56s\n' '评论响应不含 ipHash'; } \
   || { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '评论响应不外泄 ipHash/明文邮箱'; }
@@ -164,7 +164,7 @@ fi
 section '守卫：管理员接口未登录必须 401'
 for p in /api/admin/config /api/admin/content /api/admin/users /api/admin/subscribers \
          /api/admin/posts /api/admin/media/buckets /api/admin/broadcast/jobs \
-         /api/admin/spam/pattern-file /api/admin/deletions /api/account/overview /api/security; do
+         /api/admin/spam/pattern-file /api/admin/deletions /api/admin/authors/prev /api/account/overview /api/security; do
   req GET "$p" 401 '' "401 $p"
 done
 
@@ -236,6 +236,7 @@ SMOKE_UTF8_JSON
   req GET '/api/admin/media/buckets' 200 '' '存储桶列表（脱敏）' "$ADMIN_COOKIE"
   printf '%s' "$BODY_TEXT" | grep -q 'secretAccessKey' && printf '  \033[33m!\033[0m 存储桶响应里出现了 secretAccessKey，请核对脱敏\n'
   req GET '/api/admin/authors/file' 200,404 '' '作者表读取' "$ADMIN_COOKIE"
+  req GET '/api/admin/authors/prev' 200 '' '作者表撤销点（上一次保存的快照）' "$ADMIN_COOKIE"
   req GET '/api/admin/drafts?status=pending' 200 '' '投稿列表' "$ADMIN_COOKIE"
   req GET '/api/admin/friends' 200 '' '友链与站点联盟分组列表' "$ADMIN_COOKIE"
   req GET '/api/admin/stats' 200 '' '后台统计汇总' "$ADMIN_COOKIE"
@@ -252,6 +253,9 @@ SMOKE_UTF8_JSON
   printf '%s' "$BODY_TEXT" | grep -q 'credentialSource'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
 ' '发信胶囊带凭据来源（后台填的密码也算）'; }     || { FAIL=$((FAIL + 1)); FAILED+=('缺 credentialSource'); printf '  ✗ %-56s
 ' '发信胶囊带凭据来源（后台填的密码也算）'; }
+  printf '%s' "$BODY_TEXT" | grep -q '"last24h"'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
+' '发信胶囊带近 24 小时成功/失败数'; }     || { FAIL=$((FAIL + 1)); FAILED+=('缺 last24h 统计'); printf '  ✗ %-56s
+' '发信胶囊带近 24 小时成功/失败数'; }
   req GET '/api/admin/stats/content' 200 '' '文章与时刻的递归计数' "$ADMIN_COOKIE"
   printf '%s' "$BODY_TEXT" | grep -q '"posts":'     && { PASS=$((PASS + 1)); printf '  ✓ %-56s
 ' '文章数按 posts 目录递归统计'; }     || { FAIL=$((FAIL + 1)); FAILED+=('stats/content 缺 posts'); printf '  ✗ %-56s

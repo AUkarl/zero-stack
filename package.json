@@ -25,6 +25,7 @@
     "typecheck": "pnpm -r typecheck",
     "typecheck:scripts": "tsc -p tsconfig.json",
     "build": "pnpm -r build",
+    "smoke": "bash scripts/smoke.sh",
     "check": "pnpm typecheck:scripts && pnpm -r typecheck && pnpm -r build"
   },
   "devDependencies": {

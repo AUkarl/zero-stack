@@ -635,6 +635,11 @@ async function summary(a: Answers, apiUrl: string | null, pagesUrl: string | nul
       pub.baseUrl ? `${pub.baseUrl} 直链，不占 Worker 请求数（不重要的图放这里）` : '还没有可用的直链域名，图片先走 Worker 读取；到控制台 R2 → 该桶 → 自定义域名 绑好后，在后台该桶填「直链前缀」即成直链'
     }`,
   );
+  console.log('  6. （建议）开「站点构建失败」回报：generate 出来的 deploy.yml 自带两步回报，只差两边同名的令牌');
+  console.log('     TOKEN=$(openssl rand -hex 24)');
+  console.log('     cd packages/api && npx wrangler secret put BUILD_REPORT_TOKEN   # 粘同一串');
+  console.log('     gh secret set BUILD_REPORT_TOKEN --repo <owner>/<内容仓>         # 也粘同一串');
+  console.log('     不配也一切正常；配了以后「Pages 构建挂了、前台停在上一版」会直接显示在后台首页');
 }
 
 /** 少写协议头的地址只会让浏览器报 Failed to fetch，而那时候人只会去查后端 */

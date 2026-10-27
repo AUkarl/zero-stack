@@ -20,6 +20,7 @@ import { readRepoFile, writeRepoFile, type RepoBackend, type RepoFileResult } fr
 import type { AuditAction } from './audit';
 import { canonHandle } from '../lib/slug';
 import { isEmail } from '../lib/avatar';
+import { kvGet, kvPut } from './kv-cache';
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -224,10 +225,85 @@ function flowBracketProblem(raw: string): string | null {
   return null;
 }
 
+/**
+ * 缩进里出现 tab：我们的扫描把 tab 当两个空格容错，go-yaml 却直接报
+ * `found a tab character that violates indentation` → 整站构建失败。
+ * 块标量（| / >）内容里的 tab 合法，跳过；行内（值或注释里）的 tab 也不管。
+ */
+function tabIndentProblem(raw: string): string | null {
+  const lines = String(raw ?? '').replace(/\r\n/g, '\n').split('\n');
+  let blockIndent = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.trim()) continue;
+    const indent = line.length - line.trimStart().length;
+    if (blockIndent >= 0) {
+      if (indent > blockIndent) continue;
+      blockIndent = -1;
+    }
+    const body = stripInlineComment(line.trim());
+    if (!body) continue;
+    if (/(^|:\s*|-\s*)[|>][+\-]?\d*\s*$/.test(body)) blockIndent = indent;
+    if (/^[ ]*\t/.test(line)) return `第 ${i + 1} 行的缩进里有 tab（YAML 只认空格，go-yaml 会整站构建失败）`;
+  }
+  return null;
+}
+
+/**
+ * 重复的键：go-yaml（yaml.v3）对同一层映射里重复出现的键直接报
+ * `mapping key ... already defined` → 整站构建失败。同层 = 同一个父块下、同一个缩进；
+ * 两位作者各自写一份 `social:` 不算重复（各有各的父块）。
+ */
+function duplicateKeyProblem(raw: string): string | null {
+  const lines = String(raw ?? '').replace(/\r\n/g, '\n').replace(/\t/g, '  ').split('\n');
+  interface Scope { indent: number; keys: Set<string> }
+  const stack: Scope[] = [];
+  let blockIndent = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.trim()) continue;
+    const indent = line.length - line.trimStart().length;
+    if (blockIndent >= 0) {
+      if (indent > blockIndent) continue;
+      blockIndent = -1;
+    }
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#')) continue;
+    const body = stripInlineComment(trimmed);
+    if (!body) continue;
+    if (/(^|:\s*|-\s*)[|>][+\-]?\d*\s*$/.test(body)) {
+      blockIndent = indent;
+      continue;
+    }
+    const isSeq = isSeqItem(body);
+    const rest = isSeq ? body.replace(/^-\s*/, '') : body;
+    const kv = splitKeyValue(rest);
+    if (!kv) continue;
+    const keyIndent = isSeq ? indent + 2 : indent;
+
+    while (stack.length && stack[stack.length - 1]!.indent > keyIndent) stack.pop();
+    let scope = stack[stack.length - 1];
+    if (!scope || scope.indent < keyIndent) {
+      scope = { indent: keyIndent, keys: new Set() };
+      stack.push(scope);
+    }
+    if (scope.keys.has(kv.key)) return `第 ${i + 1} 行的键「${kv.key}」重复了（go-yaml 会整站构建失败）`;
+    scope.keys.add(kv.key);
+  }
+  return null;
+}
+
 export function validateAuthorsYaml(text: string): string | null {
   const raw = String(text ?? '').replace(/\r\n/g, '\n');
   const contentLines = raw.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'));
   if (!contentLines.length) return null; // 只有注释或空文件：当作空表放行，前台自己回退
+
+  // 先查这两条「我们认、go-yaml 不认」的写法，再查流式括号
+  const tabBad = tabIndentProblem(raw);
+  if (tabBad) return tabBad;
+  const dupBad = duplicateKeyProblem(raw);
+  if (dupBad) return dupBad;
 
   const flowBad = flowBracketProblem(raw);
   if (flowBad) return flowBad;
@@ -746,12 +822,72 @@ export async function ownerAuthorProfile(env: Env): Promise<AuthorProfile | null
 export async function putAuthorsFile(env: Env, text: string, opts: AuthorsWriteOptions = {}): Promise<RepoFileResult> {
   const path = await authorsFilePath(env);
   const message = (opts.message ?? '').trim() || `zero-cms: 更新作者资料表 ${path}`;
+  // 写之前留一份旧文本：作者表是「一键清空全站署名」最容易发生的地方，后台要能一键退回去
+  const before = await readRepoFile(env, path).catch(() => null);
+  if (before && before.content !== String(text ?? '')) {
+    await saveAuthorsSnapshot(env, {
+      path,
+      content: before.content,
+      sha: before.sha ?? '',
+      savedAt: new Date().toISOString(),
+      actor: String(opts.actor?.name ?? opts.actor?.id ?? '').slice(0, 80),
+      reason: message.slice(0, 160),
+    });
+  }
   return writeRepoFile(env, path, String(text ?? ''), message, {
     actor: opts.actor ?? null,
     ip: opts.ip,
     action: opts.action ?? 'authorRequest',
     audit: opts.audit,
   });
+}
+
+/* ---------------------------------------------------- 上一次保存的快照（可撤销） */
+
+/** 只留最近一份：撤销是「刚才那次保存写坏了」的应急出口，不需要历史版本树 */
+const AUTHORS_PREV_KEY = 'zero:authors:prev';
+const AUTHORS_PREV_TTL = 30 * 24 * 60 * 60;
+
+export interface AuthorsSnapshot {
+  path: string;
+  content: string;
+  sha: string;
+  savedAt: string;
+  actor?: string;
+  reason?: string;
+}
+
+export async function readAuthorsSnapshot(env: Env): Promise<AuthorsSnapshot | null> {
+  const value = await kvGet(env, AUTHORS_PREV_KEY);
+  if (!value || typeof value !== 'object') return null;
+  const s = value as Partial<AuthorsSnapshot>;
+  if (typeof s.content !== 'string' || !s.content.trim()) return null;
+  return {
+    path: String(s.path ?? AUTHORS_FILE_DEFAULT),
+    content: s.content,
+    sha: String(s.sha ?? ''),
+    savedAt: String(s.savedAt ?? ''),
+    actor: s.actor ? String(s.actor) : undefined,
+    reason: s.reason ? String(s.reason) : undefined,
+  };
+}
+
+async function saveAuthorsSnapshot(env: Env, snapshot: AuthorsSnapshot): Promise<void> {
+  await kvPut(env, AUTHORS_PREV_KEY, snapshot, AUTHORS_PREV_TTL);
+}
+
+/** 撤销接口用：把快照文本写回仓库（写入本身会再留一份「撤销前」的快照，撤销错了还能再改回来） */
+export async function restoreAuthorsSnapshot(env: Env, opts: AuthorsWriteOptions = {}): Promise<{ result: RepoFileResult; snapshot: AuthorsSnapshot }> {
+  const snapshot = await readAuthorsSnapshot(env);
+  if (!snapshot) throw new Error('没有可撤销的上一次保存（快照只保留最近一次，且最多 30 天）');
+  const problem = validateAuthorsYaml(snapshot.content);
+  if (problem) throw new Error(`上一次保存的快照本身解析失败，未写回：${problem}`);
+  const result = await putAuthorsFile(env, snapshot.content, {
+    ...opts,
+    message: (opts.message ?? '').trim() || `zero-cms: 撤销上一次作者表保存${snapshot.savedAt ? `（回到 ${snapshot.savedAt}）` : ''}`,
+  });
+  if (!result.success) throw new Error(result.error ?? '作者表写回失败');
+  return { result, snapshot };
 }
 
 /**

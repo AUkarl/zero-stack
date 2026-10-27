@@ -128,6 +128,7 @@
       await loadProfile();
       await loadSecurity();
       await loadAuthor();
+      await loadAuthorPrev();
     } finally {
       loading = false;
     }
@@ -228,6 +229,17 @@
   let authorSaving = $state(false);
   /** 站点当前把哪位作者当「站长」（config 键 defaultAuthor） */
   let authorDefault = $state('');
+  /** GET /api/admin/authors/prev：每次写作者表前留的快照（只留最近一份） */
+  interface AuthorsPrev {
+    exists: boolean;
+    path?: string;
+    bytes?: number;
+    savedAt?: string;
+    actor?: string;
+    reason?: string;
+  }
+  let authorPrev = $state<AuthorsPrev | null>(null);
+  let rollingBack = $state(false);
 
   function socialToMap(social: AuthorRow['social']): Record<string, string> {
     const out: Record<string, string> = {};
@@ -261,6 +273,37 @@
     authorSite = String(row.website ?? profile?.website ?? '');
     authorSocial = socialToMap(row.social);
     authorDonate = (row.donate ?? []).map(String).slice(0, 3);
+  }
+
+  /** GET /api/admin/authors/prev：有没有可撤销的上一份作者表 */
+  async function loadAuthorPrev() {
+    const d = await guard<AuthorsPrev>(EP.authorsPrev, () => get<{ data: AuthorsPrev }>(EP.authorsPrev));
+    authorPrev = d ?? { exists: false };
+  }
+
+  /** POST /api/admin/authors/rollback：把作者表退回上一次保存之前 */
+  async function rollbackAuthor() {
+    if (!authorPrev?.exists) return;
+    const when = authorPrev.savedAt ? new Date(authorPrev.savedAt).toLocaleString() : '上一次保存';
+    if (!window.confirm(`把作者表退回 ${when} 之前的内容？当前这份会被替换掉。`)) return;
+    rollingBack = true;
+    error = '';
+    notice = '';
+    try {
+      const d = await post<{
+        data: { path: string; restoredFrom: { savedAt: string }; receipt?: string; buildHealth?: BuildHealth | null };
+      }>(EP.authorsRollback, {});
+      const parts = [`作者表已退回 ${d.data?.restoredFrom?.savedAt ? new Date(d.data.restoredFrom.savedAt).toLocaleString() : '上一次保存'} 之前的内容`];
+      parts.push(d.data?.receipt || '站点重建状态接口没回结果，这次改动要等下一次构建才可见');
+      const warn = healthWarn(d.data?.buildHealth);
+      if (warn) parts.push(warn);
+      notice = parts.join('；');
+      await Promise.all([loadAuthor(), loadAuthorPrev()]);
+    } catch (e) {
+      error = errText(e);
+    } finally {
+      rollingBack = false;
+    }
   }
 
   /** PUT /api/admin/authors/me：只写作者资料，不碰账号资料与登录凭据 */
@@ -313,6 +356,8 @@
       const warn = healthWarn(d.data?.buildHealth);
       if (warn) parts.push(warn);
       notice = parts.join('；');
+      // 这次保存自己也会留一份快照，按钮状态要跟着变
+      void loadAuthorPrev();
     } catch (e) {
       error = errText(e);
     } finally {
@@ -686,6 +731,19 @@
       <button class="primary" onclick={() => void saveAuthor()} disabled={authorSaving}>
         {authorSaving ? '保存中…' : '保存作者资料'}
       </button>
+      <button
+        class="sm"
+        onclick={() => void rollbackAuthor()}
+        disabled={!authorPrev?.exists || rollingBack || authorSaving}
+        title={authorPrev?.exists
+          ? `退回 ${authorPrev.savedAt ? new Date(authorPrev.savedAt).toLocaleString() : '上一次保存'} 之前的作者表（${authorPrev.bytes ?? 0} 字节）`
+          : '还没有快照：每次保存作者表之前都会留一份，保存过一次才有可撤销的内容'}
+      >
+        {rollingBack ? '撤销中…' : '撤销上次保存'}
+      </button>
+      {#if authorPrev?.exists && authorPrev.savedAt}
+        <span class="muted small">上次保存于 {new Date(authorPrev.savedAt).toLocaleString()}</span>
+      {/if}
       {#if authorDefault && authorDefault !== authorHandle}
         <span class="muted small">
           注意：config 里的 defaultAuthor 现在是 <code>{authorDefault}</code>，保存本卡后会改指向 <code>{authorHandle}</code>。
