@@ -503,7 +503,7 @@ draftsAdmin.post('/:id/withdraw', async (c) => {
     // 文章下线了，顺手请 Pages 重建一次，否则线上还挂着旧文章
     const withdrawn = await finishRepoWrites(c.env, 1);
     health = withdrawn.buildHealth;
-    // 重建只换掉源站那一份，边缘缓存里那条地址还能撑 7 天 —— 一并清掉
+    // 重建只换掉源站那一份，边缘上那条地址的旧副本还在 —— 一并清掉
     purge = await purgePageUrls(c.env, [postWebPath(path)]);
   }
 

@@ -3,10 +3,12 @@ import { getConfig } from './config';
 /**
  * Cloudflare 边缘缓存按 URL 清除（Purge Cache）。
  *
- * 为什么删完文章还要这一步：Pages 出来的 HTML 在边缘是 `cache-control: public,
- * s-maxage=604800`（7 天）。仓库里的 markdown 删了、站点也重建了，边缘那一层照旧把
- * 旧的 index.html 端出来 —— 用户强刷也没用，因为他拿到的是 CDN 命中（响应头
- * cf-cache-status: HIT 就是这件事的凭据）。所以删除接口在重建之后还要把这一条地址清掉。
+ * 为什么删完文章还要这一步：重建只换掉**源站**那一份 HTML，Cloudflare 边缘上那条地址
+ * 还留着它自己缓存的旧副本 —— 用户拿到的是 CDN 命中（响应头 cf-cache-status: HIT 就是
+ * 这件事的凭据），连强刷都刷不掉，因为他请求的是边缘。仓库里的 markdown 删了、站点也
+ * 重建了，边缘那一层照旧把旧的 index.html 端出来。所以删除接口在重建之后还要清一次边缘。
+ * （浏览器侧的 HTML 已经由 _headers 成 max-age=0, must-revalidate，那是防「老访客停在旧页」，
+ *   管不到边缘这一份。）
  *
  * 只清被删的那几条地址（同一篇文章的带斜杠与不带斜杠两种写法），绝不调 purge_everything：
  * 整站清空会让后面每个访问都回源，免费计划的配额与首屏速度都吃亏。
@@ -29,7 +31,7 @@ const skipped = (urls: string[], detail: string): PurgeResult => ({ attempted: f
 export async function purgePageUrls(env: Env, webPaths: string[]): Promise<PurgeResult> {
   /* 只用站点前台域名：Pages 的 HTML 只在那一个域名下。曾经这里用的是 apiBase()，
      而 apiBaseUrl 优先 —— 那个是接口域名（后台登录过一次、订阅者点过确认链接就会被自动记下），
-     结果是「删了文章、清掉了接口域名下一条根本不存在的地址」，边缘那条 7 天缓存照旧端出旧页面。 */
+     结果是「删了文章、清掉了接口域名下一条根本不存在的地址」，边缘那条旧 HTML 照旧端给访客。 */
   const base = (((await getConfig(env, 'siteUrl')) ?? env.SITE_URL ?? '').trim()).replace(/\/+$/, '');
   if (!base) return skipped([], '站点地址（siteUrl）没配，不知道该清哪条 URL —— 请到后台「设置 → 站点信息」填站点域名后重新删除，或在 Cloudflare 控制台手动清');
   const urls = [...new Set(webPaths.filter(Boolean).map((p) => `${base}/${String(p).replace(/^\/+|\/+$/g, '')}/`))];

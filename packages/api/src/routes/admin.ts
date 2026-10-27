@@ -813,7 +813,7 @@ app.post('/content/batch', async (c) => {
  * 3. 摘掉这篇文章挂在数据库里的数据（评论、点赞/收藏、访问记录），
  *    不然它们会一直留在「热门页面 Top」和统计里，像这个页面还在；
  * 4. 把这条地址从 Cloudflare 边缘缓存里清掉（purge）—— 重建只换源站那一份，
- *    边缘按 7 天 max-age 还会继续端出旧页面，用户强刷也刷不掉。
+ *    边缘那一层照旧端出旧的 HTML，用户强刷也刷不掉（他请求的是 CDN 命中）。
  */
 app.delete('/content/file', async (c) => {
   const admin = requireAdmin(c);
@@ -858,7 +858,7 @@ app.delete('/content/file', async (c) => {
   await kvDelete(env, POSTS_CACHE_KEY);
   await purgeContentTitleCache(env, [path]);
   const build = c.req.query('build') === '0' ? null : await triggerPagesBuild(env);
-  /* 重建之外还要清边缘缓存：Pages 的 HTML 在 CDN 上是 7 天 max-age，
+  /* 重建之外还要清边缘缓存：重建只换源站那一份，边缘上旧的 HTML 副本还在，
      不清的话「后台删了文章、前端还能打开」会一直复现，而且用户强刷也没用。
      只有 markdown 文章才有站内地址；删别的文件（比如数据文件）不用清。 */
   const purge = ref ? await purgePageUrls(env, [contentWebPath(path)]) : null;
@@ -2147,7 +2147,7 @@ app.get('/health-detail', async (c) => {
   }
 
   /* 边缘缓存清除的配对状态。为什么算进运行状况：这两项没配时**不是报错**，而是删掉的文章
-     在 CDN 上按 7 天 max-age 继续能访问（强刷也没用），而那只在「删除的回包备注」里说过一次，
+     在 CDN 上继续能访问（边缘那份旧 HTML 还在，强刷也没用），而那只在「删除的回包备注」里说过一次，
      没人删文章就永远看不到。缺配置不该只在出错那一刻才说话。 */
   const purgeZone = ((await getConfig(env, 'cfZoneId')) ?? '').trim();
   const purgeTokenSet = Boolean(((await getConfig(env, 'cfPurgeToken')) ?? '').trim());

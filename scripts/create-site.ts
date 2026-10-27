@@ -569,14 +569,17 @@ function siteHeaders(apiBase: string): string {
 /images/*
   Cache-Control: public, max-age=31536000, immutable
 
-# static 里的原始图片（图标、头像等）：文件名不保证唯一，只给 7 天
+# static 里的原始图片（图标、头像等）：文件名不保证唯一，给一个月。
+# 代价要清楚：同名替换一张图（比如换 favicon、换头像），老访客最长一个月才看到新的；
+# 急着生效就把文件改成新名字（改引用即可），或到 Cloudflare 控制台手动清这一条 URL。
 /img/*
-  Cache-Control: public, max-age=604800
+  Cache-Control: public, max-age=2678400
 
 # 主题自带的 Font Awesome 在 /fa/ 下（css/all.min.css 与 webfonts/*）：文件名不带内容指纹，
-# 升级 FA 是同名替换，所以给 7 天、不给 immutable —— 锁一年会让访客拿旧字体整整一年，图标错位还刷不掉。
+# 升级 FA 是同名替换，同样给一个月、不给 immutable。要立刻换掉旧字体，就把 all.min.css
+# 改成带 hash 的名字（或控制台清缓存）；最长一个月的图标错位是这档缓存的代价。
 /fa/*
-  Cache-Control: public, max-age=604800
+  Cache-Control: public, max-age=2678400
 
 # 显式请求 .html 的那几个地址：始终回源校验。
 # （清洁地址 /posts/x/ 的请求路径不带 .html，命中的是 Pages 自己的默认缓存口径，不归这条管；
@@ -676,7 +679,8 @@ const SECTIONS: [string, string][] = [
  * - Pages 直连 Git 的构建**不会拉子模块**（Cloudflare 的行为），所以构建命令里要自己把主题取下来，
  *   见 pagesBuildCommand()。取的是主题默认分支的最新提交，所以任何一次重建都跟着最新主题走。
  *
- * 试构建这一道闸门保的是「本地构建 + 用 Actions 部署的那条路」：主题写坏了就不提交指针。
+ * 试构建 + 产物体检这两道闸门保的是「本地构建 + 用 Actions 部署的那条路」：
+ * 主题写坏了（构建红、或构建绿但产物里的数据/锚点坏了）就不提交指针，本站继续用旧主题。
  */
 function updateThemeWorkflow(a: Answers): string {
   return `# ============================================================
@@ -749,6 +753,13 @@ jobs:
       - name: 试构建（不过就不提交）
         if: steps.check.outputs.up_to_date == 'false'
         run: hugo --minify --destination "$RUNNER_TEMP/hugo-check"
+
+      # 构建成功 ≠ 页面没坏。主题里那类「模板不报错、产物却坏了」的问题
+      # （搜索数据里混进数字、样式退回阻塞外链、前端依赖的锚点被改名）只有查产物才看得出来。
+      # 判据在主题仓库里，这里直接当升级闸门用：不过就不提交指针，本站继续用旧主题。
+      - name: 产物体检（不过就不提交指针）
+        if: steps.check.outputs.up_to_date == 'false'
+        run: node themes/zero/scripts/check-build.mjs "$RUNNER_TEMP/hugo-check"
 
       - name: 提交并推送新的子模块指针
         if: steps.check.outputs.up_to_date == 'false'
