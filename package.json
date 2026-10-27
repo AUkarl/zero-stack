@@ -26,7 +26,8 @@
     "typecheck:scripts": "tsc -p tsconfig.json",
     "build": "pnpm -r build",
     "smoke": "bash scripts/smoke.sh",
-    "check": "pnpm typecheck:scripts && pnpm -r typecheck && pnpm -r build"
+    "check": "pnpm typecheck:scripts && pnpm -r typecheck && pnpm -r build",
+    "test": "node --import tsx --test \"packages/api/test/*.test.ts\""
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

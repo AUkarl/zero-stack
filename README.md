@@ -600,13 +600,14 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 | `pnpm setup` | 交互式部署向导（资源 → 渲染 wrangler.jsonc → 迁移 → 写站点配置 → 部署 Worker → 写密钥 → 部署后台），`-- --no-deploy` 只做到写站点配置 |
 | `pnpm deploy:api` | 同步 D1 迁移并部署 Worker，`-- --no-migrate` / `-- --dry-run` / `-- --local` |
 | `pnpm deploy:cms` | 构建后台并部署 Pages，`-- --api <worker 地址>` / `-- --no-build` / `-- --project <名称>` |
-| `pnpm create:site` | 生成私密的 `zero-site` 内容仓库骨架（含 CI 与 submodule） |
+| `pnpm create:site` | 生成私密的 `zero-site` 内容仓库骨架（含 CI 与 submodule、`_headers`/`_routes.json`、构建回报脚本、站内搜索页） |
 | `pnpm migrate:waline` | Waline / Twikoo 导出 → D1 评论表 |
 | `pnpm dev:api` / `pnpm dev:cms` | 本地开发（8787 / 5173） |
 | `pnpm repo:bridge` / `pnpm mock:translate` | 本地回写替身（8792）/ 翻译替身（8791） |
 | `pnpm build:comment` | 产出 `packages/comment/dist/zero-comment.js`，再由主题 `scripts/sync-comment.mjs` 复制过去 |
 | `pnpm db:migrate:local` / `:remote` | 单独应用迁移 |
 | `pnpm check` | `typecheck:scripts` → `-r typecheck` → `-r build`，与 `ci.yml` 一致 |
+| `pnpm test` | 纯函数小测（作者表 YAML 校验、文章站内地址），CI 里也会跑 |
 | `pnpm smoke` / `bash scripts/smoke.sh` | 接口冒烟（匿名 37 项 + 3 跳过；带 `ADMIN_COOKIE` 97 项），结尾自清临时文章 |
 
 更细的生产步骤、故障排查与 GitHub Actions 模板见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。

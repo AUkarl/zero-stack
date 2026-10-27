@@ -28,6 +28,9 @@ jobs:
         run: pnpm typecheck:scripts
       - name: Type check
         run: pnpm -r typecheck
+      - name: Unit tests
+        # 纯函数小测（作者表 YAML 校验、文章站内地址）；不写库、不联网
+        run: pnpm test
       - name: Prepare wrangler config
         # packages/api/wrangler.jsonc 被 gitignore（里面是各人自己的 D1/R2/KV id）。
         # 少了它，wrangler 会退回「框架自动探测」，认出 Hono 后直接报

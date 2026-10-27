@@ -920,7 +920,7 @@ async function main(): Promise<void> {
   step('创建目录与示例内容');
   /** 内容一律在 content/zh/ 下：hugo.toml 里 [languages.zh] contentDir 认的就是这一层，
       后台 githubPostsDir / githubMomentsDir 的默认值也按它写 */
-  const dirs = ['content/zh/posts', 'content/zh/moments', 'content/zh/links', 'static/images', 'data', '.github/workflows'];
+  const dirs = ['content/zh/posts', 'content/zh/moments', 'content/zh/links', 'content/zh/search', 'static/images', 'data', '.github/workflows'];
   for (const [dir] of SECTIONS) dirs.push(`content/zh/${dir}`);
   for (const d of dirs) mkdirSync(resolve(siteDir, d), { recursive: true });
   info(siteDir);
@@ -937,6 +937,9 @@ async function main(): Promise<void> {
   // 个人中心：主题在 layouts/account/me/list.html 渲染它，少了这份内容页 /account/me/ 就是 404，
   // 而前端登录成功后普通用户正是跳这里
   write(rel('content/zh/account/me/_index.md'), '---\ntitle: "个人中心"\ntype: "account"\nlayout: "me"\n---\n');
+  /* 站内搜索：索引在构建期生成到 /search/index.json（主题 layouts/search/list.json），
+     HTML 与 JSON 两种输出都要在这里声明；导航里的「搜索」由主题在检测到这一页时自动补。 */
+  write(rel('content/zh/search/_index.md'), '---\ntitle: "搜索"\noutputs: ["HTML", "JSON"]\n---\n');
   write(rel('static/images/.gitkeep'), '');
   const apiBase = (a.apiBaseURL ?? '').trim().replace(/\/+$/, '');
   /** 缓存规则与安全响应头：生成时就带上，省得站长发第一个月才发现 CDN 把 CSS 存了三天、改名后还在吐旧的 */
