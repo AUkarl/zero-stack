@@ -25,7 +25,7 @@ import { deleteCommentSubtree } from '../services/comment-tree';
 import { notifySelfTest, quotedCommentHtml } from '../services/comment-notify';
 import { contentTitles, purgeContentTitleCache } from '../services/content-title';
 import { linksFilePath } from '../services/friends-file';
-import { setSiteDefaultAuthor, writeSwitchSnapshot } from './frontend';
+import { setSiteDefaultAuthor, writeSwitchSnapshot, syncCommentCsp } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
 import { clientIp } from '../lib/http';
@@ -168,8 +168,15 @@ app.patch('/config', async (c) => {
   let switchSnapshot: { written: boolean; path?: string; keys?: number; error?: string } | undefined;
   if (changed.some((x) => /Enabled$/.test(x.key))) switchSnapshot = await writeSwitchSnapshot(c.env);
 
+  /* 动过评论区用哪家、或那家的参数 → 把它的接口域补进 CSP 的那两份文件。
+     不补的现场是：切到 waline/artalk/twikoo 后脚本样式都进得来，唯独它们自己的请求被
+     connect-src 拦掉，评论区一直转圈而页面照常出（见 services/csp-connect.ts 的说明）。
+     写不进仓库不影响「设置已生效」这件事，所以同样只报状态，绝不把整次保存说成失败。 */
+  const touchedComment = changed.some((x) => x.key === 'commentProvider' || x.key === 'momentCommentProvider' || x.key === 'commentProviders');
+  const cspSync = touchedComment ? await syncCommentCsp(c.env, admin, clientIp(c)) : undefined;
+
   /* 写失败要说成写失败：以前整批只在最后 ok，中间某条 D1 出错时界面照样显示「已保存」 */
-  return ok({ updated: changed.length, keys: changed.map((x) => x.key), changed, failed, switchSnapshot });
+  return ok({ updated: changed.length, keys: changed.map((x) => x.key), changed, failed, switchSnapshot, cspSync });
 });
 
 /* ---------------- 评论审核 ---------------- */

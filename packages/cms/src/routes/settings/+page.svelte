@@ -78,7 +78,9 @@
           key: 'commentProviders',
           label: '第三方评论参数（JSON）',
           kind: 'textarea',
-          hint: '{"waline":{"serverURL":"…"},"twikoo":{"envId":"…"},"giscus":{…},"artalk":{…}}；切到 zero 时不需要填',
+          hint: '{"waline":{"serverURL":"…"},"twikoo":{"envId":"…"},"giscus":{…},"artalk":{…}}；切到 zero 时不需要填。'
+            + '保存时会自动把 waline/artalk 的接口域补进站点 CSP（含 wss://，改了 static/_headers 与 functions/_middleware.ts 两份，Pages 随之重建）；'
+            + 'twikoo 只给 envId 时认不出域，请写 "serviceUrl":"https://你的域名"',
         },
       ],
     },
@@ -554,14 +556,31 @@
     try {
       const payload: Record<string, string | number | boolean | null> = {};
       for (const key of changed) payload[key] = clearSecrets.includes(key) && !cfg[key] ? null : coerce(key, cfg[key]);
-      const d = await patch<{ data: { updated: number; failed?: { key: string; error: string }[] } }>('/api/admin/config', payload);
+      const d = await patch<{
+        data: {
+          updated: number;
+          failed?: { key: string; error: string }[];
+          cspSync?: { written: string[]; origins: string[]; notes?: string[]; error?: string };
+        };
+      }>('/api/admin/config', payload);
       clearSecrets = [];
       await load();
       /* 后端现在是逐项写的，个别项失败必须说清楚是哪几项：以前一律「已保存 N 项」，写失败也照说 */
       const failed = d.data?.failed ?? [];
       if (failed.length) error = `${failed.length} 项没写进去：${failed.map((f) => `${f.key}（${f.error}）`).join('、')}`;
       notice = d.data?.updated ? `已保存 ${d.data.updated} 项` : '提交的内容与现值相同，没有改动';
-      setTimeout(() => (notice = ''), 3000);
+      /* 评论接口域进 CSP 这件事是「保存顺带改了仓库两份文件」，必须让他看得见改了什么：
+         看不见的话，将来评论区空白时会先怀疑评论系统本身。这句比上面那句长，多留几秒。 */
+      const csp = d.data?.cspSync;
+      if (csp) {
+        if (csp.error) notice += `；CSP 没同步：${csp.error}`;
+        else if (csp.written?.length) {
+          notice += `；评论接口域已写进 CSP（${csp.origins.join('、') || '已摘除不再用的域'}，改了 ${csp.written.join(' 与 ')}，Pages 会随之重建）`;
+        } else if (csp.notes?.length) notice += `；CSP：${csp.notes.join(' ')}`;
+        setTimeout(() => (notice = ''), 12000);
+      } else {
+        setTimeout(() => (notice = ''), 3000);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : '保存失败';
     } finally {

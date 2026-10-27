@@ -17,9 +17,11 @@
  *   · 除 /sitemap.xml 以外，任何路径都不为了拿配置而多跑一次网络请求：
  *     只有「这条路径归 GATED 管」或「这是站点地图」才会去 fetch /api/config；
  *     图片、CSS、文章这些不归管的请求只是原样把响应递出去、顺手补三个头
- *   · CSP 里 connect-src 的那组域名是从上面的 API_BASE 推出来的：接口换成别的父域、
- *     或者评论后端（waline/twikoo 的 serverUrl）放到另一个域上，就要在这里补一行域名 ——
- *     漏补的现象是页面正常出、评论区一直转或统计一直零，浏览器控制台里能看到 CSP 拦的那条
+ *   · CSP 里 connect-src 的那组域名是从上面的 API_BASE 推出来的；接口换成别的父域时这里跟着变。
+ *     第三方评论系统（waline / artalk / twikoo）的接口域**不用手补**：后台「站点设置 → 评论」
+ *     存下服务地址时，zero-cms 会把域写进下面那段 COMMENT_CONNECT，并同步补进 static/_headers。
+ *     手工补也认（照 marker 那一行的形状加一个域即可），但手补的域不会被自动摘掉
+ *   · 漏补 CSP 域的现象是页面正常出、评论区一直转或统计一直零，浏览器控制台里能看到 CSP 拦的那条
  *
  * 想再多管一个页面：往 GATED 里加一行「路径前缀 → 开关键」，键必须真是 /api/config 暴露出来的那个
  * （后台「设置」里得有对应的开关，否则这里判不到关，页面照旧正常出）。
@@ -123,6 +125,24 @@ const EXTERNAL_SCRIPTS =
   'https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://gcore.jsdelivr.net https://unpkg.com https://giscus.app https://qzonestyle.gtimg.cn';
 const EXTERNAL_STYLES = 'https://cdn.jsdelivr.net https://unpkg.com';
 
+/** https://x → wss://x、http://x → ws://x（评论系统的实时推送走 WebSocket，只放 https 会看着好了、socket 仍被拦） */
+function wsTwin(origin: string): string {
+  if (origin.startsWith('https://')) return `wss://${origin.slice(8)}`;
+  if (origin.startsWith('http://')) return `ws://${origin.slice(7)}`;
+  return origin;
+}
+
+/**
+ * 第三方评论系统的接口域 —— zero-cms 自动维护，别手改这一对标记之间的内容。
+ * 后台「站点设置 → 评论」存下 waline / artalk / twikoo 的服务地址时，会把域写到下面这行，
+ * 并同步补进 static/_headers 的 connect-src（两份必须一致，漏一份的表现是评论只在某几类页面上得起来：
+ * 首页与文章页归 _headers，被开关管的 /links/ /moments/ 归这份）。
+ * wss:// 与同一个域一起生效，不用另写一行。
+ */
+// zero-cms:csp-connect:begin
+const COMMENT_CONNECT: string[] = [];
+// zero-cms:csp-connect:end
+
 const CSP = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline' ${EXTERNAL_SCRIPTS}`,
@@ -132,7 +152,7 @@ const CSP = [
   "font-src 'self' data:",
   // API_BASE 还没填对（占位没换、地址不成形）时不能把评论与统计锁死：那一下是静默的，
   // 页面照常出、只有评论区一直转圈，最难查。所以这一档退回 https:，等地址填对自动收紧。
-  `connect-src 'self'${API_ORIGIN ? ` ${API_ORIGIN}${API_SIBLINGS}` : ' https:'}`,
+  `connect-src 'self'${API_ORIGIN ? ` ${API_ORIGIN}${API_SIBLINGS}` : ' https:'}${COMMENT_CONNECT.map((o) => ` ${o} ${wsTwin(o)}`).join('')}`,
   "media-src 'self' https: blob:",
   // 正文允许嵌各家播放器（bilibili / 优酷 / 腾讯 / 网易云 / 酷狗 / YouTube…），域名清单堵不完；
   // 框架里是另一份文档，读不到本站的 DOM 与 Cookie，放开这条不给注入脚本增加执行能力

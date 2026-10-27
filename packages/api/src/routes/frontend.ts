@@ -5,6 +5,12 @@ import { getAllConfig, getConfig, setConfig } from '../services/config';
 import { requireAdmin } from '../middleware/auth';
 import { buildReceipt, triggerPagesBuild } from '../services/git';
 import { invalidateSiteNameCache } from '../services/site-name';
+import {
+  applyConnectOriginsToHeaders,
+  applyManagedOriginsToMiddleware,
+  commentConnectOrigins,
+  readManagedOrigins,
+} from '../services/csp-connect';
 import { clientIp } from '../lib/http';
 import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
@@ -486,6 +492,65 @@ export async function writeSwitchSnapshot(
   return res.success
     ? { written: true, path, keys: Object.keys(snap).length }
     : { written: false, path, error: res.error ?? '写入失败' };
+}
+
+/**
+ * 把「当前在用的第三方评论系统的接口域」同步进 CSP 的那两份文件。
+ *
+ * 为什么必须有这一件：CSP 的 connect-src 只放了接口自己的域与同父域通配，
+ * 切到 waline / artalk / twikoo 之后脚本与样式都进得来（jsdelivr 在 script/style 白名单里），
+ * 唯独它们往自己服务器发的那几个请求被拦 —— 页面照常出、评论区一直转圈，
+ * 控制台一句 CSP 违规。文档里原本写着让人手补（DEPLOYMENT 的排查表），这里改成保存时就补上。
+ *
+ * 两份一起提交（一次 commit、一次 Pages 重建）：只改一份会出现「文章页评论正常、
+ * 时刻页空白」这种半好半坏，比不改更难查。
+ * 摘除只摘我们自己写进去的那些域（账本在中间件的 marker 里），人手补的域一个不碰。
+ */
+export async function syncCommentCsp(
+  env: Env,
+  actor?: { id?: string | null; name?: string | null } | null,
+  ip?: string,
+): Promise<{ written: string[]; origins: string[]; notes: string[]; error?: string }> {
+  const backend = await repoBackend(env);
+  if (backend === 'none') return { written: [], origins: [], notes: [], error: '没配内容仓库，CSP 没处改' };
+
+  const provider = (await getConfig(env, 'commentProvider')) ?? 'zero';
+  const momentProvider = (await getConfig(env, 'momentCommentProvider')) ?? 'zero';
+  const providersJson = (await getConfig(env, 'commentProviders')) ?? '';
+  const { origins, notes } = commentConnectOrigins({ provider, momentProvider, providersJson });
+
+  const mw = await readRepoFile(env, 'functions/_middleware.ts').catch(() => null);
+  const hd = await readRepoFile(env, 'static/_headers').catch(() => null);
+  /* marker 里那份就是「我们补过哪些域」的账本。老站文件里没有 marker 时账本是空的，
+     于是这次只会往里加、不会误删任何东西；而两家评论区都回到 zero 且文件本来没 marker，
+     就什么都不做（不能为了「补一段结构」给一个从不用第三方评论的站插一条空提交）。 */
+  const managed = mw ? (readManagedOrigins(mw.content) ?? []) : [];
+  if (!mw) notes.push('这个站没有 functions/_middleware.ts（生成站点时还没配接口地址）—— 这次的域只补进 static/_headers。');
+  if (!hd) notes.push('没读到 static/_headers，这次只改了边缘中间件那一份。');
+
+  const add = origins.filter((o) => !managed.includes(o));
+  const remove = managed.filter((o) => !origins.includes(o));
+  if (!add.length && !remove.length) return { written: [], origins, notes };
+
+  const files: { path: string; content: string }[] = [];
+  if (mw && (add.length || remove.length)) {
+    /* 走到这里要么有新域要写、要么 marker 里有过域要摘，
+       不会出现「给一个从不用第三方评论的站补一段空结构」——那种情况上面已经提前返回了。 */
+    const r = applyManagedOriginsToMiddleware(mw.content, origins);
+    if (r.changed) files.push({ path: 'functions/_middleware.ts', content: r.text });
+    else if (r.reason) notes.push(r.reason);
+  }
+  if (hd) {
+    const r = applyConnectOriginsToHeaders(hd.content, add, remove);
+    if (r.changed) files.push({ path: 'static/_headers', content: r.text });
+    else if (r.reason) notes.push(r.reason);
+  }
+  if (!files.length) return { written: [], origins, notes };
+
+  const msg = `zero-cms: 评论接口域进 CSP（补 ${add.join(' ') || '无'}${remove.length ? ` / 摘 ${remove.join(' ')}` : ''}）`;
+  const res = await commitRepoFiles(env, files, msg, { actor: actor ?? null, ip, action: 'params' });
+  if (!res.success) return { written: [], origins, notes: [...notes, `CSP 没写进去：${res.error ?? '提交失败'}`] };
+  return { written: files.map((f) => f.path), origins, notes };
 }
 
 app.get('/', async (c) => {
