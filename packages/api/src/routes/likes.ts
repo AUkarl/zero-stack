@@ -31,7 +31,7 @@ function secret(env: Env): string {
  * 探一次仓库，结果在 KV 存 6 分钟；仓库读不动（没配、限流、网络）时按「存在」放过 ——
  * 反刷不能把正常点赞拦在门外。
  */
-async function targetExists(env: Env, slug: string): Promise<boolean> {
+export async function targetExists(env: Env, slug: string): Promise<boolean> {
   const clean = slug.replace(/^\/+|\/+$/g, '');
   const hit = /^(posts|moments)\/([^/]+)$/.exec(clean);
   if (!hit) return true;
@@ -51,15 +51,19 @@ async function targetExists(env: Env, slug: string): Promise<boolean> {
   ];
   let found = false;
   for (const dir of dirs) {
-    const file = `${dir.replace(/\/+$/, '')}/${hit[2]}.md`;
-    try {
-      if (await readRepoFile(env, file)) {
-        found = true;
-        break;
+    const base = `${dir.replace(/\/+$/, '')}/${hit[2]}`;
+    /* 扁平文件与页面包（post/index.md）都认；只认扁平会把 page bundle 站点整片判成 404。 */
+    for (const file of [`${base}.md`, `${base}/index.md`]) {
+      try {
+        if (await readRepoFile(env, file)) {
+          found = true;
+          break;
+        }
+      } catch {
+        return true;
       }
-    } catch {
-      return true;
     }
+    if (found) break;
   }
   try {
     await env.CACHE.put(cacheKey, found ? '1' : '0', { expirationTtl: 360 });

@@ -189,7 +189,8 @@ export async function notifyNewComment(input: NotifyInput): Promise<void> {
       const notifyingHimself = who.isAdmin || who.emails.has(adminEmail.trim().toLowerCase());
       if (!notifyingHimself) {
         const ownerName = await siteAuthorName(env);
-        push({ to: adminEmail, where: `${noun}「${articleTitle}」`, subject: `【${siteName}】新评论待处理`, nickname: ownerName });
+        const subject = comment.status === 'approved' ? `【${siteName}】新评论` : `【${siteName}】新评论待处理`;
+        push({ to: adminEmail, where: `${noun}「${articleTitle}」`, subject, nickname: ownerName });
       }
     }
 

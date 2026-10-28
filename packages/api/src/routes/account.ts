@@ -49,7 +49,7 @@ import {
   users,
   verifications,
 } from '../db/schema';
-import { requireAdmin, requireUser, sessionCookie } from '../middleware/auth';
+import { isCrossSiteRequest, requireAdmin, requireUser, sessionCookie, type Ctx } from '../middleware/auth';
 import { destroyUserSessions, issueSession } from '../services/auth';
 import { userGroupName, withAdminAuthorBits } from '../services/admin-author';
 import { writeAudit } from '../services/audit';
@@ -604,7 +604,7 @@ app.post('/password', async (c) => {
   // 改密即作废全部旧会话，再给当前浏览器换一枚新 token：其它设备下次要重新登录
   await destroyUserSessions(c.env, target.id);
   const { token, expiresAt } = await issueSession(c.env, target.id, { ip: clientIp(c), userAgent: userAgent(c) });
-  c.header('Set-Cookie', sessionCookie(token, Math.max(0, expiresAt - now), isSecure(c)));
+  c.header('Set-Cookie', sessionCookie(token, Math.max(0, expiresAt - now), isSecure(c), isCrossSiteRequest(c as unknown as Ctx)));
 
   await writeAudit(c.env, { actor: user, action: 'user', target: target.id, detail: { event: 'password.change', second }, ip: clientIp(c) });
   return ok({ changed: true, updatedAt: now, message: '密码已更新，其它设备需要重新登录' });

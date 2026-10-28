@@ -43,10 +43,28 @@ export function requireAdmin(c: Ctx): AuthUser {
   return user;
 }
 
-export function sessionCookie(token: string, maxAgeSeconds: number, secure: boolean): string {
-  const flags = [`${COOKIE_NAME}=${token}`, 'Path=/', `Max-Age=${Math.max(0, maxAgeSeconds)}`, 'HttpOnly', 'SameSite=Lax'];
+export function sessionCookie(token: string, maxAgeSeconds: number, secure: boolean, crossSite = false): string {
+  /* SameSite=Lax 在同一个可注册域（cms.example.com ↔ api.example.com）下工作；
+     默认的 pages.dev ↔ workers.dev 是跨站，Lax Cookie 不会被浏览器带上。
+     跨站请求且 HTTPS 时改用 None；HTTP 本地开发不能发 None（会被浏览器丢弃），保持 Lax。 */
+  const sameSite = crossSite && secure ? 'None' : 'Lax';
+  const flags = [`${COOKIE_NAME}=${token}`, 'Path=/', `Max-Age=${Math.max(0, maxAgeSeconds)}`, 'HttpOnly', `SameSite=${sameSite}`];
   if (secure) flags.push('Secure');
   return flags.join('; ');
+}
+
+/** 请求 Origin 与接口 Host 是否属于不同站点；只看最后两级域名，够处理 pages.dev/workers.dev 这类默认域。 */
+export function isCrossSiteRequest(c: Ctx): boolean {
+  const origin = c.req.header('origin');
+  if (!origin) return false;
+  try {
+    const o = new URL(origin);
+    const h = new URL(c.req.url);
+    const site = (host: string) => host.toLowerCase().split('.').slice(-2).join('.');
+    return site(o.hostname) !== site(h.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function clearSessionCookie(secure: boolean): string {

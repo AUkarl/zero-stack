@@ -1050,11 +1050,22 @@ hugo server -D
       submodulePending = true;
     }
   } catch (e) {
-    warn(`子模块自动添加失败（多为未登录/仓库不存在/网络受限）：${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
-    info(`请稍后手动执行：${submodule}`);
-    submodulePending = true;
-    mkdirSync(resolve(siteDir, 'themes/zero'), { recursive: true });
-    write(resolve(siteDir, 'themes/zero/.gitkeep'), '');
+    const detail = e instanceof Error ? e.message : String(e);
+    /* 以前这里只警告然后继续，生成一座没有 exampleSite、params 也不完整的「最小骨架」，
+       还让用户「初始化子模块后重跑 create:site」—— 而脚本下一轮会因为目录已存在直接拒绝。
+       半成品比明确失败更难查，所以这里清掉本次新生成的目录，把真实 Git 错误交给用户。 */
+    try {
+      rmSync(siteDir, { recursive: true, force: true });
+    } catch {
+      /* Windows 上目录被占用时清不掉；至少把路径与后续动作说清楚 */
+    }
+    die(
+      `主题子模块没拉下来，本次生成已中止：${detail}
+` +
+        `  请确认主题仓库地址可访问（${a.themeRepo}）、网络/凭据正常，然后重跑同一条命令。
+` +
+        (existsSync(siteDir) ? `  目录 ${siteDir} 仍有残留，请先手动清理（确认没有 hugo 进程占用）。` : ''),
+    );
   }
 
   const imported = importExampleSite(siteDir);

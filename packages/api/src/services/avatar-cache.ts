@@ -14,6 +14,7 @@
  * 列表侧每次最多预热 2 个最近没试过的（隔离内去重，10 分钟内不重复试），避免把慢源拖成雪崩。
  */
 import { emailMd5 } from '../lib/avatar';
+import { apiBase } from './config';
 import { objectUrl, putMediaObject, resolveBucket, type MediaBucket } from './media';
 
 /** 头像超过这个大小就不收（正常头像 5~80KB） */
@@ -33,7 +34,13 @@ export function avatarCacheKey(email: string): string | null {
 /** 该邮箱对应的稳定地址（不判断是否已缓存） */
 export async function avatarCachedUrl(env: Env, bucket: MediaBucket, email: string): Promise<string | null> {
   const key = avatarCacheKey(email);
-  return key ? objectUrl(env, bucket, key) : null;
+  if (!key) return null;
+  const url = await objectUrl(env, bucket, key);
+  /* objectUrl 在 mediaPublicUrl/桶 baseUrl 都没配时回的是站内相对路径；
+     评论组件会把 avatar 原样放进 <img src>，相对路径在站点域上就是 404（API 在另一个域）。
+     头像出口在这里统一补接口 origin，和 CMS 的 media-url 保持同一口径。 */
+  if (url && url.startsWith('/')) return `${(await apiBase(env)).replace(/\/+$/, '')}${url}`;
+  return url;
 }
 
 /**

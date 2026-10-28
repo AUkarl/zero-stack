@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { users, verifications } from '../db/schema';
-import { clearSessionCookie, requireUser, sessionCookie, tokenFromRequest, type Ctx } from '../middleware/auth';
+import { clearSessionCookie, isCrossSiteRequest, requireUser, sessionCookie, tokenFromRequest, type Ctx } from '../middleware/auth';
 import {
   createUser,
   destroySession,
@@ -125,7 +125,7 @@ async function loginGate(env: Env, row: UserRow): Promise<void> {
 }
 
 function sessionHeaders(c: Ctx, token: string, expiresAt: number): void {
-  c.header('Set-Cookie', sessionCookie(token, expiresAt - nowSec(), isSecure(c)));
+  c.header('Set-Cookie', sessionCookie(token, expiresAt - nowSec(), isSecure(c), isCrossSiteRequest(c)));
 }
 
 /* ---------------------------------------------------- 初始化状态（公开） */

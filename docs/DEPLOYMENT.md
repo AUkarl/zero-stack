@@ -232,6 +232,17 @@ VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
 前后端不同源时，前台与后台的 origin 都必须在 `packages/api/wrangler.jsonc` 的 `ALLOWED_ORIGINS` 里
 （逗号分隔，改动后需重新 `pnpm deploy:api`）。登录会话是 `HttpOnly` Cookie，浏览器本地联调用同源代理，见第 8 节。
 
+> **Cookie 还有一个 CORS 管不到的边界：SameSite。** 默认的 `*.pages.dev`（站点/后台）与
+> `*.workers.dev`（接口）属于不同站点，`SameSite=Lax` 的会话 Cookie 不会被跨站 XHR 带上，
+> 表现是「登录接口 200、下一页又未登录」。首选把三者绑到同一个父域
+> （`www.example.com` / `cms.example.com` / `api.example.com`），或给 Pages 加同源 `/api` 反代。
+> 代码在 HTTPS 跨站时会发 `SameSite=None; Secure` 作为兜底，但浏览器第三方 Cookie 策略仍可能拦截，
+> 不能替代同站部署。
+
+> **接口地址（`apiBaseUrl`）**：向导部署后会写进 D1；手工部署时请在后台「设置 → 内容仓库」填。
+> 群发邮件的退订链接、评论头像、媒体代理 URL 都按它拼绝对地址；留空会退回站点域名，
+> 而静态站没有 `/api` 代理，退订链接会 404。
+
 ---
 
 ## 5. 部署后自检
@@ -575,12 +586,12 @@ pnpm check   # 本地跑同一套校验
 | 构建报 `Error: Invalid package config …\node_modules\…\package.json while importing …`（`ERR_INVALID_PACKAGE_CONFIG`） | 不是代码问题：pnpm 物化到 `node_modules` 里的文件是**全零的 4096 字节**（安装被中断、杀软或磁盘那一刻没写进去），Node 读这类 package.json 就死在这里。`pnpm install --force` 只比 lockfile、不重物化文件，会回一句「Already up to date」什么也没修 —— 必须 `rm -rf node_modules packages/*/node_modules && pnpm install`。自查（数有几个 package.json 解析不了；三个不同目录的副本可能一起中招，因为它们同用一个 pnpm store）：`node -e "const fs=require('fs'),p=require('path');let bad=0,n=0;(function w(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const f=p.join(d,e.name);if(e.isDirectory())w(f);else if(e.name==='package.json'){n++;try{JSON.parse(fs.readFileSync(f))}catch{bad++;console.log('坏:',f)}}}})('node_modules/.pnpm');console.log(n,'个里',bad,'个坏')"` |
 | `pnpm setup` 说「尚未登录」，但 `pnpm exec wrangler whoami` 明显示已登录 | wrangler 各版本的 `whoami --json` 形状不同（4.x 平铺 `{loggedIn,authType,email,accounts}`、3.x 包一层 `result`、更早是 `auth.email`）。脚本现按 `scripts/_util.ts` 的 `parseWhoami()` 三种都认，API Token 登录（没有 email）也认；仍不行就直接设环境变量 `CLOUDFLARE_API_TOKEN`（配合 `CLOUDFLARE_ACCOUNT_ID`）跳过浏览器授权 |
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |
-| 后台提示 `AUTH_EXPIRED` / 401 | Cookie 跨域丢失：检查 `ALLOWED_ORIGINS` 是否包含后台 origin；换域名后需重新登录 |
+| 后台提示 `AUTH_EXPIRED` / 401 | Cookie 跨域丢失：先检查 `ALLOWED_ORIGINS` 是否包含后台 origin；再检查站点/后台与接口是否同一个可注册域（`*.pages.dev` ↔ `*.workers.dev` 是跨站，Lax Cookie 不会随请求发送，优先绑同一父域或同源反代）；换域名后需重新登录 |
 | 浏览量比真实少（或统计页一直是 0） | 入库判据是「UA 里带 `Mozilla/5.0` 且不命中 bot 名单」（`lib/http.ts` 的 `isBot`）：**没带 UA 或 UA 不是浏览器样子的，一律不计** —— 你自己的 curl / 同步脚本 / RSS 阅读器 / 无头浏览器访问都不会进统计，这是有意的（否则机器流量会把热门页 Top 抬虚）。要看被挡了多少：统计页 `botFilteredThisHour`（只算本实例这一小时，冷启动清零）。限流那条也在起作用：同一会话一小时 240 次以外的 /beat 不入库 |
 | 后台能打开、接口却全部失败，控制台报 CORS | `ALLOWED_ORIGINS` 是**精确字符串**匹配，差一个字符就不放行。Pages 每次预览部署的地址都不同（`https://<hash>.<项目名>.pages.dev`），只有生产地址稳定 —— 白名单填生产地址，并用生产地址访问后台；前台站点、自定义域名 Worker 各自都要列进来，逗号分隔，改完必须 `pnpm deploy:api` 才生效 |
 | 邮件全部 `failed` | `SMTP_PASSWORD` 未写入，或后台 `smtpHost/smtpPort/smtpUser/emailFrom` 未填。465 一定走隐式 TLS（实测阿里 465 用明文连过去 6 秒收不到一个字节），587 / 2525 走 STARTTLS；`smtpSecure` 只在非 465 端口上才有意义 —— 但请注意：**587 / 2525 这条 STARTTLS 路径本模板没有在真实服务商上端到端验证过**（本地只能用自签证书测到 TLS 握手层，Workers 运行时只信公共根证书），验证过的只有 465 隐式 TLS。 |
 | 587 / 2525 发不出去，报 `Network connection lost.` / `Stream was cancelled.` | 先按上一行的口径核对端口与「隐式 TLS」开关；再注意 `adapters/smtp.ts` 调 `socket.startTls()` 时**不传任何选项**——Workers 运行时（workerd）不认识 `expectedServerHostname`，传了只会打一行 `NOSENTRY` 然后把它丢掉（实测：调用本身不抛错，失败发生在其后的握手阶段），所以那一层没有主机名绑定可用。真要定位，请把「设置 → 发信方式 → 发一封测试信」的原文回执与 `email_logs` 那一条一起贴给服务商。 |
-| 群发/订阅推送显示「整批未发送」，任务仍留在排队 | 当日发信额度不够这次收件人数（`emailDailyLimit`，默认 100 封/天）。第二天 Cron 会自动续跑；要当天发完就把上限调到 ≥ 订阅人数，或分批发 |
+| 群发/订阅推送显示「整批未发送」，任务仍留在排队 | 当日发信额度不够这次收件人数（`emailDailyLimit`，默认 100 封/天）。任务列表现在会保留额度原因与收件人数；第二天 Cron 会自动续跑，要当天发完就把上限调到 ≥ 订阅人数，或分批发 |
 | QQ / 163 邮箱收不到信 | 必须用「授权码」而不是登录密码，且发件人地址要与 SMTP 账号一致；`smtpSecure` 对 465 没有意义（那端口只有隐式 TLS），587 / 2525 留 `false` 走 STARTTLS —— 在非 465 端口勾上它等于要求那个端口直接上 TLS，握手会谈不拢（这条同样**没在真实服务商上验证过**，写在这里是按协议应然，不是实测结论） |
 | 上传成功但图片 403 / 前台不显示 | 桶未开启公开访问且 `mediaPublicUrl` 没填；或 Markdown 里存的还是站内相对路径 —— 站点与 Worker 不同源时相对地址会指回站点。改 `mediaPublicUrl` 后重新插入一次即可，旧文章里的地址要手动替换 |
 | 后台「前端管理」保存报「未配置内容仓库」 | 这一页写的是站点的 `data/*.json`，需要仓库写回通道：`GITHUB_TOKEN` + `githubOwner/githubRepo`，或本地的 `GIT_LOCAL_DIR`（本地开发还要 `GIT_LOCAL_HTTP` 指向 `pnpm repo:bridge`） |

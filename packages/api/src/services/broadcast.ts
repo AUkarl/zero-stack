@@ -98,6 +98,11 @@ export async function runBroadcastJob(env: Env, jobId: string): Promise<RunSumma
   const recipients = Number(total[0]?.n ?? 0);
   const quota = await mailQuotaCheck(env, recipients);
   if (!quota.ok) {
+    /* 把原因和人数落回任务行：只在响应里给一次，后台刷新就只剩一个没有解释的 queued。 */
+    await db
+      .update(broadcastJobs)
+      .set({ recipientCount: recipients, error: quota.reason })
+      .where(eq(broadcastJobs.id, jobId));
     return { id: jobId, status: 'queued', recipients, sent: 0, failed: 0, error: quota.reason };
   }
 

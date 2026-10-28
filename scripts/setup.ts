@@ -260,6 +260,9 @@ function seedSiteConfig(a: Answers, mediaPublicUrl = ''): { written: string[]; f
   ];
   if (a.emailProvider === 'smtp') want.push(['smtpHost', (a.smtpHost ?? '').trim()], ['smtpPort', (a.smtpPort ?? '').trim()], ['smtpUser', user], ['emailFrom', user]);
   if (a.emailProvider === 'cloudflare') want.push(['cloudflareAccountId', (a.cfAccountId ?? '').trim()]);
+  /* 接口自己的域名：群发退订链接、评论头像、媒体代理都要用它。
+     自定义 API 域名在这里先写；没有时 deploy 之后用 worker 的 *.workers.dev 地址补写。 */
+  if ((a.apiUrl ?? '').trim()) want.push(['apiBaseUrl', (a.apiUrl ?? '').trim().replace(/\/+$/, '')]);
   /* 公开桶没绑自定义域名时，图片地址走 Worker 代理（/api/media/…）—— 没有这个绝对前缀，
      写进正文的就是站内相对路径，站点与接口不同源时张都是裂图。 */
   if (mediaPublicUrl.trim()) want.push(['mediaPublicUrl', mediaPublicUrl.trim().replace(/\/+$/, '')]);
@@ -722,6 +725,16 @@ async function main(): Promise<void> {
   }
   /** 绑了自定义域名就用它编进后台产物：*.workers.dev 在很多网络根本连不通 */
   const finalApiUrl = apiUrl || workerUrl;
+  /* deploy 输出才知道默认 worker 域名；写进 D1 后，退订链接/头像/媒体代理才有绝对 origin。
+     不写也不会立刻坏，但默认 workers.dev 部署会退到 siteUrl —— 那是 Pages，没有 /api 代理。 */
+  if (finalApiUrl) {
+    try {
+      const r = upsertConfigValue('apiBaseUrl', finalApiUrl, 'string');
+      if (!r.ok) warn(`接口域名没写进 D1（${r.detail}）；请到后台「设置 → 内容仓库」填接口地址 ${finalApiUrl}。`);
+    } catch (e) {
+      warn(`接口域名没写进 D1：${e instanceof Error ? e.message : String(e)}；请到后台手工填 ${finalApiUrl}。`);
+    }
+  }
   const pagesUrl = deployCms(finalApiUrl);
   await summary(a, finalApiUrl, pagesUrl, apiUrl ? '（你填的自定义域名）' : '（取自 wrangler deploy 输出）', seeded.written, [...seeded.failed, ...bucketFailed], pub);
 }

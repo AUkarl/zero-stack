@@ -25,7 +25,7 @@ import { z } from 'zod';
 import { and, eq, sql } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { accounts, users } from '../db/schema';
-import { requireUser, sessionCookie } from '../middleware/auth';
+import { requireUser, isCrossSiteRequest, sessionCookie } from '../middleware/auth';
 import { issueSession } from '../services/auth';
 import { writeAudit } from '../services/audit';
 import { getConfig, getConfigBool } from '../services/config';
@@ -488,7 +488,7 @@ app.get('/github/callback', async (c) => {
     ip: clientIp(c),
   });
   const target = base + safeRedirect(saved.redirect, '/account/me/');
-  return redirectWith(withParam(target, 'gh', '已通过 GitHub 登录'), sessionCookie(token, expiresAt - nowSec(), c.req.url.startsWith('https://')));
+  return redirectWith(withParam(target, 'gh', '已通过 GitHub 登录'), sessionCookie(token, expiresAt - nowSec(), c.req.url.startsWith('https://'), isCrossSiteRequest(c)));
 });
 
 const unbindSchema = z.object({

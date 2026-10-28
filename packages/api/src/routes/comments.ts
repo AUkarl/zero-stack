@@ -11,13 +11,13 @@ import { fail, ok } from '../lib/errors';
 import { canonSlug } from '../lib/slug';
 import { clientIp, userAgent } from '../lib/http';
 import { hashIp, visitorMeta } from '../lib/ua';
-import { rateLimit } from '../lib/rate-limit';
+import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
 import { requireAdmin, tokenFromRequest } from '../middleware/auth';
 import { bannedByToken } from '../services/auth';
 import { inspectComment, type Verdict } from '../services/moderation';
 import { deleteCommentSubtree } from '../services/comment-tree';
 import { notifyNewComment, type NotifyParent } from '../services/comment-notify';
-import { commentLikeStatsForSlug, toggleCommentLike } from './likes';
+import { commentLikeStatsForSlug, targetExists, toggleCommentLike } from './likes';
 /**
  * 首字母色块的算法**只在 comment 包里存一份**（前端也要用同一个口径才能保住既有颜色），
  * 所以这里是跨包引用源文件 —— 与 services/email-content.ts 引 markdown 渲染器是同一条路子。
@@ -614,6 +614,9 @@ app.post('/', async (c) => {
 
   // 上限后台可配；设成 0 表示不限流（只靠蜜罐、关键词打分与先审后发）
   await rateLimit(c, 'comment', await getConfigInt(env, 'commentRateLimit', 10), 3600, body.postSlug);
+  /* 按文章分桶之外再加一把纯 IP 总桶：否则换一个 slug 就是一只新桶，
+     脚本可以无限写不存在的页面，顺带把站长的提醒邮箱灌满。 */
+  rateLimitLocal(c, 'comment-ip', 60, 3600);
 
   const db = createDb(env);
   const user = c.get('user') ?? null;
@@ -627,6 +630,9 @@ app.post('/', async (c) => {
   const content = body.content.trim();
   if (!content) fail(400, '内容不能为空');
   const slug = canonSlug(body.postSlug);
+  /* 与点赞同一个存在性判据：文章/时刻必须在内容仓库里真有这个文件。
+     以前任意编一个 /posts/xxx/ 都能攒评论与通知；静态页（/links/ 等）仍按 false 放过。 */
+  if (!(await targetExists(env, slug))) fail(404, '这一页在站上不存在，无法评论');
 
   let depth = 1;
   let rootId: string | null = null;

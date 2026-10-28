@@ -814,9 +814,11 @@ export async function recordApiOrigin(env: Env, requestUrl: string | undefined):
     return;
   }
   const host = origin.replace(/^https?:\/\//, '');
-  // 只收纯来源，且排除 Cloudflare 的临时域名
+  // 只收纯来源；Pages 的 <hash>.pages.dev 是每次预览都变的临时域，跳过。
+  // *.workers.dev 是稳定地址（同一个 Worker 不会换域名），必须收：
+  // 群发退订链接与头像绝对地址都靠它，默认部署不能用自定义 API 域名时更关键。
   if (!/^https?:\/\/[^/?#]+$/.test(origin)) return;
-  if (/\.(workers|pages)\.dev$/.test(host)) return;
+  if (/\.pages\.dev$/.test(host)) return;
   /* 有人用 http:// 打到接口时不能照原样记：那样退订链接就是明文地址。
      本地开发（127.0.0.1 / localhost）保持 http，其余一律归一到 https。 */
   if (origin.startsWith('http://') && !/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) origin = `https://${host}`;

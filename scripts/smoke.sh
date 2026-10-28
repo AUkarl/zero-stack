@@ -22,8 +22,9 @@ SKIP=0
 SKIPPED=()
 FAILED=()
 BODY_TEXT=''
-# 每轮用一个独立的文章标识，绕开「同 IP + 同文章每小时 10 条」的评论限流
-SMOKE_SLUG="/posts/smoke-$(date +%s)-$((10000+RANDOM))/"
+# 匿名评论落在静态页 /links/：文章/时刻的评论现在会核对仓库里的文件，脚本不能再用随机假 slug。
+# 同一 IP 对 /links/ 的评论仍受后台 commentRateLimit 限制（默认 10 条/小时）。
+SMOKE_SLUG="/links/"
 # 点赞/收藏要文章在站上真的存在（接口会去仓库核对），所以有后台 Cookie 时先建一篇临时文章，
 # 结尾删掉；没有 Cookie 就只能退回示例站那篇 /posts/nowork/，它不在就跳过（见下面那一节）。
 SMOKE_POST_PATH=""

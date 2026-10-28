@@ -7,7 +7,7 @@
  */
 
 import { getConfig } from './config';
-import { deleteViaTarget, listDirViaTarget, readFileFrom, resolveRepoTarget, runLocalBuildCheck, buildHealthReceipt, targetFromInput, writeViaTarget } from './repo';
+import { deleteViaTarget, listDirViaTarget, readFileFrom, repoBackend, resolveRepoTarget, runLocalBuildCheck, buildHealthReceipt, targetFromInput, writeViaTarget } from './repo';
 import type { RepoEntry, RepoFile, RepoFileResult, RepoTarget } from './repo';
 
 /** 历史导出名，调用方遍布后台各路由，保留 */
@@ -62,20 +62,21 @@ export async function listDir(input: GitFileInput): Promise<RepoEntry[]> {
  * 站主每次发文都看到一句吓人的话，而站点其实照常重建了。
  * viaCommit 就是把这个区别说清楚：没去调 Hook，但提交会自己触发。
  */
-export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean; viaCommit?: boolean; error?: string }> {
+export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean; viaCommit?: boolean; error?: string; backend?: 'github' | 'local' | 'none' }> {
+  const backend = await repoBackend(env);
   const hook = await getConfig(env, 'cloudflarePagesBuildHook');
   // error 仍然给一句短原因：后台有几处是直接打印它的，留空会退化成「接口没回结果」这种更吓人的话
-  if (!hook) return { triggered: false, viaCommit: true, error: '没配 Pages 构建 Hook' };
+  if (!hook) return { triggered: false, viaCommit: backend === 'github', error: backend === 'github' ? '没配 Pages 构建 Hook' : '本地后端不产生 Git 提交', backend };
   try {
     const res = await fetch(hook, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    if (!res.ok) return { triggered: false, error: `Pages 返回 ${res.status}` };
-    return { triggered: true };
+    if (!res.ok) return { triggered: false, error: `Pages 返回 ${res.status}`, backend };
+    return { triggered: true, backend };
   } catch (e) {
-    return { triggered: false, error: e instanceof Error ? e.message : String(e) };
+    return { triggered: false, error: e instanceof Error ? e.message : String(e), backend };
   }
 }
 
@@ -86,11 +87,14 @@ export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean;
  * 静态站不重建等于什么都没发生，这句必须按实际结果拼。
  */
 export function buildReceipt(
-  build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null,
+  build: { triggered?: boolean; viaCommit?: boolean; error?: string; backend?: 'github' | 'local' | 'none' } | null,
   savedText: string,
 ): string {
   if (!build) return `${savedText}，没请求站点重建（前台要等下次自动构建）`;
   if (build.triggered) return `${savedText}，已请求站点重建`;
+  if (build.backend === 'local') {
+    return `${savedText}，已写入本地目录（本地后端不产生 Git 提交；站点由 hugo server 按文件变化重建）`;
+  }
   if (build.viaCommit) {
     return `${savedText}，站点按 Git 集成随这次提交重建（若前台几分钟内没变，说明你的 Pages 不是 Git 集成构建，需在后台填「Pages 构建 Hook」）`;
   }
