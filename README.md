@@ -237,7 +237,19 @@ ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh     # 追加后台接口
 「跳过」是这条需要脚本当前拿不到的条件（比如没 Cookie 就建不出文章、
 匿名读不到后台的 `avatarTemplate`），既不算通过也不算失败 —— 汇总里会逐条写明原因。
 
-### 7. 端口一览
+### 7. 部署后核验（只读，约 10 秒）
+
+```bash
+API=https://<worker 域名> CMS=https://<后台域名> SITE=https://<站点域名> pnpm postdeploy
+```
+
+只发 GET、不写任何数据：健康检查与迁移、「媒体库里登记的 R2 绑定是否都还在」
+（`wrangler deploy` 会用本地 `wrangler.jsonc` 整体覆盖远端，控制台手加的绑定被抹掉时这一项会红）、
+后台未登录必须 401、批量口 300/150 条不 500 且回包条目数对得上、公开配置不带密钥、
+友链里没有 `javascript:`、后台 CSP 只有一份、站点首页在线且 HTML 不做长缓存。
+任一项不符退出码 1，可以直接接在 `wrangler deploy` 后面跑。
+
+### 8. 端口一览
 
 | 端口 | 谁 | 说明 |
 | --- | --- | --- |
@@ -619,6 +631,7 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 | `pnpm check` | `typecheck:scripts` → `-r typecheck` → `-r build`，与 `ci.yml` 一致 |
 | `pnpm test` | 纯函数小测（作者表 YAML 校验、文章站内地址），CI 里也会跑 |
 | `pnpm smoke` / `bash scripts/smoke.sh` | 接口冒烟（匿名 37 项 + 3 跳过；带 `ADMIN_COOKIE` 97 项），结尾自清临时文章 |
+| `pnpm postdeploy` | 部署后只读核验（健康/迁移/媒体库绑定/后台守卫/批量口/CSP/站点在线），不写数据 |
 
 更细的生产步骤、故障排查与 GitHub Actions 模板见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。
 

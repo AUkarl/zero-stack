@@ -24,6 +24,7 @@ import account, { deletionsAdmin } from './routes/account';
 import security from './routes/security';
 import broadcastJobs from './routes/broadcast';
 import { getAllowedOrigins, getConfig, getPublicConfig, getAdminContactEmail, recordApiOrigin } from './services/config';
+import { listBuckets } from './services/media';
 import { rateLimit } from './lib/rate-limit';
 import { errorMessage } from './lib/errors';
 import type { AppEnv } from './lib/app';
@@ -178,6 +179,35 @@ app.get('/api/health', async (c) => {
     checks.r2 = { ok: true };
   } catch (e) {
     checks.r2 = { ok: false, detail: errorMessage(e) };
+  }
+
+  /**
+   * 后台可以登记多个 R2 存储位置（mediaBuckets），它们的绑定名只写在 site_config 里，
+   * `wrangler deploy` 用本地 wrangler.jsonc 整体覆盖远端时，控制台手加的绑定会被抹掉 ——
+   * 2026-10-21 就发生过一次 R2_MOL 被覆盖：媒体库少一个桶，直链却照常能开，属于静默半坏。
+   * 这里把每个 R2 存储位置的绑定逐个探一遍，缺哪个当场让 /api/health 变红。
+   */
+  try {
+    const r2Buckets = (await listBuckets(env)).filter((b) => b.kind === 'r2');
+    const bindings = env as unknown as Record<string, R2Bucket | undefined>;
+    let missing = 0;
+    for (const b of r2Buckets) {
+      const bucket = bindings[b.binding || 'R2'];
+      if (!bucket) {
+        missing++;
+        continue;
+      }
+      try {
+        await bucket.head('__probe__');
+      } catch {
+        missing++;
+      }
+    }
+    checks.mediaBuckets = missing
+      ? { ok: false, detail: `${r2Buckets.length} 个 R2 存储位置里有 ${missing} 个绑定不可用（多半是部署时被本地 wrangler.jsonc 覆盖掉了）` }
+      : { ok: true, detail: `${r2Buckets.length} 个 R2 存储位置可用` };
+  } catch (e) {
+    checks.mediaBuckets = { ok: false, detail: errorMessage(e) };
   }
 
   checks.email = {
