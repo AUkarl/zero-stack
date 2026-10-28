@@ -15,6 +15,7 @@
  */
 
 import { getConfig } from './config';
+import { z } from 'zod';
 import { configuredSiteName } from './site-name';
 import { readRepoFile, writeRepoFile, type RepoBackend, type RepoFileResult } from './repo';
 import type { AuditAction } from './audit';
@@ -980,6 +981,42 @@ export function socialKeyOf(raw: string): string {
   if (hit) return hit;
   return /^[a-z0-9_-]+$/i.test(s) ? s.toLowerCase() : s;
 }
+
+/**
+ * 社交方式里「同一个平台填了两条」的那几组，返回各自的原始标签（没重复就是空数组）。
+ *
+ * 判重必须按归一后的键：`GitHub` 与 `github`、「微博」与 `weibo` 落进 authors.yaml 是同一个键，
+ * 而 normalizeSocial 是 `out[key] = value` —— 后填的那条静默顶掉前一条，申请人那边一切「提交成功」。
+ * 认不出来的平台（键为空）不参与判重：它们在 normalizeSocial 那一步本来就会被跳过，
+ * 不该因为填了两条这种地址就把整份申请卡住。
+ */
+export function duplicateSocialLabels(rows: Array<{ platform?: string } | null | undefined>): string[] {
+  const byKey = new Map<string, string[]>();
+  for (const row of rows) {
+    const key = socialKeyOf(String(row?.platform ?? ''));
+    if (!key) continue;
+    byKey.set(key, [...(byKey.get(key) ?? []), cleanText(row?.platform)]);
+  }
+  return [...byKey.values()].filter((v) => v.length > 1).map((v) => v.join(' / '));
+}
+
+/**
+ * 「社交方式」那一段的入参形状：条数上限 + 同平台只许一条。
+ * 放在作者表这一侧，因为判重的口径就是落盘的口径（socialKeyOf 归一后的键）——
+ * 谁写作者表谁定这条规则，申请口（routes/account.ts）与后台编辑口都从这里取。
+ */
+export const socialRowsSchema = z
+  .array(
+    z.object({
+      platform: z.string().trim().max(30),
+      handle: z.string().trim().max(120),
+      proof: z.string().trim().max(300).optional(),
+    }),
+  )
+  .max(12)
+  .refine((rows) => duplicateSocialLabels(rows).length === 0, (rows) => ({
+    message: `社交方式里同一个平台只能填一条（重复的是：${duplicateSocialLabels(rows).join('、')}）—— 写进作者表时后填的那条会顶掉前一条，请只留你要公开的那个主页`,
+  }));
 
 const SOCIAL_HOMEpages: Record<string, (handle: string) => string> = {
   github: (h) => `https://github.com/${h}`,

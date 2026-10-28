@@ -208,7 +208,7 @@ app.get('/summary', async (c) => {
            以前 isBot 命中就静默丢掉（回 200 tracked:false），对着空表只能猜。
            口径写死在这里：本 isolate、当前小时窗口，冷启动清零，不是全站累计。 */
         botFilteredThisHour: botFilter.count,
-        botFilteredNote: '只统计本 Worker 实例这一个小时里被判为机器人的 /beat 请求；冷启动会清零，不是全站累计',
+        botFilteredNote: '入库的判据是「UA 里有 Mozilla/5.0，且不命中 bot/crawler/curl… 那份名单」——所以没带 UA 的脚本、自建同步工具、没设 UA 的老阅读器都算爬虫，不入库。计数只算本 Worker 实例这一个小时里的 /beat 请求，冷启动会清零，不是全站累计',
       };
     }),
   );

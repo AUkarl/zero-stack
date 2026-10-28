@@ -302,8 +302,8 @@ function fromVars(env: Env, key: ConfigKey): string | undefined {
   }
 }
 
-/** 代码兜底：只放与安全无关的中性默认值 */
-const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
+/** 代码兜底：只放与安全无关的中性默认值（导出只为让「闸门不误伤默认值」这条判据能直接读到真值） */
+export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   accountSystemEnabled: 'true',
   allowRegister: 'true',
   requireInviteCode: 'false',
@@ -454,6 +454,10 @@ export async function getConfigJson<T>(env: Env, key: ConfigKey, fallback: T): P
   try {
     return JSON.parse(v) as T;
   } catch {
+    /* 保存侧已经有入参闸门（jsonKeyBadValue），走到这里说明值是历史上写进去的。
+       回落默认值仍然要发生（不能让一个坏值打死功能），但必须留痕：
+       没这一句的话，现场就是「后台填的词表一条都不命中」而日志里干干净净。 */
+    console.warn(`[zero-api] 配置 ${key} 不是合法 JSON，本次按默认值处理（去后台重存一次即可）`);
     return fallback;
   }
 }
@@ -579,21 +583,35 @@ export const PROVIDER_IDS = ['zero', 'waline', 'twikoo', 'giscus', 'artalk'];
  * 查起来要从主题 JS 倒推回来（T3 体检实测：它不会打死评论区，但会白配一套参数）。
  * 空串仍是「不改 / 用默认」，放行。
  */
-export function jsonKeyBadValue(key: string, value: string): string | null {
-  if (key !== 'commentProviders') return null;
-  const v = value.trim();
-  if (!v) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(v);
-  } catch {
-    return 'commentProviders 要写成合法 JSON 对象，例如 {"waline":{"serverURL":"…"}}；现在这份解析不出来';
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return 'commentProviders 要写成「服务商名 → 参数」的对象（如 {"giscus":{"repo":"…"}}），不能是数组或纯字面量';
+type JsonShape = 'providerMap' | 'stringArray' | 'objectArray';
+export const JSON_CONFIG_KEYS: Record<string, JsonShape> = {
+  commentProviders: 'providerMap',
+  spamKeywords: 'stringArray',
+  friendApplyBlocklist: 'stringArray',
+  commentEmojiPacks: 'stringArray',
+  mediaBuckets: 'objectArray',
+};
+
+function stringArrayBad(key: string, parsed: unknown): string | null {
+  if (!Array.isArray(parsed)) return `${key} 要写成 JSON 数组，例如 ["博彩","广告"]；现在这份不是数组`;
+  const odd = parsed.filter((x) => typeof x !== 'string' || !String(x).trim());
+  if (odd.length) return `${key} 里只能放非空字符串，这几项不行：${odd.slice(0, 3).map((x) => JSON.stringify(x)).join(' / ')}`;
+  return null;
+}
+
+function objectArrayBad(key: string, parsed: unknown): string | null {
+  if (!Array.isArray(parsed)) return `${key} 要写成「对象数组」，例如 [{"id":"r2","label":"默认 R2","kind":"r2","binding":"R2"}]；现在这份不是数组`;
+  const odd = parsed.filter((x) => !x || typeof x !== 'object' || Array.isArray(x));
+  if (odd.length) return `${key} 里每一项都要是一个对象（有 id/label/kind 那几项），第 ${parsed.indexOf(odd[0]) + 1} 项不是`;
+  return null;
+}
+
+function providerMapBad(key: string, parsed: unknown): string | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return `${key} 要写成「服务商名 → 参数」的对象（如 {"giscus":{"repo":"…"}}），不能是数组或纯字面量`;
   }
   const bad = Object.keys(parsed as Record<string, unknown>).filter((k) => !PROVIDER_IDS.includes(k.toLowerCase()));
-  if (bad.length) return `commentProviders 里有代码不认识的键：${bad.join(' / ')}（可用：${PROVIDER_IDS.join(' / ')}）`;
+  if (bad.length) return `${key} 里有代码不认识的键：${bad.join(' / ')}（可用：${PROVIDER_IDS.join(' / ')}）`;
 
   /* 顶层键认得之后还要看**内层**：主题侧是 `fromAdmin[provider] || {}`，
      所以 `{"waline":1}` 这种「值不是对象」的写法既不报错也不生效（体检实测能写进库、回读也拿得到），
@@ -601,16 +619,60 @@ export function jsonKeyBadValue(key: string, value: string): string | null {
   const entries = Object.entries(parsed as Record<string, unknown>);
   for (const [p, conf] of entries) {
     if (typeof conf !== 'object' || conf === null || Array.isArray(conf)) {
-      return `commentProviders 里「${p}」那一项要写成参数对象，例如 {"${p}":{"serverURL":"https://…"}}；现在送的是 ${JSON.stringify(conf).slice(0, 40)}`;
+      return `${key} 里「${p}」那一项要写成参数对象，例如 {"${p}":{"serverURL":"https://…"}}；现在送的是 ${JSON.stringify(conf).slice(0, 40)}`;
     }
     const odd = Object.entries(conf as Record<string, unknown>).filter(
       ([, x]) => !(x === null || ['string', 'number', 'boolean'].includes(typeof x) || (Array.isArray(x) && x.every((i) => typeof i === 'string'))),
     );
     if (odd.length) {
-      return `commentProviders 里「${p}」的这些参数值要写成文字/数字/是·否（或字符串数组）：${odd.map(([k]) => k).join(' / ')}`;
+      return `${key} 里「${p}」的这些参数值要写成文字/数字/是·否（或字符串数组）：${odd.map(([k]) => k).join(' / ')}`;
     }
   }
   return null;
+}
+
+export function jsonKeyBadValue(key: string, value: string): string | null {
+  const shape = JSON_CONFIG_KEYS[key];
+  if (!shape) return null;
+  const v = value.trim();
+  if (!v) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(v);
+  } catch {
+    return shape === 'providerMap'
+      ? 'commentProviders 要写成合法 JSON 对象，例如 {"waline":{"serverURL":"…"}}；现在这份解析不出来'
+      : `${key} 要写成合法的 JSON 数组，例如 ["博彩"]；现在这份解析不出来（少个括号或引号，整组词表就会静默不生效）`;
+  }
+  if (shape === 'stringArray') return stringArrayBad(key, parsed);
+  if (shape === 'objectArray') return objectArrayBad(key, parsed);
+  return providerMapBad(key, parsed);
+}
+
+/**
+ * 文本类配置的长度上限，按「这个值最后被拼到哪儿」分档。
+ *
+ * 没有上限的现场是：站点名填成 5000 字也回「已保存」，而它会被拼进每页 `<title>`、
+ * `og:site_name`、JSON-LD 与 RSS —— 全站标题与结构化数据一起被撑爆，后台界面也跟着横向溢出。
+ * 每档都比现网任何一份正常配置宽一到两个数量级：只挡误粘贴与手滑，不挡正经文案。
+ */
+const NAME_KEYS = new Set(['siteName', 'emailFromName', 'totpIssuer', 'author', 'defaultAuthor', 'githubOwner', 'githubRepo', 'githubBranch', 'smtpUser', 'translateModel', 'cloudflareAccountId']);
+const PATH_SHAPE_KEYS = /(Url|URL|Endpoint|Host|Dir|File|Favicon|Logo|Token|Email|Hook|Zone|Model|Branch|Owner|Repo|User)$/;
+
+export function textKeyMaxLen(key: string): number {
+  if (key.startsWith('emailTemplate')) return 20000;
+  if (JSON_CONFIG_KEYS[key]) return 8000;
+  if (isSecretKey(key)) return 4096;
+  if (NAME_KEYS.has(key)) return 120;
+  if (PATH_SHAPE_KEYS.test(key)) return 500;
+  return 2000;
+}
+
+/** 超上限时给一句照着能改的话（哪一项、现在多长、上限多少） */
+export function lengthKeyBadValue(key: string, value: string): string | null {
+  const max = textKeyMaxLen(key);
+  if (value.length <= max) return null;
+  return `${key} 太长了（现在 ${value.length} 个字符，最多 ${max}）：这一项会被直接写进页面或邮件，超限时整批都不保存`;
 }
 
 /** 后台列表用的脱敏视图与「服务端是否已有值」标记 */

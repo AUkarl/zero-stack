@@ -175,7 +175,10 @@
   }
 
   async function removeJob(j: Job) {
-    if (!confirm(`删除任务「${j.subject}」？`)) return;
+    /* 后端对「排队中」和「已经跑过的」两种任务是两种处理（前者改成已取消、后者真删），
+       按钮只有一个，所以问句要说清按下之后列表里还有没有这一条。 */
+    const ask = j.status === 'queued' ? `取消任务「${j.subject}」？（会留在列表里，标记为已取消）` : `删除任务「${j.subject}」？（这条记录会从列表里去掉）`;
+    if (!confirm(ask)) return;
     jobsBusy = j.id;
     error = '';
     try {

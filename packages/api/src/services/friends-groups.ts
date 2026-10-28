@@ -19,6 +19,7 @@ import { addFriendToLinksFile, linksFileHas, removeFriendFromLinksFile, updateFr
 import { normalizeFriendUrl, type NewFriend } from './links-yaml';
 import { finishRepoWrites } from './git';
 import { newId } from '../lib/crypto';
+import { httpUrlField, optionalHttpUrlField } from '../lib/httpUrl';
 import { fail } from '../lib/errors';
 
 type FriendRow = typeof friends.$inferSelect;
@@ -47,20 +48,18 @@ export interface FriendItem {
   status: string;
 }
 
-const maybeUrl = z
-  .string()
-  .trim()
-  .url({ message: '需为 http(s):// 开头的完整地址' })
-  .max(500)
-  .optional()
-  .or(z.literal(''));
+/* 协议口径不在本文件里定：见 lib/httpUrl.ts。这一份以前是本文件手抄的（而且只抄了一半 ——
+   它用 zod 的 `.url()`，而那个判据不看协议，于是 `javascript:alert(1)` 存得进库、
+   回读也拿得到，最后被主题原样写进 `<a href>`）。现在三条写入口共用同一份。 */
+const maybeUrl = (label: string) =>
+  optionalHttpUrlField({ max: 500, message: `${label}需为 http(s) 开头的完整网址（其它协议不能出现在链接里）` });
 
 export const friendCreateSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  url: z.string().trim().url({ message: '需为 http(s):// 开头的完整地址' }).max(500),
+  url: httpUrlField({ max: 500 }),
   description: z.string().trim().max(200).optional().or(z.literal('')),
-  avatar: maybeUrl,
-  rssUrl: maybeUrl,
+  avatar: maybeUrl('头像地址'),
+  rssUrl: maybeUrl('RSS 地址'),
   kind: z.enum(FRIEND_KINDS).optional(),
   sortOrder: z.number().int().min(0).max(99999).optional(),
 });

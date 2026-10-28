@@ -118,8 +118,11 @@ cp packages/api/wrangler.jsonc.example packages/api/wrangler.jsonc
 | `vars.SITE_URL` | 本地前台地址，与 hugo server 对齐，如 `http://127.0.0.1:1317` |
 | `vars.ALLOWED_ORIGINS` | 本地后台 + 本地前台两个源，如 `http://127.0.0.1:5173,http://127.0.0.1:1317`；漏了就是浏览器里一片 CORS 红 |
 
-`vars.ENVIRONMENT` 本地建议写 `development`：它只进 `/api/health` 的回包（`environment` 字段）与日志，
-不参与 CORS 判断 —— 那一层是按请求 host 是不是环回地址定的（见 `src/index.ts` 里那句注释）。
+`vars.ENVIRONMENT` 本地想标出来就写 `development`。**它不只进 `/api/health` 的回包（`environment` 字段）**：
+接口出错时只有它等于 `development` 才把原始错误文本写进回包，其它值统一回「服务内部异常 + trace」
+（见 `src/index.ts` 的 onError）—— 模板自带的 `wrangler.jsonc` 因此**不写这一项**，照原样 deploy 不会把内部错误念给人听。
+它同样不参与 CORS 判断 —— 那一层是按请求 host 是不是环回地址定的（见 `src/index.ts` 里那句注释），
+所以本地那份 `ALLOWED_ORIGINS` 留空也能跨端口用；写成两个本地源只是让口径显式，不是必须。
 
 ### 2. 起 API 并建库
 
@@ -541,6 +544,13 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
   `/api/subscribe/status` 这四条前台高频口在 isolate 内存里计数（一次 KV 都不写，代价是冷启动重新计数、
   多 isolate 之间不共享，挡的是「同一会话/同一 IP 无节制地打」）；注册、发码、找回密码、登录、
   评论、评论点赞、友链申请、群发、翻译这些低频或敏感口继续用 KV，跨 isolate 生效。
+- **限流的键长什么样**：`rl:<名字>:<来源 IP>:<这一项自己的提示>`（`lib/rate-limit.ts:76`）。
+  所以「找回密码 每小时 5 次」实际是**每个邮箱 + 每个来源 IP 每小时 5 次**，两条口径要一起读，别当成账号级锁：
+  换邮箱或换出口 IP 都是一块新桶，它是抬高撞库成本的一道闸，不是铁门。管理员登录除此以外还多一把
+  只按 IP 的内存桶（30 次/小时，不写 KV）：撞库的人每次换个邮箱也碰不到它。代价记下来 ——
+  同一个出口 IP 里别人的失败会占掉这 30 次，最坏被挡一小时，正常输错远到不了这条线。
+  反过来的坑是兜底 IP：请求没带 `cf-connecting-ip` 时所有人共用 `203.0.113.1`，
+  桶会挤到一起变得更严，不是变得更松。
 - **停留时长结算有上限**：`heartbeat` 一个会话一小时 60 次、一个 IP 一小时 600 次，单次结算仍夹在
   `min(duration + ?, 86400)`（最长 24 小时）—— 这条接口不需要任何凭据，没有限流时一个脚本就能把
   D1 的行写入额度打满。

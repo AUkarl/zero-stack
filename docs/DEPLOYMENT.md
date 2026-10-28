@@ -107,8 +107,10 @@ Cron 固定在 `wrangler.jsonc` 的 `triggers.crons`（默认每天 02:00 UTC）
 选择启用 Git 写回时再往 `SITE_NAME` 那行后面追加 `GITHUB_OWNER` / `GITHUB_REPO` / `GITHUB_BRANCH`。
 
 `r2_buckets` 两条（私有 `R2` + 公开 `R2_PUBLIC`）示例里都写好了，向导按「公开桶名」那一答只替换公开桶的 `bucket_name`。
-`ENVIRONMENT` 示例里是 `production`：它只在 `/api/health` 里回显，不影响行为；
-本地开发想标出来就 `wrangler dev --var ENVIRONMENT:development`，别改示例（生成的那份是给你上线用的）。
+`ENVIRONMENT` 示例里是 `production`。**它不只进 `/api/health` 的回包**：接口出错时只有
+`ENVIRONMENT=development` 才把原始错误（含内部报错文本）写进回包，其它值统一回「服务内部异常 + trace」
+（`src/index.ts` 的 onError）。所以线上那份保持 `production` 或干脆不写，本地要看细节就
+`wrangler dev --var ENVIRONMENT:development` 或写进 `.dev.vars`（那份不会跟着 deploy 上线），别改示例。
 
 #### 2.3 两个桶各自负责什么
 
@@ -246,7 +248,7 @@ VITE_API_BASE=https://zero-api.xxx.workers.dev pnpm deploy:cms
 | 检查 | 方法 |
 |---|---|
 | 安全响应头 | `curl -I https://<站点>/`、`curl -I https://<worker-url>/api/config`、`curl -I https://<后台域名>/login` 三处都应回带 `Content-Security-Policy`。三处策略不同：站点那份放过各家 CDN 的评论/数学脚本与所有 https 图片、框架；接口那份是 `default-src 'none'`（只有两页真出 HTML 才放开内联样式）；后台那份 `script-src` 只认自己构建的产物。站点那份在**两个地方各有一份、内容必须逐字一致**：`functions/_middleware.ts` 管被开关管着的页面与站点地图，`static/_headers` 管其余静态响应（`static/_routes.json` 只把 `/links` `/moments` `/subscribe` `/account` `/work` `/about` 与 `/sitemap.xml` 交给 Functions，首页、文章页、静态资源直接走 Pages 静态层，省掉每个请求一次函数调用的耗时）。**站点那份的 `connect-src` 有两处来源**：接口域由 `functions/_middleware.ts` 里的 `API_BASE` 推出来；第三方评论系统（waline / artalk）的接口域由**后台自动补** —— 在「站点设置 → 评论」存下服务地址时，zero-cms 会把那个域（连 `wss://` 一起，waline 的实时推送走 WebSocket）同时写进 `functions/_middleware.ts` 里 `// zero-cms:csp-connect:begin/end` 那一段与 `static/_headers` 的 `connect-src`，一次提交、随后 Pages 重建，不用手改两份。摘除也只做自动的那几个域：换成别家或切回 Zero 时，上一家被精确删掉，**人手补在 marker 之外的域一个都不碰**。twikoo 只填 `envId` 时认不出接口域（腾讯云那套托管域名有好几代写法，猜错等于白补），后台会提示改填 `"serviceUrl":"https://你的域"`；giscus 不需要补（它在自己 iframe 里发请求）。漏补的样子是页面照常出、评论区一直转圈或统计一直零，浏览器控制台写着 `Refused to connect ... because it violates the document's Content Security Policy` |
-| 运行时与绑定 | `curl https://<worker-url>/api/health`，`ok: true` 且 `broken` 为空。**`checks.d1` 现在不只数行数，还会探一条只有跑到较后迁移才存在的列（`email_logs.detail`）**：迁移只跑了一半时这一项会直接 `ok:false` 并写明「表结构比代码旧」，而不是等第一次注册/发信才 500 |
+| 运行时与绑定 | `curl https://<worker-url>/api/health`，`ok: true` 且 `broken` 为空。**`checks.d1` 现在不只数行数，还会探一条只有跑到较后迁移才存在的列（`email_logs.detail`）**：迁移只跑了一半时这一项会直接 `ok:false` 并写明「表结构比代码旧」，而不是等第一次注册/发信才 500。另看后台那份更细的 `GET /api/admin/health-detail` 里的 `checks.ip.fallbackLast3h`：近 3 小时有多少请求没带 `cf-connecting-ip`（即走了 `CF_CLIENT_IP_FALLBACK`）。它不是错误项，但 > 0 就说明按 IP 的限流桶正在被人共用、统计里的独立访客数会偏小 —— 部署在 Cloudflare 上应当恒为 0 |
 | 迁移真的跑完了 | `pnpm --filter zero-api db:migrate:local`（或 `--remote`）的**退出码必须为 0**。`wrangler d1 migrations apply` 会偶发失败（实测报与 SQL 无关的 `bad port`），失败后再往下走就是一个「半迁移的库」：`/api/health` 从前照样绿、第一次写才炸。失败了重跑一次，两次都不过就去查那一条迁移的报错原文，不要继续部署 |
 | 后台可用 | 库里还没有账号时，后台登录页会自动变成「建为站长并登录」表单（`GET /api/auth/init-status` 报 `pending: true`），填邮箱 + 两遍密码就完成初始化，第一个账号直接是 `admin` 且跳过邮箱验证，建完这表单就消失。等价的手动做法：`curl -X POST https://<worker 地址>/api/auth/register -H 'Content-Type: application/json' --data-binary '{"email":"你@域名","password":"至少 8 位","name":"站长"}'`，回 `role: "admin"` 即站长账号建好（表单会顺手帮你登录，直接进仪表盘） |
 | 邮件可用 | 后台「设置」填 `emailProvider` / `smtpHost` / `smtpPort` / `smtpUser` / `emailFrom` → 走一次找回密码或群发。**端口选 465（隐式 TLS）才是验证过的路径**；587 / 2525 的 STARTTLS 路径本模板未在真实服务商上端到端验证过，原因见下面「排错」表那两行 |
@@ -574,6 +576,7 @@ pnpm check   # 本地跑同一套校验
 | `pnpm setup` 说「尚未登录」，但 `pnpm exec wrangler whoami` 明显示已登录 | wrangler 各版本的 `whoami --json` 形状不同（4.x 平铺 `{loggedIn,authType,email,accounts}`、3.x 包一层 `result`、更早是 `auth.email`）。脚本现按 `scripts/_util.ts` 的 `parseWhoami()` 三种都认，API Token 登录（没有 email）也认；仍不行就直接设环境变量 `CLOUDFLARE_API_TOKEN`（配合 `CLOUDFLARE_ACCOUNT_ID`）跳过浏览器授权 |
 | `wrangler d1 migrations apply` 报 `no such table` | 迁移目录未变（`packages/api/migrations`），先 `pnpm db:migrate:remote`；确认 `migrations_dir` 未被改动 |
 | 后台提示 `AUTH_EXPIRED` / 401 | Cookie 跨域丢失：检查 `ALLOWED_ORIGINS` 是否包含后台 origin；换域名后需重新登录 |
+| 浏览量比真实少（或统计页一直是 0） | 入库判据是「UA 里带 `Mozilla/5.0` 且不命中 bot 名单」（`lib/http.ts` 的 `isBot`）：**没带 UA 或 UA 不是浏览器样子的，一律不计** —— 你自己的 curl / 同步脚本 / RSS 阅读器 / 无头浏览器访问都不会进统计，这是有意的（否则机器流量会把热门页 Top 抬虚）。要看被挡了多少：统计页 `botFilteredThisHour`（只算本实例这一小时，冷启动清零）。限流那条也在起作用：同一会话一小时 240 次以外的 /beat 不入库 |
 | 后台能打开、接口却全部失败，控制台报 CORS | `ALLOWED_ORIGINS` 是**精确字符串**匹配，差一个字符就不放行。Pages 每次预览部署的地址都不同（`https://<hash>.<项目名>.pages.dev`），只有生产地址稳定 —— 白名单填生产地址，并用生产地址访问后台；前台站点、自定义域名 Worker 各自都要列进来，逗号分隔，改完必须 `pnpm deploy:api` 才生效 |
 | 邮件全部 `failed` | `SMTP_PASSWORD` 未写入，或后台 `smtpHost/smtpPort/smtpUser/emailFrom` 未填。465 一定走隐式 TLS（实测阿里 465 用明文连过去 6 秒收不到一个字节），587 / 2525 走 STARTTLS；`smtpSecure` 只在非 465 端口上才有意义 —— 但请注意：**587 / 2525 这条 STARTTLS 路径本模板没有在真实服务商上端到端验证过**（本地只能用自签证书测到 TLS 握手层，Workers 运行时只信公共根证书），验证过的只有 465 隐式 TLS。 |
 | 587 / 2525 发不出去，报 `Network connection lost.` / `Stream was cancelled.` | 先按上一行的口径核对端口与「隐式 TLS」开关；再注意 `adapters/smtp.ts` 调 `socket.startTls()` 时**不传任何选项**——Workers 运行时（workerd）不认识 `expectedServerHostname`，传了只会打一行 `NOSENTRY` 然后把它丢掉（实测：调用本身不抛错，失败发生在其后的握手阶段），所以那一层没有主机名绑定可用。真要定位，请把「设置 → 发信方式 → 发一封测试信」的原文回执与 `email_logs` 那一条一起贴给服务商。 |

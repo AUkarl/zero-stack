@@ -4,7 +4,7 @@ import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
 import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
-import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, jsonKeyBadValue, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
+import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, jsonKeyBadValue, lengthKeyBadValue, textKeyMaxLen, ALL_CONFIG_KEYS, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
 import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
 import { ensureAdminAuthorIdentity } from '../services/admin-author';
 import { avatarForEmail, emailMd5 } from '../lib/avatar';
@@ -28,7 +28,7 @@ import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor, writeSwitchSnapshot, syncCommentCsp } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
-import { clientIp } from '../lib/http';
+import { clientIp, ipFallbackCount } from '../lib/http';
 import { datedSlug } from '../lib/postName';
 import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
@@ -81,7 +81,10 @@ app.get('/config', async (c) => {
   if (!POLICY_VALUES.includes(String(data.adminLoginPolicy))) {
     data.adminLoginPolicy = 'password';
   }
-  return Response.json({ data, hasSecret });
+  /* 上限跟写入闸门（lengthKeyBadValue）读同一张表：后台输入框拿它当 maxlength，
+     界面「能输多少」和保存「允许多少」就永远是同一个数，不会出现前端放行、后端 400。 */
+  const maxLen = Object.fromEntries(ALL_CONFIG_KEYS.map((k) => [k, textKeyMaxLen(k)]));
+  return Response.json({ data, hasSecret, maxLen });
 });
 
 const configWriteSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
@@ -125,6 +128,9 @@ app.patch('/config', async (c) => {
     /** JSON 键同理：坏 JSON 不报错、只是让后台配的参数整组静默失效，那更查不动 */
     const jsonBad = jsonKeyBadValue(key, asText);
     if (jsonBad) fail(400, jsonBad);
+    /** 文本键看长度：这些值是原样拼进 `<title>` / JSON-LD / 邮件里的，超上限等于全站显示事故 */
+    const tooLong = lengthKeyBadValue(key, asText);
+    if (tooLong) fail(400, tooLong);
     /** 枚举键统一按小写存：接口送 'SMTP' 也要归成 'smtp' —— 分流处（发信按通道、主题按 provider）认的是小写值 */
     const stored = ENUM_CONFIG_KEYS[key] && typeof value === 'string' ? asText.trim().toLowerCase() : asText;
     writes.push({
@@ -511,7 +517,11 @@ async function prepareContentItem(
       const parsed = parseFrontMatter(item.content);
       const future = isDraftFront(parsed.front) ? null : futureFrontDate(parsed.front);
       if (future) {
-        throw new Error(`${futureDraftNote(future)}。这次提交未写入，请在 front matter 里加上 draft: true，或改用 front 字段提交`);
+        /* 这条路径什么都没写，所以不能说「已按草稿保存」—— 那是上面结构化分支才有的事。
+           一句话里同时出现「已保存」与「未写入」，读的人只能猜哪个是真的。 */
+        throw new Error(
+          `发布时间（${future}）在将来，Hugo 只在构建时比对日期、这类页面不会生成。这次提交未写入：请在 front matter 里加上 draft: true，或改用 front 字段提交（那条路会自动转成草稿）。`,
+        );
       }
       content = item.content;
     } else {
@@ -2158,6 +2168,14 @@ app.get('/health-detail', async (c) => {
      没人删文章就永远看不到。缺配置不该只在出错那一刻才说话。 */
   const purgeZone = ((await getConfig(env, 'cfZoneId')) ?? '').trim();
   const purgeTokenSet = Boolean(((await getConfig(env, 'cfPurgeToken')) ?? '').trim());
+  /* 近 3 小时有多少请求没带 cf-connecting-ip（只能按兜底常量分桶）。
+     这一项不是错误：绕过 Pages 边缘的入口才会走到，但一旦发生，所有按 IP 的额度会互相顶掉，
+     没有这一笔可见性就永远靠猜。 */
+  checks.ip = {
+    fallbackLast3h: await ipFallbackCount(c.env),
+    note: '这些请求没带 cf-connecting-ip，只能按同一个兜底地址分桶；正常经 Cloudflare 边缘来的访客不该计到这里',
+  };
+
   checks.purge = {
     ok: Boolean(purgeZone && purgeTokenSet),
     detail: purgeZone && purgeTokenSet ? `zone ${purgeZone.slice(0, 8)}…` : [!purgeZone && '没填 Zone ID', !purgeTokenSet && '没填令牌'].filter(Boolean).join('、'),

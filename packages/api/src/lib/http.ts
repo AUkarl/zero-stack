@@ -1,11 +1,54 @@
 import type { Context } from 'hono';
 
+/** 整点对应的 KV 键；本地 dev 与线上都够用（KV 有最终一致性，计数只作趋势看） */
+const fallbackKey = (hour = Math.floor(Date.now() / 3_600_000)) => `ipfb:${hour}`;
+
+/**
+ * 记一笔「这次请求没带 cf-connecting-ip」。
+ *
+ * 为什么要有这一笔：所有按 IP 的限流键都把 clientIp 拼在里面，而这个头只有 Cloudflare
+ * 的边缘会加。哪天接口被别的入口直连（内部脚本、绕过 Pages 的自定义域、迁移期），
+ * 全体访客就会挤进兜底常量那一个桶里互相顶额度，而现场看不出来 —— 本地体检就得手动送这个头才测得准。
+ * 计数是近似值（读-改-写有竞态），够用来判断「有没有在发生」。
+ */
+function bumpIpFallback(c: Context): void {
+  const env = c.env as { CACHE?: { get: (k: string) => Promise<string | null>; put: (k: string, v: string, o?: unknown) => Promise<unknown> } };
+  const kv = env.CACHE;
+  if (!kv) return;
+  const run = async () => {
+    try {
+      const n = Number(await kv.get(fallbackKey()));
+      await kv.put(fallbackKey(), String((Number.isFinite(n) ? n : 0) + 1), { expirationTtl: 3 * 3600 });
+    } catch {
+      /* 计数本身坏了不能拖累请求 */
+    }
+  };
+  const ctx = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void };
+  if (ctx?.waitUntil) ctx.waitUntil(run());
+  else void run();
+}
+
 /** Cloudflare 提供的真实客户端 IP；本地 dev 时回退到占位值 */
 export function clientIp(c: Context): string {
   const cf = c.req.raw.headers.get('cf-connecting-ip');
   if (cf) return cf;
+  bumpIpFallback(c);
   const env = c.env as { CF_CLIENT_IP_FALLBACK?: string };
   return env.CF_CLIENT_IP_FALLBACK ?? '203.0.113.1';
+}
+
+/** 近 N 小时有多少请求走的是兜底 IP（健康页用；没带过就是 0） */
+export async function ipFallbackCount(env: unknown, hours = 3): Promise<number> {
+  const kv = (env as { CACHE?: { get: (k: string) => Promise<string | null> } }).CACHE;
+  if (!kv) return 0;
+  const nowHour = Math.floor(Date.now() / 3_600_000);
+  let total = 0;
+  for (let i = 0; i < hours; i++) {
+    const v = await kv.get(fallbackKey(nowHour - i)).catch(() => null);
+    const n = Number(v);
+    if (Number.isFinite(n)) total += n;
+  }
+  return total;
 }
 
 export function userAgent(c: Context): string {

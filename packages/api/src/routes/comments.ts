@@ -25,6 +25,7 @@ import { commentLikeStatsForSlug, toggleCommentLike } from './likes';
  */
 import { avatarStyleFor } from '../../../comment/src/lib/avatar-style';
 import { avatarCachedUrl, refreshAvatarCache, shouldWarm, markWarmAttempt } from '../services/avatar-cache';
+import { mapChunks, parseKeys } from '../lib/batch';
 import { resolveBucket } from '../services/media';
 import type { AuthUser } from '../services/auth';
 import type { AppEnv } from '../lib/app';
@@ -346,14 +347,17 @@ const app = new Hono<AppEnv>();
 app.get('/count', async (c) => {
   const env = c.env;
   const db = createDb(env);
-  const raw = (c.req.query('slugs') ?? '').split(',').filter(Boolean);
+  const raw = parseKeys(c.req.query('slugs'));
   if (raw.length === 0) return ok({});
   const slugs = [...new Set(raw.map(canonSlug))];
-  const rows = await db
-    .select({ postSlug: comments.postSlug, count: sql<number>`count(*)` })
-    .from(comments)
-    .where(and(inArray(comments.postSlug, slugs), eq(comments.status, 'approved')))
-    .groupBy(comments.postSlug);
+  /* 分批 in：一次问上百个地址是列表页的正常使用，不能变成 500 */
+  const rows = await mapChunks(slugs, (part) =>
+    db
+      .select({ postSlug: comments.postSlug, count: sql<number>`count(*)` })
+      .from(comments)
+      .where(and(inArray(comments.postSlug, part), eq(comments.status, 'approved')))
+      .groupBy(comments.postSlug),
+  );
   const out: Record<string, number> = {};
   for (const s of raw) out[s] = 0;
   for (const r of rows) out[r.postSlug] = Number(r.count);
@@ -504,7 +508,9 @@ app.get('*', async (c) => {
   const likeOf = (id: string) => counts.get(id) ?? 0;
   const roots = visible.filter((r) => !r.parentId);
   roots.sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    /* 原来这里第一顺位是 pinned，但接口层没有任何把评论标成置顶的入口（管理端动作只有
+       approve/reject/spam），主题前台也不读这个字段 —— 留着读起来像「能置顶但点了没反应」。
+       回包里的 pinned 字段照旧给（数据形状不变），以后真要置顶再连同写入口一起加回来。 */
     if (sort === 'hot' && likeOf(a.id) !== likeOf(b.id)) return likeOf(b.id) - likeOf(a.id);
     const byTime = sort === 'latest' ? b.createdAt - a.createdAt : a.createdAt - b.createdAt;
     // 同一秒内的并发评论用 id 兜底，翻页才不会漏条或重条

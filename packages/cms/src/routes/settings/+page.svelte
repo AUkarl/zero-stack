@@ -510,6 +510,8 @@
   let secretSet = $state<string[]>([]);
   /** 被标记「清除已存密钥」的项：保存时按 null 提交，后端才真的把这列清空 */
   let clearSecrets = $state<string[]>([]);
+  /** 每个键的输入上限：由接口和写入闸门共用一张表算出来，界面不另抄一份数字（抄了就会漂） */
+  let maxLen = $state<Record<string, number>>({});
   let loading = $state(false);
   let saving = $state(false);
   let error = $state('');
@@ -521,7 +523,7 @@
     loading = true;
     error = '';
     try {
-      const d = await get<{ data: Record<string, string>; hasSecret?: Record<string, boolean> }>('/api/admin/config');
+      const d = await get<{ data: Record<string, string>; hasSecret?: Record<string, boolean>; maxLen?: Record<string, number> }>('/api/admin/config');
       // 配置键的值一律按字符串进面板：数字绑定会让「改过没有」的比较和 coerce 一起出错
       const next: Record<string, string> = Object.fromEntries(
         Object.entries(d.data ?? {}).map(([k, v]) => [k, String(v ?? '')]),
@@ -538,6 +540,7 @@
       saved = { ...next };
       // 密钥不回传原文，只回「服务端是否已有值」：输入框留空就等于不修改
       secretSet = Object.keys(d.hasSecret ?? {}).filter((k) => d.hasSecret?.[k]);
+      maxLen = d.maxLen ?? {};
     } catch (e) {
       error = e instanceof Error ? e.message : '读取配置失败';
     } finally {
@@ -639,6 +642,7 @@
             {f.label}
             <textarea
               rows={f.kind === 'lines' ? 4 : 3}
+              maxlength={maxLen[f.key]}
               value={cfg[f.key] ?? ''}
               oninput={(e) => setVal(f.key, e.currentTarget.value)}
             ></textarea>
@@ -648,6 +652,7 @@
             {f.label}
             <input
               type={f.kind === 'secret' ? 'password' : f.kind === 'number' ? 'number' : 'text'}
+              maxlength={maxLen[f.key]}
               value={cfg[f.key] ?? ''}
               oninput={(e) => setVal(f.key, e.currentTarget.value)}
               placeholder={f.kind === 'secret' && secretSet.includes(f.key) ? '已设置（留空不修改）' : ''}

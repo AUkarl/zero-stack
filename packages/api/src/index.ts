@@ -286,11 +286,17 @@ app.onError((err, c) => {
      而唯一该用来自查的 /api/health 也是同一个 500，等于把最该给的那句「先跑迁移」藏起来了。
      这里只回一句固定的操作指引（不外泄列名清单、堆栈与绝对路径），细节仍留在带 trace 的日志里。 */
   const uninitialized = /no such table|missing table|SQLITE_ERROR/i.test(errorMessage(err));
+  /* Drizzle 抛的那句以 `Failed query: select …` 开头，后面跟着**整条 SQL 与绑定参数**，
+     压测时还带出堆栈与本地绝对路径。开发档要看的也是这句，但看的地方是日志（同一个 trace），
+     不是回给访客的 JSON —— 所以这一类即使在 development 档也不外发。 */
+  const leaksSchema = /Failed query|Prepare statement|no such column|SQLITE_BUSY/i.test(errorMessage(err));
   const msg = uninitialized
     ? '数据库还没有初始化（表不存在）：先应用迁移再访问接口 —— 本地 `pnpm db:migrate:local`，线上 `pnpm db:migrate:remote`（或 `wrangler d1 migrations apply zero-db --remote`）'
-    : dev
-      ? errorMessage(err)
-      : '服务内部异常，请联系站长并附上 trace';
+    : leaksSchema
+      ? '服务内部异常，请联系站长并附上 trace'
+      : dev
+        ? errorMessage(err)
+        : '服务内部异常，请联系站长并附上 trace';
   return Response.json(
     {
       error: 500,

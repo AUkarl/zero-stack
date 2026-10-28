@@ -403,6 +403,9 @@
     centerUrl: string;
     /** 账号行已经不在了，后端据此让按钮失效 */
     missing: boolean;
+    /** 通过后会删掉的东西（后端现算；账号已不在或队列太长时可能没有这一项） */
+    willDelete?: Record<string, number>;
+    totalToDelete?: number;
   }
 
   const DEL_FILTERS = [
@@ -468,9 +471,17 @@
   /** 通过 = 级联删干净，不可撤销，所以必须确认到位 */
   async function approveDeletion(r: Deletion) {
     const who = whoOf(r);
+    /* 计数由后端在待办列表里现算（见 /api/admin/deletions 的 willDelete）：
+       不可逆操作要看得见后果，光一句「全部数据」没人知道自己实际按下删了多少条。 */
+    const will = Object.entries(r.willDelete ?? {})
+      .filter(([, n]) => Number(n) > 0)
+      .map(([k, n]) => `${PURGE_LABEL[k] ?? k} ${n}`)
+      .join('、');
     if (
       !confirm(
-        `通过 ${who} 的注销申请？\n\n通过后会立刻删除该账号的全部数据：登录会话、评论、点赞收藏、投稿、作者认证申请、友链申请与邀请码消费记录，账号本身一并移除，不可撤销、无法找回。\n\n确认执行请点「确定」。`,
+        `通过 ${who} 的注销申请？\n\n通过后会立刻删除该账号的全部数据：登录会话、评论、点赞收藏、投稿、作者认证申请、友链申请与邀请码消费记录，账号本身一并移除，不可撤销、无法找回。${
+          will ? `\n\n这条账号现有：${will}（合计 ${r.totalToDelete ?? 0} 项记录）。` : ''
+        }\n\n确认执行请点「确定」。`,
       )
     ) {
       return;

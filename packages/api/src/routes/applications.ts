@@ -23,16 +23,15 @@ import { writeAudit } from '../services/audit';
 import { sendFriendReviewResult } from '../services/review-mail';
 import { newId } from '../lib/crypto';
 import { clientIp } from '../lib/http';
+import { HTTP_URL_HINT, httpUrlField } from '../lib/httpUrl';
 import { rateLimit } from '../lib/rate-limit';
 import { fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import type { AppEnv } from '../lib/app';
 
-const httpUrl = z
-  .string()
-  .trim()
-  .max(300)
-  .refine((v) => /^https?:\/\/[^\s]+\.[^\s]+/i.test(v), { message: '需为 http(s) 开头的完整网址' });
+/* 判据在 lib/httpUrl.ts（以前这里和后台友链、账号侧各抄了一份，措辞不同、严格程度也不同，
+   而漏掉协议检查的恰好是后台那一份）。这句保留原来的说法，只在后面补一个例子。 */
+const httpUrl = httpUrlField({ message: `${HTTP_URL_HINT} —— 审核通过后这条会写进展示页的链接里` });
 
 const applySchema = z.object({
   name: z.string().trim().min(1).max(60),

@@ -107,7 +107,7 @@ app.post('/jobs/:id/run', async (c) => {
   return ok(summary);
 });
 
-/** DELETE /api/admin/broadcast/jobs/:id —— 只有还没开跑的任务能取消 */
+/** DELETE /api/admin/broadcast/jobs/:id —— 排队中的取消留痕，跑完/已取消的直接删掉这条历史 */
 app.delete('/jobs/:id', async (c) => {
   const admin = requireAdmin(c);
   const db = createDb(c.env);
@@ -115,17 +115,30 @@ app.delete('/jobs/:id', async (c) => {
   const rows = await db.select({ id: broadcastJobs.id, status: broadcastJobs.status, subject: broadcastJobs.subject }).from(broadcastJobs).where(eq(broadcastJobs.id, id)).limit(1);
   const job = rows[0];
   if (!job) fail(404, '群发任务不存在');
-  if (job.status !== 'queued') fail(409, `任务是 ${job.status} 状态，只有排队中（queued）的任务可以取消`);
-
-  await db.update(broadcastJobs).set({ status: 'canceled', finishedAt: Math.floor(Date.now() / 1000) }).where(eq(broadcastJobs.id, id));
+  /* 排队中的任务是「取消」（留痕，仍能在列表里看到被取消）；
+     已经跑完（done/failed）与早已取消的历史是「删除」—— 原来只有 queued 能走这个口，
+     于是每发一次群发就多留一条记录，列表只增不减，也没有任何清理入口。 */
+  if (job.status === 'queued') {
+    await db.update(broadcastJobs).set({ status: 'canceled', finishedAt: Math.floor(Date.now() / 1000) }).where(eq(broadcastJobs.id, id));
+    await writeAudit(c.env, {
+      actor: admin,
+      action: 'broadcast',
+      target: job.subject,
+      detail: { event: 'job:cancel', id, from: job.status, to: 'canceled' },
+      ip: clientIp(c),
+    });
+    return ok({ id, status: 'canceled', canceled: true });
+  }
+  if (job.status === 'running') fail(409, '该任务正在执行中，等它跑完再删');
+  await db.delete(broadcastJobs).where(eq(broadcastJobs.id, id));
   await writeAudit(c.env, {
     actor: admin,
     action: 'broadcast',
     target: job.subject,
-    detail: { event: 'job:cancel', id, from: job.status, to: 'canceled' },
+    detail: { event: 'job:delete', id, from: job.status },
     ip: clientIp(c),
   });
-  return ok({ id, status: 'canceled', canceled: true });
+  return ok({ id, deleted: true, subject: job.subject });
 });
 
 export default app;

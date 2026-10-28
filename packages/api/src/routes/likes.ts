@@ -10,6 +10,7 @@ import { readRepoFile } from '../services/repo';
 import { fail, ok } from '../lib/errors';
 import { clientIp } from '../lib/http';
 import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
+import { mapChunks, parseKeys } from '../lib/batch';
 import { canonSlug } from '../lib/slug';
 import type { AuthUser } from '../services/auth';
 import type { AppEnv } from '../lib/app';
@@ -235,17 +236,20 @@ app.post('/', async (c) => {
 /** GET /api/reactions?slugs=/a/,/b&kind=like —— 列表页批量取计数与本人状态 */
 app.get('/', async (c) => {
   const env = c.env;
-  const raw = (c.req.query('slugs') ?? '').split(',').filter(Boolean);
+  const raw = parseKeys(c.req.query('slugs'));
   const kind = c.req.query('kind') === 'star' ? 'star' : 'like';
   if (raw.length === 0) return ok({});
   const slugs = [...new Set(raw.map(canonSlug))];
 
   const db = createDb(env);
-  const counts = await db
-    .select({ slug: reactions.targetSlug, n: sql<number>`count(*)` })
-    .from(reactions)
-    .where(and(inArray(reactions.targetSlug, slugs), eq(reactions.kind, kind)))
-    .groupBy(reactions.targetSlug);
+  /* 这一条比评论计数更早撞墙：两个 in 各绑一次全部键。分批发，回包形状不变。 */
+  const counts = await mapChunks(slugs, (part) =>
+    db
+      .select({ slug: reactions.targetSlug, n: sql<number>`count(*)` })
+      .from(reactions)
+      .where(and(inArray(reactions.targetSlug, part), eq(reactions.kind, kind)))
+      .groupBy(reactions.targetSlug),
+  );
 
   const byCanon: Record<string, { count: number; active: boolean }> = {};
   for (const s of slugs) byCanon[s] = { count: 0, active: false };
@@ -253,16 +257,18 @@ app.get('/', async (c) => {
 
   const user = c.get('user');
   const fingerprint = user ? null : await anonymousFingerprint(secret(env), clientIp(c));
-  const mine = await db
-    .select({ slug: reactions.targetSlug })
-    .from(reactions)
-    .where(
-      and(
-        inArray(reactions.targetSlug, slugs),
-        eq(reactions.kind, kind),
-        user ? eq(reactions.userId, user.id) : eq(reactions.fingerprint, fingerprint ?? ''),
+  const mine = await mapChunks(slugs, (part) =>
+    db
+      .select({ slug: reactions.targetSlug })
+      .from(reactions)
+      .where(
+        and(
+          inArray(reactions.targetSlug, part),
+          eq(reactions.kind, kind),
+          user ? eq(reactions.userId, user.id) : eq(reactions.fingerprint, fingerprint ?? ''),
+        ),
       ),
-    );
+  );
   for (const m of mine) if (byCanon[m.slug]) byCanon[m.slug]!.active = true;
 
   const out: Record<string, { count: number; active: boolean }> = {};

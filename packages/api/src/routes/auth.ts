@@ -319,7 +319,13 @@ app.post('/reset-password', async (c) => {
   if (!rows[0] || (owner && owner !== user.id)) fail(400, bad);
 
   const check = await verifyEmailOtp(env, user.email, code);
-  if (!check.ok) fail(400, check.message ?? bad);
+  /* 这里也不能回 `check.message`：那句「验证码不正确」只有**已注册**的邮箱能拿到，
+     未注册的走到上面那句「验证码不正确或已过期」—— 两句可区分，接口就成了「这个邮箱注册过吗」的探针。
+     细分原因留在日志里给站长查（同一句对用户够用）。 */
+  if (!check.ok) {
+    console.warn(`[zero-api] 重置密码未通过（${user.email}）：${check.message ?? '验证码不正确'}`);
+    fail(400, bad);
+  }
 
   await createDb(env)
     .update(users)
@@ -405,22 +411,25 @@ app.post('/login', async (c) => {
   const { email, password, code, totp } = parsed.data;
 
   /* 三道闸，顺序有意义：
-     ① 先查用户再决定用哪几把桶 —— 管理员必须绕开 IP 桶，理由见 ②。
-     ② IP 桶 30/小时（isolate 内存，不吃 KV 写额度）：补的是「换个邮箱接着试」这条路。
+     ① 先查用户再决定用哪几把桶（两把桶回的是同一句 429，不泄漏账号存在性）。
+     ② 按 IP 的伴生桶（isolate 内存，不吃 KV 写额度）：补的是「换个邮箱接着试」这条路。
         以前只有邮箱桶（10/15 分钟），实测同一个出口 IP 打 14 个不同邮箱的错误密码，
         一次 429 都不触发。弱点必须讲明白：换到一个新 isolate 就重新计数，
         所以它是「抬高撞库成本」而不是铁门；要焊死得回 KV，而那正是从心跳上摘下来的额度。
-        还有件事更得讲明白：**管理员邮箱不参与这把桶**。同一出口 IP 下的人（合用 NAT 的同事、
-        CGNAT、机房）能把这 30 次吃满，站长要是也算在里面，任何人都能拿别人的失败把站长
-        锁在门外一小时 —— 比原来 15 分钟更糟。站长自有邮箱桶 30/15 分钟兜着，
-        而撞库横扫的目标本来也不会是站长那一个邮箱。
+        键只有 IP、不含邮箱（limitKey 的 keyHint 传空）：读者侧 30/小时、管理员侧另开一把 30/小时，
+        两边互不占用。代价要认下来 —— 同一个出口 IP 里（合用 NAT 的同事、CGNAT、机房）别人的失败
+        会吃掉你的额度，最坏被挡在门外一小时；30 次的余量足够正常人在同一出口反复输错，
+        而站长自己的邮箱桶（③）本来也只会因他自己的失败而动。
      ③ 邮箱桶按角色分叉：管理员 30/15 分钟、其他 10/15 分钟。合用一把桶时，
         任何自动化（监控探活、备份脚本、别人跑的测试）都能替站长把 10 次用光 ——
-        本轮体检就被自己的脚本咬过两次，一次锁 10 分钟。
-     两把桶回的是同一句 429 文案，不给账号存在性多泄漏一点信号。 */
+        本轮体检就被自己的脚本咬过两次，一次锁 10 分钟。 */
   const rows = await createDb(env).select().from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
   const row = rows[0];
   if (row?.role === 'admin') {
+    /* 管理员原来只有「按账号」那一把桶，没有按 IP 的伴生桶（读者侧一直有 login-ip）——
+       撞库打管理员口令时，只要每次换个邮箱就永远碰不到限流。这把桶按纯 IP 计，
+       与邮箱无关，所以 30 次/小时后同一出口再换多少个邮箱都进不来。 */
+    rateLimitLocal(c, 'login-admin-ip', 30, 3600);
     await rateLimit(c, 'login-admin', 30, 900, email);
   } else {
     rateLimitLocal(c, 'login-ip', 30, 3600);

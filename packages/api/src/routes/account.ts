@@ -64,6 +64,8 @@ import { hashIp } from '../lib/ua';
 import { rateLimit } from '../lib/rate-limit';
 import { fail, ok } from '../lib/errors';
 import { normalizeFriendUrl } from '../services/links-yaml';
+import { HTTP_URL_HINT, httpUrlField, optionalHttpUrlField } from '../lib/httpUrl';
+import { socialRowsSchema } from '../services/authors';
 import { purgeUser, previewPurge } from '../services/account-purge';
 import {
   checkTotp,
@@ -424,19 +426,10 @@ app.post('/reactions/:id/withdraw', async (c) => {
 
 /* ------------------------------------------------------------------ 友链设置 */
 
-const httpUrl = z
-  .string()
-  .trim()
-  .max(300)
-  .refine((v) => /^https?:\/\/[^\s]+\.[^\s]+/i.test(v), { message: '站点地址需为 http(s) 开头的完整网址' });
-
-const optionalUrl = z
-  .string()
-  .trim()
-  .max(300)
-  .optional()
-  .or(z.literal(''))
-  .refine((v) => !v || /^https?:\/\/[^\s]+\.[^\s]+/i.test(v), { message: '需为 http(s) 开头的完整网址' });
+/* 协议判据统一在 lib/httpUrl.ts：这几条以前是本文件手抄的两份（含一句「站点地址」的说法），
+   后台友链那一份抄漏了协议检查，才有 R76-1 那条。措辞保留，实现只留一份。 */
+const httpUrl = httpUrlField({ message: `站点地址${HTTP_URL_HINT}` });
+const optionalUrl = optionalHttpUrlField({ message: `${HTTP_URL_HINT}（留空就是不改）` });
 
 /** 字段与公开申请表单一致：站点名称 / 站点地址 / 站长邮箱 / rss / 头像 / friendLink（url 的别名）/ 简介 */
 const friendSchema = z.object({
@@ -730,18 +723,33 @@ deletionsAdmin.get('/', async (c) => {
   const byStatus: Record<string, number> = { pending: 0, approved: 0, rejected: 0 };
   for (const g of grouped) byStatus[g.status] = Number(g.n);
 
-  return ok({
-    status,
-    total: rows.length,
-    byStatus,
-    items: rows.map((r) => ({
+  /* 把「通过之后会删掉什么」一起给出来：这是不可逆操作，以前申请人自己能看到预览、
+     管理员这一侧却只有一个光秃秃的账号名，确认框只能念一句没有数字的通用话。
+     每条要跑一遍计数，所以只算最前面 40 条（待办正常是个位数），多出来的按未预览给。 */
+  const items: Record<string, unknown>[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const gone = !r.accountEmail;
+    const base = {
       ...r,
       account_slug: r.accountSlug,
       centerUrl: r.accountSlug ? `/account/me/?u=@${r.accountSlug}` : '/account/me/',
       // 账号已经不在了（申请行随 users 级联删除，理论上见不到），前端据此禁用按钮
-      missing: !r.accountEmail,
-    })),
-  });
+      missing: gone,
+    };
+    if (!r.userId || gone || i >= 40) {
+      items.push(base);
+      continue;
+    }
+    try {
+      const willDelete = await previewPurge(c.env, r.userId);
+      items.push({ ...base, willDelete, totalToDelete: Object.values(willDelete).reduce((a, b) => a + Number(b), 0) });
+    } catch {
+      items.push(base);
+    }
+  }
+
+  return ok({ status, total: rows.length, byStatus, items });
 });
 
 /** POST /api/admin/deletions/:id/approve —— 通过后把这个账号的数据删干净 */
@@ -988,10 +996,8 @@ const authorSchema = z.object({
   avatar: z.string().trim().max(500).optional().nullable(),
   website: z.string().trim().max(300).optional().nullable(),
   donateImages: z.array(z.string().trim().max(500)).max(3).optional(),
-  social: z
-    .array(z.object({ platform: z.string().trim().max(30), handle: z.string().trim().max(120), proof: z.string().trim().max(300).optional() }))
-    .max(12)
-    .optional(),
+  /* 形状与「同平台只许一条」都在 services/authors.ts（判重要按落盘的键，谁写作者表谁定）*/
+  social: socialRowsSchema.optional(),
   reason: z.string().trim().max(1000).optional().nullable(),
   handle: z.string().trim().max(40).optional().nullable(),
 });
