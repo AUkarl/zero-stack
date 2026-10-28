@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { get, siteOf } from '#lib/api';
+  import { get } from '#lib/api';
   import LineChart from '#lib/LineChart.svelte';
+  import PieChart from '#lib/PieChart.svelte';
+  import { pendingCounts } from '#lib/pending.svelte';
 
   interface Summary {
     totalViews: number;
@@ -13,9 +15,6 @@
 
   let summary = $state<Summary | null>(null);
   let content = $state<{
-    comments: number;
-    subscribers: number;
-    users: number;
     posts?: number;
     moments?: number;
     postsDir?: string;
@@ -25,10 +24,6 @@
   } | null>(null);
   let trend = $state<{ day: string; views: number; visitors: number }[]>([]);
   let devices = $state<Record<string, { k: string; n: number }[]>>({});
-  let top = $state<{ site?: string; pages: { path: string; views: number }[]; referrers: { referrer: string; views: number }[] }>({
-    pages: [],
-    referrers: [],
-  });
   let health = $state<any>(null);
   /** 内容仓最近一次构建结果（CI 回报）。null = 从没回报过，界面不显示任何一行 */
   let buildReport = $state<{ status: string; sha: string; branch: string; error: string; at: number } | null>(null);
@@ -40,25 +35,18 @@
     loading = true;
     error = '';
     try {
-      const [s, st, tr, dv, tp, hd, br] = await Promise.all([
+      const [s, tr, dv, hd, br] = await Promise.all([
         get<{ data: Summary }>('/api/analytics/summary'),
-        get<{ data: any }>('/api/admin/stats'),
         get<{ data: { day: string; views: number; visitors: number }[] }>('/api/analytics/trend?days=30'),
         get<{ data: Record<string, { k: string; n: number }[]> }>('/api/analytics/devices'),
-        get<{ data: any }>('/api/analytics/top'),
         get<{ data: any }>('/api/admin/health-detail'),
         // 构建回报是后加的，老站点没配令牌时它给 notice；这份失败不能把整个仪表板带崩
         get<{ data: { last: typeof buildReport; notice: string | null } }>('/api/build-report').catch(() => null),
       ]);
       summary = s.data;
-      content = {
-        comments: st.data.comments,
-        subscribers: st.data.subscribers,
-        users: st.data.users,
-      };
+      content = {};
       trend = tr.data;
       devices = dv.data;
-      top = tp.data;
       health = hd.data;
       buildReport = br?.data?.last ?? null;
       buildReportNotice = br?.data?.notice ?? null;
@@ -87,15 +75,6 @@
   $effect(() => void loadAll());
 
   const fmtDur = (s: number) => (s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`);
-  const DEVICE_LABELS: Record<string, string> = { device: '设备', browser: '浏览器', os: '系统', country: '地区' };
-
-  // 长链接中间省略：保留头尾、中段用 …，完整值交给 title 悬浮查看
-  function mid(raw: string | null | undefined, head = 24, tail = 14): string {
-    const s = String(raw ?? '');
-    if (s.length <= head + tail + 1) return s;
-    return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
-  }
-
   /* 定时任务的中文名由接口一起给（`jobs[].label`，名单在 API 的 services/scheduler.ts）。
      这里以前自己抄了一份：任务改了名字这边不知道，界面上 10 条里 7 条显示成英文键，
      另外 3 条标签指向根本不存在的任务 —— 两份名单迟早分家，所以现在只留一处。 */
@@ -196,79 +175,63 @@
 
 <div class="cards four">
   {#each [
-    ['文章', content?.posts, content?.contentError ? '内容仓库读不到' : content?.capped ? '目录递归 .md（数量已达上限）' : '目录递归 .md'],
-    ['时刻', content?.moments, content?.contentError ? '内容仓库读不到' : '目录递归 .md'],
-    ['评论', content?.comments, ''],
-    ['订阅者', content?.subscribers, '已确认'],
-    ['用户', content?.users, ''],
-  ] as [label, v, note] (label)}
-    <div class="card stat"><span class="v">{v ?? '—'}</span><span class="l">{label}</span>{#if note}<span class="n">{note}</span>{/if}</div>
+    { label: '待审评论', value: pendingCounts.comments, href: '/comments' },
+    { label: '友链申请', value: pendingCounts.applications, href: '/friends' },
+    { label: '投稿待审', value: pendingCounts.drafts, href: '/drafts' },
+    { label: '作者认证', value: pendingCounts.authors, href: '/author-verify' },
+  ] as t (t.label)}
+    <a class="card stat todo" href={t.href}>
+      <span class="v">{t.value}</span>
+      <span class="l">{t.label}</span>
+      <span class="n">{t.value > 0 ? '去处理' : '暂无'}</span>
+    </a>
   {/each}
 </div>
 
-<div class="grid">
-  <div class="card">
-    <h3>近 30 天访问趋势</h3>
-    {#if trend.length}
-      <LineChart
-        labels={trend.map((t) => t.day)}
-        series={[
-          { name: '浏览量', color: '#2563eb', values: trend.map((t) => t.views) },
-          { name: '访客', color: '#f59e0b', values: trend.map((t) => t.visitors) },
-        ]}
-      />
-    {:else}<p class="muted">暂无数据</p>{/if}
-  </div>
+<div class="dash">
+  <div class="dash-main">
+    <div class="card">
+      <h3>近 30 天访问趋势</h3>
+      {#if trend.length}
+        <LineChart
+          labels={trend.map((t) => t.day)}
+          series={[
+            { name: '浏览量', color: '#2563eb', values: trend.map((t) => t.views) },
+            { name: '访客', color: '#f59e0b', values: trend.map((t) => t.visitors) },
+          ]}
+        />
+      {:else}<p class="muted">暂无数据</p>{/if}
+    </div>
 
-  <div class="card">
-    <h3>分布</h3>
-    {#each Object.entries(devices) as [key, rows] (key)}
-      <div class="dist">
-        <h4>{DEVICE_LABELS[key] ?? key}</h4>
-        {#each rows as r (r.k)}
-          <div class="bar-row">
-            <span class="k">{r.k || '未知'}</span>
-            <span class="bar"><i style="width:{Math.min(100, (r.n / Math.max(1, rows[0]?.n ?? 1)) * 100)}%"></i></span>
-            <span class="n">{r.n}</span>
-          </div>
-        {:else}
-          <p class="muted">—</p>
-        {/each}
+    <div class="pies">
+      <div class="card">
+        <h3>浏览器</h3>
+        <PieChart rows={devices.browser ?? []} />
       </div>
-    {/each}
+      <div class="card">
+        <h3>系统</h3>
+        <PieChart rows={devices.os ?? []} />
+      </div>
+    </div>
   </div>
 
-  <div class="card">
-    <h3>热门页面 Top 10</h3>
-    <ol class="tops">
-      {#each top.pages as p (p.path)}
-        <li>
-          {#if siteOf(top.site, p.path)}
-            <a class="url" href={siteOf(top.site, p.path)} target="_blank" rel="noreferrer" title={p.path}>{mid(p.path)}</a>
-          {:else}
-            <span class="url muted" title={p.path}>{mid(p.path)}</span>
-          {/if}
-          <span class="cnt">{p.views}</span>
-        </li>
+  <div class="card region">
+    <h3>地区分布</h3>
+    <div class="rows-scroll">
+      {#each devices.country ?? [] as r (r.k)}
+        <div class="bar-row">
+          <span class="k">{r.k || '未知'}</span>
+          <span class="bar"><i style="width:{Math.min(100, (r.n / Math.max(1, devices.country?.[0]?.n ?? 1)) * 100)}%"></i></span>
+          <span class="n">{r.n}</span>
+        </div>
       {:else}
-        <li class="muted">暂无</li>
+        <p class="muted">暂无地区数据</p>
       {/each}
-    </ol>
+    </div>
   </div>
+</div>
 
-  <div class="card">
-    <h3>来源 Top 10</h3>
-    <ol class="tops">
-      {#each top.referrers as r (r.referrer)}
-        <li>
-          <span class="url" title={r.referrer}>{mid(r.referrer) || '直接访问'}</span>
-          <span class="cnt">{r.views}</span>
-        </li>
-      {:else}
-        <li class="muted">暂无</li>
-      {/each}
-    </ol>
-  </div>
+<div class="grid">
 
   <!--
     内容仓构建结果。这一块补的是线上唯一剩下的那种「静默失败」：
@@ -325,7 +288,7 @@
         </p>
       {/if}
       {#if cronJobs.length}
-        <div class="table-wrap">
+        <div class="table-wrap cron-scroll">
           <table class="jobs">
             <thead>
               <tr>
@@ -393,19 +356,93 @@
     color: #b7bcc4;
     font-size: 0.72rem;
   }
+  .dash {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 0.9rem;
+    align-items: start;
+  }
+  .dash-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    min-width: 0;
+  }
+  .pies {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.9rem;
+  }
+  .region {
+    min-width: 0;
+  }
+  .rows-scroll {
+    height: 22rem;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .rows-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .rows-scroll:hover {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .rows-scroll:hover::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+  .rows-scroll:hover::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  .region .bar-row {
+    grid-template-columns: 54px 1fr 42px;
+  }
+  /* 定时任务同样只露 10 行，超出在卡片内部滚动；隐藏滚动条，hover 显示细条 */
+  .cron-scroll {
+    max-height: 24.1rem;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .cron-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .cron-scroll:hover {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .cron-scroll:hover::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+  .cron-scroll:hover::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  .cron-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--panel);
+  }
+  .todo {
+    color: inherit;
+    text-decoration: none;
+  }
+  .todo:hover {
+    border-color: var(--accent);
+  }
   .grid {
     display: grid;
     grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
     gap: 0.9rem;
+    margin-top: 0.9rem;
   }
   .card.wide {
     grid-column: 1 / -1;
-  }
-  .dist h4 {
-    margin: 0.6rem 0 0.25rem;
-    font-size: 0.82rem;
-    color: var(--muted);
-    font-weight: 600;
   }
   .bar-row {
     display: grid;
@@ -413,7 +450,8 @@
     gap: 0.5rem;
     align-items: center;
     font-size: 0.82rem;
-    padding: 1px 0;
+    height: 2.1875rem;
+    padding: 0;
   }
   .bar-row .k {
     overflow: hidden;
@@ -435,34 +473,6 @@
   .bar-row .n {
     text-align: right;
     color: var(--muted);
-  }
-  .tops {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    counter-reset: t;
-  }
-  .tops li {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.6rem;
-    align-items: center;
-    padding: 0.3rem 0;
-    border-bottom: 1px dashed var(--border);
-    font-size: 0.86rem;
-  }
-  .tops li span:last-child {
-    color: var(--muted);
-  }
-  .tops .url {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tops .cnt {
-    color: var(--muted);
-    white-space: nowrap;
   }
   .health {
     display: flex;
@@ -491,7 +501,11 @@
     font-size: 0.84rem;
   }
   @media (max-width: 900px) {
-    .grid {
+    .grid,
+    .dash {
+      grid-template-columns: 1fr;
+    }
+    .pies {
       grid-template-columns: 1fr;
     }
     .cards,

@@ -49,6 +49,8 @@
     referrers: { referrer: string; views: number; visitors?: number }[];
   }
   interface Biz {
+    posts?: number;
+    moments?: number;
     comments: number;
     pendingComments: number;
     subscribers: number;
@@ -100,7 +102,7 @@
     try {
       const clean = excludeLegacy ? '&excludeLegacy=1' : '';
       const cleanQ = excludeLegacy ? '?excludeLegacy=1' : '';
-      const [s, t, dv, tp, bz, rx, ps, cfg] = await Promise.all([
+      const [s, t, dv, tp, bz, rx, ps, cfg, ct] = await Promise.all([
         get<{ data: Summary }>(`/api/analytics/summary${cleanQ}`),
         get<{ data: Point[] }>(`/api/analytics/trend?days=${days}${clean}`),
         get<{ data: Devices }>(`/api/analytics/devices${cleanQ}`),
@@ -109,12 +111,14 @@
         get<{ data: ReactionStats }>(`/api/admin/stats/reactions?limit=30${clean}`),
         get<{ data: { path: string; title: string }[] }>('/api/admin/posts'),
         get<{ data: Record<string, string> }>('/api/admin/config'),
+        // 文章/时刻计数是独立的递归目录接口；它失败不能把整页统计带崩
+        get<{ data: { posts: number; moments: number } }>('/api/admin/stats/content').catch(() => null),
       ]);
       summary = s.data;
       trend = t.data;
       devices = dv.data;
       top = tp.data;
-      biz = bz.data;
+      biz = { ...bz.data, posts: ct?.data?.posts, moments: ct?.data?.moments };
       reactions = rx.data;
       const map: Record<string, string> = {};
       for (const p of ps.data ?? []) {
@@ -328,10 +332,10 @@
 </section>
 
 <div class="cols">
-  <section class="card">
+  <section class="card fixed-card">
     <h3>热门页面</h3>
     {#if top?.pages?.length}
-    <div class="table-wrap">
+    <div class="list-scroll table-scroll">
         <table>
           <thead><tr><th>页面</th><th class="num">浏览</th><th class="num">访客</th></tr></thead>
           <tbody>
@@ -354,10 +358,10 @@
     {:else}<p class="muted small">暂无页面记录。</p>{/if}
   </section>
 
-  <section class="card">
+  <section class="card fixed-card">
     <h3>来源</h3>
     {#if top?.referrers?.length}
-    <div class="table-wrap">
+    <div class="list-scroll table-scroll">
         <table>
           <thead><tr><th>来源</th><th class="num">浏览</th><th class="num">访客</th></tr></thead>
           <tbody>
@@ -375,16 +379,18 @@
   </section>
 
   {#each dims as [title, list] (title)}
-    <section class="card">
+    <section class="card fixed-card">
       <h3>{title}</h3>
       {#if list.length}
-        {#each pct(list) as x (x.k)}
-          <div class="bar">
-            <span class="bl">{x.k || '未知'}</span>
-            <span class="track"><span class="fill" style="width:{x.p}%"></span></span>
-            <span class="bn">{x.n}</span>
-          </div>
-        {/each}
+        <div class="list-scroll rows-scroll">
+          {#each pct(list) as x (x.k)}
+            <div class="bar">
+              <span class="bl">{x.k || '未知'}</span>
+              <span class="track"><span class="fill" style="width:{x.p}%"></span></span>
+              <span class="bn">{x.n}</span>
+            </div>
+          {/each}
+        </div>
       {:else}<p class="muted small">暂无。</p>{/if}
     </section>
   {/each}
@@ -395,6 +401,8 @@
   {#if biz}
     <div class="kpis">
       {#each [
+          { label: '文章', value: biz.posts ?? '—' },
+          { label: '时刻', value: biz.moments ?? '—' },
           { label: '评论总数', value: biz.comments },
           { label: '待审评论', value: biz.pendingComments },
           { label: '订阅者', value: biz.subscribers },
@@ -413,15 +421,15 @@
   {/if}
 </section>
 
-<section class="card">
+<section class="card fixed-card reactions-card">
   <h3>点赞与收藏（按页面，票数最多的前 30 页）</h3>
   {#if reactions}
     <p class="muted small">
       全站 {reactions.reactionRows} 条点赞 / 收藏记录，分布在 {reactions.pages} 个地址上。「不同来源」是按登录账号或匿名访客身份数的：
       票数远大于来源数，说明同一页被同一批身份反复刷过。匿名身份只认 IP（换 User-Agent 不再算新的一票）。
     </p>
-    <div class="table-wrap">
-      <table class="cols-wide">
+    <div class="list-scroll table-scroll">
+      <table>
         <thead>
           <tr>
             <th>页面</th>
@@ -457,6 +465,13 @@
 <style>
   .head {
     margin-bottom: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .head .row {
+    flex-wrap: wrap;
+  }
+  .head label {
+    white-space: nowrap;
   }
   .mono {
     font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -467,7 +482,7 @@
   }
   .kpis {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
     gap: 0.6rem;
     margin-bottom: 0.8rem;
   }
@@ -503,6 +518,81 @@
     margin-top: 0.8rem;
     align-items: start;
   }
+  /* 分析卡片统一定高，卡片里最多显示 10 行，其余在卡片内部滚动。
+     用户要求隐藏滚动条，但保留 hover 时的细条，避免鼠标用户不知道还能往下看。 */
+  .fixed-card {
+    height: 26.5rem;
+    display: flex;
+    flex-direction: column;
+  }
+  .fixed-card > h3 {
+    flex: 0 0 auto;
+    margin-bottom: 0.55rem;
+  }
+  .fixed-card.reactions-card {
+    height: 30rem;
+  }
+  .list-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .list-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .list-scroll:hover {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .list-scroll:hover::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+  .list-scroll:hover::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  .table-scroll table {
+    width: 100%;
+    table-layout: fixed;
+  }
+  .table-scroll th,
+  .table-scroll td {
+    padding: 0.45rem 0.4rem;
+  }
+  .reactions-card td:first-child {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .reactions-card td:first-child .mono {
+    display: inline;
+    white-space: nowrap;
+  }
+  .reactions-card th:last-child,
+  .reactions-card td:last-child {
+    width: 122px;
+    white-space: nowrap;
+  }
+  .table-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--panel);
+  }
+  .table-scroll th:not(:first-child),
+  .table-scroll td:not(:first-child) {
+    width: 64px;
+  }
+  .table-scroll .path {
+    max-width: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .biz {
     margin-top: 0.8rem;
   }
@@ -528,7 +618,8 @@
     grid-template-columns: 74px 1fr 38px;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.22rem 0;
+    height: 2.1875rem;
+    padding: 0;
     font-size: 0.82rem;
   }
   .track {

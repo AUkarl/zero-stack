@@ -320,17 +320,18 @@ app.get('/top', async (c) => {
         hit.visitors = Math.max(hit.visitors, Number(r.visitors ?? 0));
         merged.set(key, hit);
       }
+      /* 后台卡片只露 10 行，但内部要能继续向下滚；给 50 条，别只给 10 条让滚动条永远空转 */
       const pages = [...merged.entries()]
         .map(([path, v]) => ({ path, views: v.views, visitors: v.visitors }))
         .sort((a, b) => b.views - a.views || b.visitors - a.visitors)
-        .slice(0, 10);
+        .slice(0, 50);
       const refs = await db
         .select({ referrer: visits.referrer, n: sql<number>`count(*)`, s: visitorDistinctSql() })
         .from(visits)
         .where(and(gte(visits.createdAt, since), sql`${visits.referrer} <> ''`, cleanCond))
         .groupBy(visits.referrer)
         .orderBy(desc(sql`count(*)`))
-        .limit(10);
+        .limit(50);
       // siteUrl 给后台拼「点开就是站点页面」的绝对链接：后台和站点常常不同源，
       // 直接用站内相对路径会在后台自己的域名下 404
       const site = ((await getConfig(c.env, 'siteUrl')) ?? c.env.SITE_URL ?? '').replace(/\/+$/, '');

@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { session } from '#lib/session.svelte';
   import { get, post } from '#lib/api';
+  import { pendingCounts } from '#lib/pending.svelte';
 
   let { children } = $props();
 
@@ -99,10 +100,6 @@
     },
   ];
 
-  let pendingCount = $state(0);
-  let appPending = $state(0);
-  let draftPending = $state(0);
-  let authorPending = $state(0);
 
   /** ≤640px 时侧栏变成抽屉，这个是抽屉开关；换页后自动收起 */
   let navOpen = $state(false);
@@ -141,10 +138,10 @@
           get<{ data: { items?: { status: string }[] } }>('/api/admin/author-requests?status=pending'),
         ]);
         if (stop) return;
-        pendingCount = d.data.count ?? 0;
-        appPending = apps.data.pending ?? 0;
-        draftPending = drafts.data.pending ?? 0;
-        authorPending = authors.data.items?.length ?? 0;
+        pendingCounts.comments = d.data.count ?? 0;
+        pendingCounts.applications = apps.data.pending ?? 0;
+        pendingCounts.drafts = drafts.data.pending ?? 0;
+        pendingCounts.authors = authors.data.items?.length ?? 0;
       } catch {}
     };
     void tick();
@@ -215,10 +212,10 @@
                 stroke-linejoin="round"
                 aria-hidden="true">{@html I[icon] ?? ''}</svg>
               <span class="txt">{label}</span>
-              {#if href === '/comments' && pendingCount > 0}<i class="cnt">{pendingCount}</i>{/if}
-              {#if href === '/friends' && appPending > 0}<i class="cnt">{appPending}</i>{/if}
-              {#if href === '/drafts' && draftPending > 0}<i class="cnt">{draftPending}</i>{/if}
-              {#if href === '/author-verify' && authorPending > 0}<i class="cnt">{authorPending}</i>{/if}
+              {#if href === '/comments' && pendingCounts.comments > 0}<i class="cnt">{pendingCounts.comments}</i>{/if}
+              {#if href === '/friends' && pendingCounts.applications > 0}<i class="cnt">{pendingCounts.applications}</i>{/if}
+              {#if href === '/drafts' && pendingCounts.drafts > 0}<i class="cnt">{pendingCounts.drafts}</i>{/if}
+              {#if href === '/author-verify' && pendingCounts.authors > 0}<i class="cnt">{pendingCounts.authors}</i>{/if}
             </a>
           {/each}
         {/each}
