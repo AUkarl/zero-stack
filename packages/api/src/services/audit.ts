@@ -24,6 +24,7 @@ export type AuditAction =
   | 'moment'
   | 'broadcast'
   | 'backup'
+  | 'stats'
   | 'translate';
 
 interface Actor {

@@ -227,7 +227,8 @@
       </label>
       <label>
         图标（Font Awesome 类名）
-        <input bind:value={it.icon} maxlength={LIMIT.short} placeholder="fa-solid fa-house" />
+        <input bind:value={it.icon} list="zero-fa-icons" maxlength={LIMIT.short} placeholder="fa-solid fa-house" />
+        <span class="muted small">可从清单选择，也可填任意 Font Awesome 类名；清单内图标使用精简字体，清单外自动回退完整图标库</span>
       </label>
       <label>
         图标图片（与图标二选一，优先级更高）

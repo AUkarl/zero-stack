@@ -208,3 +208,66 @@ export async function statsMeta(env: Env): Promise<{ retentionDays: number; note
       : '明细不做清理；总访问量与独立访客读的是永久计数器',
   };
 }
+
+/**
+ * 手动重算「建站以来累计」：与每日对账不同，这里允许把计数器**调低**。
+ *
+ * 每日 reconcileLifetimeCounters 只向上抬，是为了防「批量落库丢零头」；
+ * 但导入旧站数据、误删明细之后，计数器可能比真实明细大，只能人工校正。
+ * 所以这一步必须由后台按钮触发（先演习、再确认），不能让定时任务自己降。
+ */
+export async function recountLifetimeCounters(
+  env: Env,
+  opts: { apply?: boolean } = {},
+): Promise<{
+  applied: boolean;
+  current: { views: number; visitors: number };
+  computed: { views: number; visitors: number };
+  retentionDays: number;
+  note: string;
+}> {
+  // 本 isolate 攒着的增量先落库，否则重算完再 flush 会把同样的量重复加回来
+  await flushStatCounters(env);
+
+  const db = createDb(env);
+  const [counts, registry] = await Promise.all([
+    db
+      .select({ n: sql<number>`count(*)`, s: visitorDistinctSql() })
+      .from(visits)
+      .then((r) => r[0]),
+    db.select({ n: sql<number>`count(*)` }).from(visitorKeys).then((r) => Number(r[0]?.n ?? 0)),
+  ]);
+  const computed = {
+    views: Number(counts?.n ?? 0),
+    visitors: Math.max(Number(counts?.s ?? 0), registry),
+  };
+  const current = {
+    views: (await readCounter(env, KEY_VIEWS)) ?? 0,
+    visitors: (await readCounter(env, KEY_VISITORS)) ?? 0,
+  };
+
+  if (opts.apply) {
+    await Promise.all([setCounter(env, KEY_VIEWS, computed.views), setCounter(env, KEY_VISITORS, computed.visitors)]);
+  }
+
+  const meta = await statsMeta(env);
+  const note = meta.retentionDays
+    ? `重算只依据明细表里还留着的 ${meta.retentionDays} 天数据；更早的明细已被清理，应用后累计值可能比当前小。`
+    : '重算依据全部明细与访客注册表；应用后累计值会与明细完全一致。';
+  return { applied: opts.apply === true, current, computed, retentionDays: meta.retentionDays, note };
+}
+
+/** 把计数器写成指定值（重算用；与只抬不降的 raiseCounter 区分开） */
+async function setCounter(env: Env, key: string, value: number): Promise<void> {
+  const n = Math.max(0, Math.trunc(Number.isFinite(value) ? value : 0));
+  await env.DB.prepare(
+    `insert into site_config (key, value, value_type, updated_at)
+     values (?, ?, 'number', (strftime('%s','now')))
+     on conflict(key) do update
+       set value = excluded.value,
+           value_type = 'number',
+           updated_at = (strftime('%s','now'))`,
+  )
+    .bind(key, String(n))
+    .run();
+}

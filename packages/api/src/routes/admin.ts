@@ -32,6 +32,7 @@ import { clientIp, ipFallbackCount } from '../lib/http';
 import { datedSlug } from '../lib/postName';
 import { errorMessage, fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
+import { recountLifetimeCounters } from '../services/stats';
 import { deleteFile, listDir, readFile } from '../services/git';
 import { finishRepoWrites, repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { buildHealthReceipt, commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, runLocalBuildCheck, walkFiles, writeRepoFile } from '../services/repo';
@@ -2189,10 +2190,18 @@ app.get('/stats', async (c) => {
   requireAdmin(c);
   const db = createDb(c.env);
   const since7 = Math.floor(Date.now() / 1000) - 7 * 86400;
+  /* 排除导入数据：评论导入时写了 is_legacy = true，这里只影响这个视图，
+     不动库里任何一条数据。统计页的开关会带 ?excludeLegacy=1。 */
+  const q = String(c.req.query('excludeLegacy') ?? '').toLowerCase();
+  const clean = q === '1' || q === 'true';
+  const notLegacyComment = clean ? eq(comments.isLegacy, false) : undefined;
   const [articleCount] = await db.select({ n: sql<number>`count(*)` }).from(comments).where(gte(comments.createdAt, since7));
   void articleCount;
-  const [commentCount] = await db.select({ n: sql<number>`count(*)` }).from(comments);
-  const [pendingCount] = await db.select({ n: sql<number>`count(*)` }).from(comments).where(eq(comments.status, 'pending'));
+  const [commentCount] = await db.select({ n: sql<number>`count(*)` }).from(comments).where(notLegacyComment);
+  const [pendingCount] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(comments)
+    .where(and(eq(comments.status, 'pending'), notLegacyComment));
   const [subscriberCount] = await db.select({ n: sql<number>`count(*)` }).from(subscribers).where(eq(subscribers.status, 'confirmed'));
   const [userCount] = await db.select({ n: sql<number>`count(*)` }).from(users);
   const emails = await db
@@ -2205,7 +2214,31 @@ app.get('/stats', async (c) => {
     subscribers: Number(subscriberCount?.n ?? 0),
     users: Number(userCount?.n ?? 0),
     email: Object.fromEntries(emails.map((e) => [e.status, Number(e.n)])),
+    excludeLegacy: clean,
   });
+});
+
+/**
+ * POST /api/admin/stats/recount —— 按明细重算「建站以来累计」（可演习）。
+ *
+ * 每日对账只抬不降；导入旧站数据/误删明细后，计数器会偏大，只能人工校正。
+ * 请求体 { apply?: boolean }：缺省/ false 只回当前值和建议值，true 才写库。
+ * 明细有保留期，重算后的累计只等于「还留着的明细」，应用前必须让站长看到这一点。
+ */
+app.post('/stats/recount', async (c) => {
+  const admin = requireAdmin(c);
+  const body = (await c.req.json().catch(() => null)) as { apply?: boolean } | null;
+  const res = await recountLifetimeCounters(c.env, { apply: body?.apply === true });
+  if (res.applied) {
+    await writeAudit(c.env, {
+      actor: admin,
+      action: 'stats',
+      target: 'lifetime',
+      detail: `累计重算：浏览 ${res.current.views} → ${res.computed.views}，访客 ${res.current.visitors} → ${res.computed.visitors}`,
+      ip: clientIp(c),
+    });
+  }
+  return ok(res);
 });
 
 /**
@@ -2251,6 +2284,11 @@ app.get('/stats/reactions', async (c) => {
   requireAdmin(c);
   const limit = Math.min(200, Math.max(1, Number(c.req.query('limit')) || 50));
   const offset = Math.max(0, Number(c.req.query('offset')) || 0);
+  const q = String(c.req.query('excludeLegacy') ?? '').toLowerCase();
+  const clean = q === '1' || q === 'true';
+  /* 导入旧站点赞时 fingerprint 写成 legacy:<hash>:like:<序号>；登录用户的 fingerprint 是 NULL，
+     coalesce 之后才不会被 NOT LIKE 一并滤掉 */
+  const notLegacyReaction = clean ? sql`coalesce(${reactions.fingerprint}, '') not like 'legacy:%'` : undefined;
   const db = createDb(c.env);
   const [rows, total, pages] = await Promise.all([
     db
@@ -2262,12 +2300,13 @@ app.get('/stats/reactions', async (c) => {
         lastAt: sql<number>`max(${reactions.createdAt})`,
       })
       .from(reactions)
+      .where(notLegacyReaction)
       .groupBy(reactions.targetSlug)
       .orderBy(sql`(sum(case when ${reactions.kind} = 'like' then 1 else 0 end) + sum(case when ${reactions.kind} = 'star' then 1 else 0 end)) desc`)
       .limit(limit)
       .offset(offset),
-    db.select({ n: sql<number>`count(*)` }).from(reactions),
-    db.select({ n: sql<number>`count(distinct ${reactions.targetSlug})` }).from(reactions),
+    db.select({ n: sql<number>`count(*)` }).from(reactions).where(notLegacyReaction),
+    db.select({ n: sql<number>`count(distinct ${reactions.targetSlug})` }).from(reactions).where(notLegacyReaction),
   ]);
   return ok({
     rows: rows.map((r) => ({ slug: r.slug, likes: Number(r.likes), stars: Number(r.stars), actors: Number(r.actors), lastAt: Number(r.lastAt) })),
@@ -2275,6 +2314,7 @@ app.get('/stats/reactions', async (c) => {
     offset,
     reactionRows: Number(total[0]?.n ?? 0),
     pages: Number(pages[0]?.n ?? 0),
+    excludeLegacy: clean,
   });
 });
 

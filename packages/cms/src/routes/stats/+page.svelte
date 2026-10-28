@@ -24,6 +24,8 @@
     /** 本 isolate 这一小时里被 isBot() 判掉、没入库的 /beat 条数（冷启动清零，不是全站累计） */
     botFilteredThisHour?: number;
     botFilteredNote?: string;
+    /** 本次请求是否带了「排除导入数据」 */
+    excludeLegacy?: boolean;
   }
   interface Point {
     day: string;
@@ -52,6 +54,7 @@
     subscribers: number;
     users: number;
     email: Record<string, number>;
+    excludeLegacy?: boolean;
   }
   /** 按页面汇总的点赞 / 收藏：票数远大于 actors 就是刷出来的 */
   interface ReactionRow {
@@ -65,6 +68,15 @@
     rows: ReactionRow[];
     reactionRows: number;
     pages: number;
+    excludeLegacy?: boolean;
+  }
+  /** 按明细重算永久计数器的演习 / 应用结果 */
+  interface RecountResult {
+    applied: boolean;
+    current: { views: number; visitors: number };
+    computed: { views: number; visitors: number };
+    retentionDays: number;
+    note: string;
   }
 
   let summary = $state<Summary | null>(null);
@@ -76,6 +88,8 @@
   /** 文章地址 → 标题：/api/admin/posts 是后端缓存过的那份，这里只做显示用，取不到就原样给地址 */
   let titles = $state<Record<string, string>>({});
   let days = $state(14);
+  /** 排除从旧站导入的数据（评论 is_legacy / 访问与点赞的 legacy: 标记）；只影响视图，不改库 */
+  let excludeLegacy = $state(false);
   let loading = $state(false);
   let error = $state('');
   let enabled = $state(true);
@@ -84,13 +98,15 @@
     loading = true;
     error = '';
     try {
+      const clean = excludeLegacy ? '&excludeLegacy=1' : '';
+      const cleanQ = excludeLegacy ? '?excludeLegacy=1' : '';
       const [s, t, dv, tp, bz, rx, ps, cfg] = await Promise.all([
-        get<{ data: Summary }>('/api/analytics/summary'),
-        get<{ data: Point[] }>(`/api/analytics/trend?days=${days}`),
-        get<{ data: Devices }>('/api/analytics/devices'),
-        get<{ data: Top }>('/api/analytics/top'),
-        get<{ data: Biz }>('/api/admin/stats'),
-        get<{ data: ReactionStats }>('/api/admin/stats/reactions?limit=30'),
+        get<{ data: Summary }>(`/api/analytics/summary${cleanQ}`),
+        get<{ data: Point[] }>(`/api/analytics/trend?days=${days}${clean}`),
+        get<{ data: Devices }>(`/api/analytics/devices${cleanQ}`),
+        get<{ data: Top }>(`/api/analytics/top${cleanQ}`),
+        get<{ data: Biz }>(`/api/admin/stats${cleanQ}`),
+        get<{ data: ReactionStats }>(`/api/admin/stats/reactions?limit=30${clean}`),
         get<{ data: { path: string; title: string }[] }>('/api/admin/posts'),
         get<{ data: Record<string, string> }>('/api/admin/config'),
       ]);
@@ -157,9 +173,11 @@
 
   let exporting = $state(false);
   let exportNote = $state('');
+  let recounting = $state(false);
+  let recountNote = $state('');
 
   /**
-   * 立刻把每篇的阅读 / 评论 / 点赞 / 收藏导出成站点 data/poststats.json。
+   * 立即把每篇的阅读 / 评论 / 点赞 / 收藏导出成站点 data/poststats.json。
    * 定时任务每天跑一次，改完开关或刚发新文章时可以手点一次，首页精选与「最热」下一次构建就按新数据排。
    */
   async function exportStats() {
@@ -177,13 +195,44 @@
     }
   }
 
+  /**
+   * 按明细重算「建站以来累计」：先演习（不写库），把当前值与重算值摆出来让站长确认，再应用。
+   * 每日对账只抬不降，所以导入旧站数据或误删明细后只能从这里人工校正。
+   */
+  async function recount() {
+    if (recounting) return;
+    recounting = true;
+    recountNote = '';
+    error = '';
+    try {
+      const dry = await post<{ data: RecountResult }>('/api/admin/stats/recount', {});
+      const d = dry.data;
+      const yes = window.confirm(
+        `当前累计：浏览 ${d.current.views} / 访客 ${d.current.visitors}\n` +
+          `按现有明细重算：浏览 ${d.computed.views} / 访客 ${d.computed.visitors}\n\n` +
+          `${d.note}\n\n确定写入吗？`,
+      );
+      if (!yes) {
+        recountNote = '已取消，累计值没有改动。';
+        return;
+      }
+      const res = await post<{ data: RecountResult }>('/api/admin/stats/recount', { apply: true });
+      recountNote = `已重算：浏览 ${res.data.computed.views} / 访客 ${res.data.computed.visitors}`;
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : '重算失败';
+    } finally {
+      recounting = false;
+    }
+  }
+
   $effect(() => void load());
 </script>
 
 <div class="row spread head">
   <h2>访问统计</h2>
   <div class="row">
-    <select bind:value={days} onchange={() => void load()}>
+    <select bind:value={days}>
       <option value={7}>近 7 天</option>
       <option value={14}>近 14 天</option>
       <option value={30}>近 30 天</option>
@@ -192,11 +241,25 @@
     <button class="sm" onclick={() => void exportStats()} disabled={exporting} title="导出 data/poststats.json，供首页精选与「最热」构建期排序">
       {exporting ? '导出中…' : '导出文章统计'}
     </button>
+    <button class="sm" onclick={() => void recount()} disabled={recounting} title="按现有明细重算「建站以来累计」；会先演习并让你确认">
+      {recounting ? '重算中…' : '按明细重算累计'}
+    </button>
+    <label class="row small" title="排除从旧站导入的评论、浏览与点赞；只影响本页视图，不改库里的数据">
+      <input type="checkbox" bind:checked={excludeLegacy} />
+      排除导入数据
+    </label>
     <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
   </div>
 </div>
 
 {#if exportNote}<p class="ok small">统计导出：{exportNote}</p>{/if}
+{#if recountNote}<p class="ok small">{recountNote}</p>{/if}
+{#if excludeLegacy}
+  <p class="muted small">
+    已排除导入数据：趋势、设备、排行、评论数与点赞只统计不带 legacy 标记的部分；
+    「累计访问量 / 建站以来累计访问人数」读的是永久计数器，无法从历史总额里剔除导入的部分。
+  </p>
+{/if}
 
 {#if !enabled}<p class="warn">统计开关当前是关闭的（设置 - 访问统计），前台不再上报页面浏览。</p>{/if}
 {#if error}<p class="err">{error}</p>{/if}

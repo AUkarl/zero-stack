@@ -27,14 +27,16 @@ function secret(env: Env): string {
  *
  * 不做这一步，`/posts/随手编一个/` 也能攒出点赞与计数（实测给根本不存在的文章点赞 200 落库），
  * 后台看不出差别。地址 → 文件的换算与删除文章、清缓存同一份口径：文章/时刻目录 + 文件名即 slug。
- * 除 posts / moments 之外的地址上没有点赞按钮（例如 /about/ 这类单页），不去仓库里猜文件名，直接放过。
+ * posts / moments 之外的地址（/links/、/about/、/home/ 这类单页）也要核对内容仓库里真有
+ * 对应的 _index.md / index.md / <名>.md，不再「不是文章就放过」——否则任意 /foo/ 都能写评论。
  * 探一次仓库，结果在 KV 存 6 分钟；仓库读不动（没配、限流、网络）时按「存在」放过 ——
- * 反刷不能把正常点赞拦在门外。
+ * 反刷不能把正常评论/点赞拦在门外。
  */
 export async function targetExists(env: Env, slug: string): Promise<boolean> {
   const clean = slug.replace(/^\/+|\/+$/g, '');
+  // 路径段里出现 . / .. 一律当作不存在，别让拼出来的仓库路径跑出内容目录
+  if (clean.split('/').some((seg) => seg === '.' || seg === '..')) return false;
   const hit = /^(posts|moments)\/([^/]+)$/.exec(clean);
-  if (!hit) return true;
 
   const cacheKey = `zero:target:${clean}`;
   try {
@@ -45,15 +47,34 @@ export async function targetExists(env: Env, slug: string): Promise<boolean> {
     /* KV 读不到就照常探一次 */
   }
 
-  const dirs = [
-    (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/zh/posts',
-    (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/zh/moments',
-  ];
+  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
+  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
   let found = false;
-  for (const dir of dirs) {
-    const base = `${dir.replace(/\/+$/, '')}/${hit[2]}`;
-    /* 扁平文件与页面包（post/index.md）都认；只认扁平会把 page bundle 站点整片判成 404。 */
-    for (const file of [`${base}.md`, `${base}/index.md`]) {
+  if (hit) {
+    for (const dir of [postsDir, momentsDir]) {
+      const base = `${dir.replace(/\/+$/, '')}/${hit[2]}`;
+      /* 扁平文件与页面包（post/index.md）都认；只认扁平会把 page bundle 站点整片判成 404。 */
+      for (const file of [`${base}.md`, `${base}/index.md`]) {
+        try {
+          if (await readRepoFile(env, file)) {
+            found = true;
+            break;
+          }
+        } catch {
+          return true;
+        }
+      }
+      if (found) break;
+    }
+  } else {
+    /* 静态页（/links/、/about/、首页）也要核对内容仓库里真有这个页面；
+       不能因为路径不以 posts/moments 开头就放行任意 /foo/ 评论。 */
+    const root = postsDir.replace(/\/posts\/?$/, '').replace(/\/+$/, '') || 'content/zh';
+    const rel = clean;
+    const bases = rel
+      ? [`${root}/${rel}/_index.md`, `${root}/${rel}/index.md`, `${root}/${rel}.md`]
+      : [`${root}/_index.md`];
+    for (const file of bases) {
       try {
         if (await readRepoFile(env, file)) {
           found = true;
@@ -63,7 +84,6 @@ export async function targetExists(env: Env, slug: string): Promise<boolean> {
         return true;
       }
     }
-    if (found) break;
   }
   try {
     await env.CACHE.put(cacheKey, found ? '1' : '0', { expirationTtl: 360 });

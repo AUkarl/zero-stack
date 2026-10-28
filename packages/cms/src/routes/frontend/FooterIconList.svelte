@@ -40,7 +40,8 @@
       </label>
       <label class="ic2">
         图标类名
-        <input bind:value={x.icon} maxlength={LIMIT.short} placeholder="fa-brands fa-github" />
+        <input bind:value={x.icon} list="zero-fa-icons" maxlength={LIMIT.short} placeholder="fa-brands fa-github" />
+        <span class="muted small">清单内图标使用精简字体；填自定义图片时优先用图片（现有行为不变）</span>
       </label>
       <label class="lk">
         地址

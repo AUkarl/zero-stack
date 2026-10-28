@@ -23,6 +23,7 @@
     moment: '时刻',
     media: '媒体',
     backup: '备份与恢复',
+    stats: '统计',
     translate: '翻译',
     user: '用户',
     profile: '账号资料',

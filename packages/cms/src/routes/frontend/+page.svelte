@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get, post } from '#lib/api';
+  import { FA_ICON_CLASSES } from '#lib/fa-icons';
   import AboutPanel from './AboutPanel.svelte';
   import ApplyPanel from './ApplyPanel.svelte';
   import FallbackCard from './FallbackCard.svelte';
@@ -407,6 +408,9 @@ async function save() {
   <p class="warn small note">读取提示：{getNotice}</p>
 {/if}
 
+<datalist id="zero-fa-icons">
+  {#each FA_ICON_CLASSES as icon (icon)}<option value={icon}></option>{/each}
+</datalist>
 <div class="tabs">
   {#each TABS as t (t)}
     {@const chip = chipFor(t)}

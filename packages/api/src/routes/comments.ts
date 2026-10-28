@@ -612,12 +612,6 @@ app.post('/', async (c) => {
   if (!parsed.success) fail(400, `参数有误，正文长度需在 ${MAX_CONTENT} 字以内`);
   const body = parsed.data;
 
-  // 上限后台可配；设成 0 表示不限流（只靠蜜罐、关键词打分与先审后发）
-  await rateLimit(c, 'comment', await getConfigInt(env, 'commentRateLimit', 10), 3600, body.postSlug);
-  /* 按文章分桶之外再加一把纯 IP 总桶：否则换一个 slug 就是一只新桶，
-     脚本可以无限写不存在的页面，顺带把站长的提醒邮箱灌满。 */
-  rateLimitLocal(c, 'comment-ip', 60, 3600);
-
   const db = createDb(env);
   const user = c.get('user') ?? null;
   if (!user && (await bannedByToken(env, tokenFromRequest(c)))) fail(403, '账号已被封禁，无法评论');
@@ -629,9 +623,26 @@ app.post('/', async (c) => {
 
   const content = body.content.trim();
   if (!content) fail(400, '内容不能为空');
+
+  /* 纯格式校验放在限流之前：写错邮箱/网址的请求不该占掉同一 IP 的 2 条/5 分钟额度，
+     也不该先去做一次仓库存在性探测。 */
+  const link = normalizeLink(body.link);
+  if ((body.link ?? '').trim() && !link) fail(400, '网址格式有误，请填写完整链接（如 https://example.com）');
+  // 登录用户一律用账号邮箱；匿名邮箱必填，用于头像与回复通知
+  const email = user ? user.email.trim().toLowerCase() : (body.email ?? '').trim().toLowerCase();
+  if (!user && !isEmail(email)) fail(400, '请填写正确的邮箱地址（不会公开显示，用于头像与回复提醒）');
+
+  // 上限后台可配；设成 0 表示不限流（只靠蜜罐、关键词打分与先审后发）
+  await rateLimit(c, 'comment', await getConfigInt(env, 'commentRateLimit', 10), 3600, body.postSlug);
+  /* 按文章分桶之外再加一把纯 IP 总桶：否则换一个 slug 就是一只新桶，
+     脚本可以无限写不存在的页面，顺带把站长的提醒邮箱灌满。 */
+  rateLimitLocal(c, 'comment-ip', 20, 3600);
+  /* 短窗口：同一 IP 5 分钟内最多 2 条，防止脚本换文章/换 slug 连续灌。 */
+  rateLimitLocal(c, 'comment-ip-burst', 2, 300);
+
   const slug = canonSlug(body.postSlug);
-  /* 与点赞同一个存在性判据：文章/时刻必须在内容仓库里真有这个文件。
-     以前任意编一个 /posts/xxx/ 都能攒评论与通知；静态页（/links/ 等）仍按 false 放过。 */
+  /* 与点赞同一个存在性判据：文章/时刻/静态页都必须在内容仓库里真有对应文件。
+     以前任意编一个 /posts/xxx/ 都能攒评论与通知。 */
   if (!(await targetExists(env, slug))) fail(404, '这一页在站上不存在，无法评论');
 
   let depth = 1;
@@ -667,13 +678,7 @@ app.post('/', async (c) => {
     parent = { authorName: hit.authorName, authorEmail: hit.authorEmail, authorId: hit.authorId, content: hit.content };
   }
 
-  const link = normalizeLink(body.link);
-  if ((body.link ?? '').trim() && !link) fail(400, '网址格式有误，请填写完整链接（如 https://example.com）');
-
   const profile = user ? await profileOf(env, user.id) : null;
-  // 登录用户一律用账号邮箱；匿名邮箱必填，用于头像与回复通知
-  const email = user ? user.email.trim().toLowerCase() : (body.email ?? '').trim().toLowerCase();
-  if (!user && !isEmail(email)) fail(400, '请填写正确的邮箱地址（不会公开显示，用于头像与回复提醒）');
   const name = ((user ? profile?.name ?? user.name : body.name) ?? '').trim() || nicknameFromEmail(email);
 
   const now = Math.floor(Date.now() / 1000);
