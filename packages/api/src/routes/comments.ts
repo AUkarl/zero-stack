@@ -614,12 +614,6 @@ app.post('/', async (c) => {
 
   const db = createDb(env);
   const user = c.get('user') ?? null;
-  if (!user && (await bannedByToken(env, tokenFromRequest(c)))) fail(403, '账号已被封禁，无法评论');
-  // 前台账号系统关掉后整站无处登录，这时再要求「登录后评论」等于把评论区彻底锁死，按匿名可发放行
-  const anonOk =
-    (await getConfigBool(env, 'commentAllowAnonymous', true)) ||
-    !(await getConfigBool(env, 'accountSystemEnabled', true));
-  if (!user && !anonOk) fail(403, '本站评论需登录后进行');
 
   const content = body.content.trim();
   if (!content) fail(400, '内容不能为空');
@@ -639,6 +633,14 @@ app.post('/', async (c) => {
   rateLimitLocal(c, 'comment-ip', 20, 3600);
   /* 短窗口：同一 IP 5 分钟内最多 2 条，防止脚本换文章/换 slug 连续灌。 */
   rateLimitLocal(c, 'comment-ip-burst', 2, 300);
+
+  /* 封禁检查要读 KV，放在限流之后：被限流的请求不该先去打一次 KV。 */
+  if (!user && (await bannedByToken(env, tokenFromRequest(c)))) fail(403, '账号已被封禁，无法评论');
+  // 前台账号系统关掉后整站无处登录，这时再要求「登录后评论」等于把评论区彻底锁死，按匿名可发放行
+  const anonOk =
+    (await getConfigBool(env, 'commentAllowAnonymous', true)) ||
+    !(await getConfigBool(env, 'accountSystemEnabled', true));
+  if (!user && !anonOk) fail(403, '本站评论需登录后进行');
 
   const slug = canonSlug(body.postSlug);
   /* 与点赞同一个存在性判据：文章/时刻/静态页都必须在内容仓库里真有对应文件。
