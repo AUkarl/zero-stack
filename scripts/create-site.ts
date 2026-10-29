@@ -593,6 +593,24 @@ function siteHeaders(apiBase: string): string {
 /fa/*
   Cache-Control: public, max-age=2678400
 
+# RSS 三份 feed：浏览器仍然每次回源校验（新文章不能晚出现），但允许 CDN 存 5 分钟、
+# 过期后先给旧的再后台刷新。订阅器每分钟轮询时不必再各打穿源站一次
+# （/posts/index.xml 实测 412KB，源站直取要 300ms+）。5 分钟是上限，重建站点会立刻换掉。
+/index.xml
+  Cache-Control: public, max-age=0, must-revalidate, s-maxage=300, stale-while-revalidate=3600
+
+/posts/index.xml
+  Cache-Control: public, max-age=0, must-revalidate, s-maxage=300, stale-while-revalidate=3600
+
+/moments/index.xml
+  Cache-Control: public, max-age=0, must-revalidate, s-maxage=300, stale-while-revalidate=3600
+
+# 站内搜索索引：地址带构建版本号（主题 layouts/search/list.html 输出 ?v=<构建时间>），
+# 每次重建自动换成新地址，所以这份可以按不可变存一年 —— 123KB 只在第一次下载，
+# 也不会因为缓存让新文章搜不到（老地址留在 CDN 不影响新构建用的新地址）。
+/search/index.json
+  Cache-Control: public, max-age=31536000, immutable
+
 # 显式请求 .html 的那几个地址：始终回源校验。
 # （清洁地址 /posts/x/ 的请求路径不带 .html，命中的是 Pages 自己的默认缓存口径，不归这条管；
 #   也不能写成 /* —— Pages 会把命中规则的同名头拼在一起，/* 会把 max-age=0 加到上面的 css/js 上。）
