@@ -81,11 +81,24 @@ export async function readVariantsManifest(env: Env): Promise<VariantManifest> {
 
 /**
  * 合并一条（上传完成 / 回填时调用）。读-改-写带乐观锁：GitHub 那边并发提交会 409，
- * 遇到冲突重读一次再写，最多两次 —— 比让用户看到「上传成功但清单没更新」好。
+ * 遇到冲突重读再写，最多三次 —— 比让用户看到「上传成功但清单没更新」好。
+ *
+ * 同一 isolate 内的请求还要排队：批量上传时几张图各自发 POST，读到的都是同一份旧清单，
+ * 后写的那次会把先写的条目整条盖掉（实测：8 张图的变体都在桶里，清单只剩 1 条）。
+ * 队列只管本 isolate，跨 isolate 的并发靠上面的重试兜住。
  */
-export async function mergeVariantEntry(env: Env, originKey: string, entry: VariantEntry): Promise<VariantManifest> {
+let manifestQueue: Promise<unknown> = Promise.resolve();
+
+export function mergeVariantEntry(env: Env, originKey: string, entry: VariantEntry): Promise<VariantManifest> {
+  const run = () => mergeVariantEntryOnce(env, originKey, entry);
+  const next = manifestQueue.then(run, run);
+  manifestQueue = next.catch(() => undefined);
+  return next;
+}
+
+async function mergeVariantEntryOnce(env: Env, originKey: string, entry: VariantEntry): Promise<VariantManifest> {
   const path = await manifestPath(env);
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     const file = await readRepoFile(env, path).catch(() => null);
     let manifest: VariantManifest = {};
     if (file?.content) {
@@ -99,11 +112,12 @@ export async function mergeVariantEntry(env: Env, originKey: string, entry: Vari
     manifest[originKey] = entry;
     const sorted = Object.fromEntries(Object.entries(manifest).sort(([a], [b]) => a.localeCompare(b)));
     const res = await writeRepoFile(env, path, JSON.stringify(sorted, null, 2) + '\n', `media: variants for ${originKey}`);
-    if (res.success || !/conflict|冲突/i.test(String(res.error ?? ''))) return sorted;
+    /* 任何失败都重读重试：GitHub 并发写回的是 sha 不匹配，文案里未必有「冲突」两个字。
+       以前只认 conflict 关键字，其余直接返回，等于把这次条目静默丢掉。 */
+    if (res.success) return sorted;
   }
-  /* 两次都没成：返回内存里这份，让调用方至少能继续把图传完；清单缺失的后果是构建期回退原图 */
-  const fresh = await readVariantsManifest(env);
-  return fresh;
+  /* 三次都没成：返回现读的一份，让调用方至少能继续把图传完；清单缺失的后果是构建期回退原图 */
+  return readVariantsManifest(env);
 }
 
 export async function removeVariantEntry(env: Env, originKey: string): Promise<void> {

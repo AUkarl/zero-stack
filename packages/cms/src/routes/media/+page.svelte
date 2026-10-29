@@ -241,9 +241,15 @@
     }
   }
 
+  /* 批量上传必须串行：每张图上传完都会读-改-写同一份 data/media-variants.json，
+     并发时后写的请求会把先写的条目盖掉（变体在桶里、清单里没有 → 前台没有 srcset/宽高）。 */
+  async function uploadAll(files: File[]) {
+    for (const f of files) await upload(f);
+  }
+
   function onPick() {
     if (!input?.files) return;
-    for (const f of Array.from(input.files)) void upload(f);
+    void uploadAll(Array.from(input.files));
     input.value = '';
   }
 
@@ -271,7 +277,7 @@
   function onDrop(e: DragEvent) {
     e.preventDefault();
     const files = e.dataTransfer?.files;
-    if (files) for (const f of Array.from(files)) void upload(f);
+    if (files) void uploadAll(Array.from(files));
   }
 
   /* ---------------- 管理存储桶抽屉 ---------------- */
@@ -386,7 +392,7 @@
     {/each}
     <input class="flt" placeholder="按前缀过滤，如 uploads/2026" bind:value={filter} onkeydown={(e) => e.key === 'Enter' && load()} />
     <button class="sm" onclick={openDrawer}>管理存储桶</button>
-    <button class="sm" onclick={() => void rebuildVariants()}>{rebuilding ? '停止回填' : '重建图片变体'}</button>
+    <button class="sm" title="新上传的图片会自动生成变体；这里只回填历史图片（或清单丢失的条目）" onclick={() => void rebuildVariants()}>{rebuilding ? '停止回填' : '重建图片变体'}</button>
   </div>
   {#if rebuildNote}<p class="muted small">{rebuildNote}</p>{/if}
 </div>
