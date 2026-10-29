@@ -376,9 +376,35 @@ function tableCells(raw: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * 列一下 Pages 项目，区分「读不到列表」与「这个项目不存在」。
+ *
+ * 这两件事以前不分：凭据下有多个 Cloudflare 账号时，`pages project list` 直接报错
+ * （要你指定 account_id），而这份报错被当成「项目不存在」，脚本接着去 project create，
+ * 最后只剩一句「创建 Pages 项目失败」，真实原因（缺 CLOUDFLARE_ACCOUNT_ID）被吞掉。
+ */
+export function pagesProjectList(): { ok: true; names: string[] } | { ok: false; error: string } {
+  try {
+    const raw = wrangler('pages project list', { cwd: ROOT, capture: true });
+    return { ok: true, names: tableCells(raw) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export function pagesProjectExists(name: string): boolean {
-  const raw = wranglerTry('pages project list', { cwd: ROOT });
-  return !!raw && tableCells(raw).includes(name);
+  const list = pagesProjectList();
+  if (!list.ok) {
+    const multiAccount = /account_id|多个账号|Available accounts/i.test(list.error);
+    die(
+      `读不到 Pages 项目列表，先解决这一条再继续：\n${list.error}\n` +
+        (multiAccount
+          ? '\n这套凭据下有多个 Cloudflare 账号，指定要部署到哪一个再重跑，例如：\n' +
+            '  CLOUDFLARE_ACCOUNT_ID=<上面列出的账号 id> pnpm deploy:cms\n'
+          : ''),
+    );
+  }
+  return list.names.includes(name);
 }
 
 /**
