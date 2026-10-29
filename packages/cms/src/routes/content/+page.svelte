@@ -832,7 +832,7 @@
     {:else}
       <div class="card placeholder">
         <p class="muted">从左侧选择一个 .md 文件进行编辑，或点击「新文章」。</p>
-        <p class="muted">保存即通过 GitHub Contents API 提交到仓库，Actions 会自动重建站点。</p>
+        <p class="muted">保存会写入内容仓库：线上走 GitHub Contents API 提交，推送后站点自动重建；本地开发走 repo bridge，直接写文件、不产生提交。</p>
       </div>
     {/if}
   </div>

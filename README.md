@@ -340,6 +340,8 @@ pnpm setup -- --no-deploy      # 只建资源、跑迁移、写配置：不部�
 
 7. **内容仓库**：`pnpm create:site` 生成私密的 `zero-site`（目录结构、CI、`.gitignore`、
    主题 submodule 引用都写好了；本地生成与提交，不会替你 push）。
+   生成的站点自带三份 RSS（`/index.xml`、`/posts/index.xml`、`/moments/index.xml`）、
+   `/subscribe/` 订阅页，时刻只在 `/moments/` 时间线上展示、不生成详情页。
    主题子模块拉不下来时脚本会**直接失败并清理本次生成的半成品**（同时打印 Git 原话），
    不会留下一座没有示例内容、params 也不完整的最小骨架让你「重跑」——修好主题地址/网络后重跑即可。
    然后在后台「设置 → 内容仓库」填 `owner / repo / branch / 各目录 / 友链文件 / Pages 重建 Hook`。
@@ -641,7 +643,7 @@ Cloudflare 免费档的量是硬约束，这套代码刻意做了这些收敛：
 | `pnpm setup` | 交互式部署向导（资源 → 渲染 wrangler.jsonc → 迁移 → 写站点配置 → 部署 Worker → 写密钥 → 部署后台），`-- --no-deploy` 只做到写站点配置 |
 | `pnpm deploy:api` | 同步 D1 迁移并部署 Worker，`-- --no-migrate` / `-- --dry-run` / `-- --local` |
 | `pnpm deploy:cms` | 构建后台并部署 Pages，`-- --api <worker 地址>` / `-- --no-build` / `-- --project <名称>` |
-| `pnpm create:site` | 生成私密的 `zero-site` 内容仓库骨架（含 CI 与 submodule、`_headers`/`_routes.json`、构建回报脚本、站内搜索页） |
+| `pnpm create:site` | 生成私密的 `zero-site` 内容仓库骨架（含 CI 与 submodule、`_headers`/`_routes.json`、构建回报脚本、站内搜索页、三份 RSS 与订阅页） |
 | `pnpm migrate:waline` | Waline / Twikoo 导出 → D1 评论表 |
 | `pnpm dev:api` / `pnpm dev:cms` | 本地开发（8787 / 5173） |
 | `pnpm repo:bridge` / `pnpm mock:translate` | 本地回写替身（8792）/ 翻译替身（8791） |

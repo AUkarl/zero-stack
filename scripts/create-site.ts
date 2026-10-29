@@ -340,8 +340,20 @@ enableRobotsTXT = true
   category = "categories"
   tag = "tags"
 
-# 文章列表页 /posts/ 不生成：导航里已经有「归档」承担列表职责。
-# 想恢复就删掉 content/zh/posts/_index.md 里那三行 build。
+# RSS：只保留三份 feed；其他 section / taxonomy 总览 / term 都不生成。
+#   /index.xml          文章 + 时刻各前 20 条
+#   /posts/index.xml    全部文章（content/zh/posts/_index.md 的 outputs）
+#   /moments/index.xml  全部时刻（content/zh/moments/_index.md 的 outputs）
+# 不写这一段，Hugo 的默认输出会给每个 section、taxonomy 总览和 term 都生成一份 RSS。
+[outputs]
+  home = ["HTML", "RSS"]
+  section = ["HTML"]
+  taxonomy = ["HTML"]
+  term = ["HTML"]
+  page = ["HTML"]
+
+# 文章列表页 /posts/ 只出 RSS、不出 HTML：导航里已经有「归档」承担列表职责。
+# 想恢复 HTML 列表页，就把 content/zh/posts/_index.md 的 outputs 改回 ["HTML", "RSS"]。
 
 # 「将来才上线」的稿子：这里没有配置项可开。实测 Hugo 0.165.0 连 [build].future 都不认
 # （hugo config 里根本不出现这一项），只有命令行 -F/--buildFuture 才会把将来日期的页面生成出来。
@@ -374,8 +386,8 @@ enableRobotsTXT = true
  * 不钉就会漂：Pages 直连 Git 构建时用的是平台默认的那个 Hugo（想换只能设 `HUGO_VERSION`），
  * Actions 里 `hugo-version: 'latest'` 又跟着上游最新发布走。两边版本不同，就会出现
  * 「本地和 CI 都过、线上构建出来的页面对不上」，而且哪天 Hugo 改了行为你就得当场重查。
- * 这座站的模板与 `content/zh/posts/_index.md` 里的 `build: { render: never }`
- * 都在下面这个版本的 extended 构建上实测过，所以三处（Pages、两个 workflow）钉成同一个数。
+ * 这座站的模板与 `content/zh/posts/_index.md`、`content/zh/moments/_index.md` 里的
+ * build / outputs 声明都在下面这个版本的 extended 构建上实测过，所以三处（Pages、两个 workflow）钉成同一个数。
  * 想升级主题/站点前先本地 `hugo version` 对齐一次，再改这一个常量重新生成。
  */
 const HUGO_PIN = '0.165.0';
@@ -653,6 +665,42 @@ comments: true
 符合的话，用下面的申请表单提交即可，站长会在后台审核。
 
 <!-- 左邻右舍与站点联盟的名单由 zero-cms 后台「友链」维护，此页只写要求与说明。 -->
+`;
+
+/**
+ * 文章分区页只出 RSS、不出 HTML 列表：导航里的「归档」承担列表职责。
+ * render: always 让 RSS 真的生成；outputs 只留 RSS，所以没有 /posts/index.html 这个跟归档重复的页面。
+ */
+const POSTS_INDEX = `---
+title: "文章"
+type: "posts"
+layout: "list"
+build:
+  render: always
+outputs: ["RSS"]
+sitemap:
+  disable: true
+---
+`;
+
+/**
+ * 时刻不生成详情页：卡片、评论、点赞、收藏都在 /moments/ 时间线上，
+ * 站内链接落到 /moments/#moment-<文件名>。
+ * list=always 让每条时刻仍出现在 .Site.RegularPages 里，时间线才有数据；
+ * 自己这行 build=always 不能省 —— 同一份 cascade 也会盖到声明它的这一页。
+ */
+const MOMENTS_INDEX = `---
+title: "时刻"
+type: "moments"
+layout: "list"
+outputs: ["HTML", "RSS"]
+cascade:
+  build:
+    render: never
+    list: always
+build:
+  render: always
+---
 `;
 
 /**
@@ -942,8 +990,6 @@ async function main(): Promise<void> {
   write(rel('content/zh/moments/first-moment.md'), SAMPLE_MOMENT);
   write(rel('data/links.yaml'), LINKS_DATA);
   write(rel('content/zh/links/_index.md'), LINKS_INDEX);
-  // 落地页（主题的 layouts/index.html）：空 front matter 即可，进去按回车到 /home/
-  write(rel('content/zh/_index.md'), '---\n---\n');
   for (const [dir, title] of SECTIONS) write(rel(`content/zh/${dir}/_index.md`), sectionIndex(dir, title));
   // 个人中心：主题在 layouts/account/me/list.html 渲染它，少了这份内容页 /account/me/ 就是 404，
   // 而前端登录成功后普通用户正是跳这里
@@ -1004,7 +1050,7 @@ HUGO_VERSION = ${HUGO_PIN}
 \`\`\`
 
 不设它就用 Pages 平台默认的 Hugo（会随平台漂移，而且默认那个不一定带 +extended）。
-本仓库的模板与 \`build: { render: never }\`、\`[languages.zh] contentDir\` 都在 ${HUGO_PIN} extended 上验过，
+本仓库的模板与 \`content/zh/posts|moments/_index.md\` 的 outputs / build 声明、\`[languages.zh] contentDir\` 都在 ${HUGO_PIN} extended 上验过，
 \`.github/workflows/\` 两个文件里钉的是同一个版本 —— 三处对齐，才不会出现「本地和 Actions 都过、Pages 构建出来的不一样」。
 
 这样每次构建都直接取主题默认分支的最新提交（主题仓库是公开的，不需要凭据）。
@@ -1082,17 +1128,23 @@ hugo server -D
     warn('没读到 themes/zero/exampleSite（子模块还没拉下来？）：这座站只有最小骨架，初始化子模块后重跑一次 create:site 才有完整示例');
   }
 
-  /** 分区页是 Hugo 由目录自动造的，没有「只禁一个分区」的开关，
-      所以给 posts 自己写一份 _index.md 并让它不渲染：/posts/ 变 404，
-      而每篇文章、首页列表、归档页都不受影响。 */
+  /** 分区页是 Hugo 由目录自动造的，没有「只禁一个分区 / 只改输出」的开关，
+      所以 posts / moments 各写一份 _index.md：posts 只出 /posts/index.xml，
+      moments 关掉详情页但保留时间线数据。两份都放在示例站导入之后写，
+      保证站点内容与模板的约定一致（示例站那份是同一份配置）。 */
+  write(rel('content/zh/posts/_index.md'), POSTS_INDEX);
+  write(rel('content/zh/moments/_index.md'), MOMENTS_INDEX);
+  /** 落地页（主题的 layouts/index.html）：只作入口，进去按回车到 /home/。
+      不能是可索引的主页：noindex + 不进 sitemap，免得搜索引擎把空壳落地页当成首页。
+      标题用站点自己的名字 —— 示例站那份写的是「Example Site」，不该出现在新站。 */
   write(
-    rel('content/zh/posts/_index.md'),
-    '---\ntitle: "文章"\ntype: "posts"\nlayout: "list"\nbuild: { render: never }\n---\n',
+    rel('content/zh/_index.md'),
+    `---\ntitle: ${JSON.stringify(a.siteName)}\nrobots: "noindex, follow"\nsitemap:\n  disable: true\n---\n`,
   );
 
   /**
    * 跳转规则出厂只有注释，原因有两层：
-   * · 新站这些路径都归 Hugo 自己出，/posts/ 那个 404 还是上面刻意做的，放开就是改行为；
+   * · 新站这些路径都归 Hugo 自己出，/posts/ 不出 HTML 页是上面刻意做的，放开就是改行为；
    * · 但「换域名以后旧地址要 301」「某个分区下线了要指到替身页」这两件事，
    *   只有手写过一次的人知道 Pages 读的是 static/_redirects —— 后台改站点地址会连带改
    *   hugo.toml / site.json / apply.json 三处，唯独不会生成这份，所以这里先摆个样子。

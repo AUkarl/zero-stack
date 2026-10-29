@@ -154,7 +154,7 @@
 <div class="head row spread">
   <h2>仪表盘</h2>
   <div class="row">
-    <span class="muted">30 秒内数据为缓存</span>
+    <span class="muted">60 秒内数据为缓存</span>
     <button onclick={() => void loadAll()} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button>
   </div>
 </div>
