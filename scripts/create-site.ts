@@ -597,13 +597,13 @@ function siteHeaders(apiBase: string): string {
 # 过期后先给旧的再后台刷新。订阅器每分钟轮询时不必再各打穿源站一次
 # （/posts/index.xml 实测 412KB，源站直取要 300ms+）。5 分钟是上限，重建站点会立刻换掉。
 /index.xml
-  Cache-Control: public, max-age=0, must-revalidate, s-maxage=300, stale-while-revalidate=3600
+  Cache-Control: public, max-age=0, s-maxage=300, stale-while-revalidate=3600
 
 /posts/index.xml
-  Cache-Control: public, max-age=0, must-revalidate, s-maxage=300, stale-while-revalidate=3600
+  Cache-Control: public, max-age=0, s-maxage=300, stale-while-revalidate=3600
 
 /moments/index.xml
-  Cache-Control: public, max-age=0, must-revalidate, s-maxage=300, stale-while-revalidate=3600
+  Cache-Control: public, max-age=0, s-maxage=300, stale-while-revalidate=3600
 
 # 站内搜索索引：地址带构建版本号（主题 layouts/search/list.html 输出 ?v=<构建时间>），
 # 每次重建自动换成新地址，所以这份可以按不可变存一年 —— 123KB 只在第一次下载，
