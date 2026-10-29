@@ -22,8 +22,24 @@ import { checkRepoFileSyntax } from './repo-syntax';
 /** Hugo 0.165 实测能解析的两种形状：纯日期，或带秒（可带时区）的时间戳。空格分隔的「只到分」不行。 */
 const HUGO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/;
 
-/** 会被写进 front matter 的时间字段（小写别名一起收：Hugo 两种都读） */
-const DATE_KEYS = ['date', 'lastmod', 'updated', 'publishdate', 'publishDate', 'expirydate', 'expireDate', 'startDate'];
+/**
+ * 会被写进 front matter 的时间字段。
+ *
+ * **一律按小写比对**：Hugo 认这些键时不分大小写（实测 `Date:`、`DATE:`、`Lastmod:`、`PUBLISHDATE:`、
+ * `expiryDate:` 它都会去解析），而上一版这张表是精确大小写的字符串数组，于是同一个坏值写成
+ * `expiryDate`（Hugo 真读的写法）就从两道闸中间漏过去，落盘后整站构建失败 —— 台架 2026-10-29 三轮实测。
+ * `modified` 是这轮按实测补进来的（`modified: 2026-13-45` 同样让 Hugo 退出码 1）。
+ * 表里保留 `updated` / `expiredate` / `startdate`：Hugo 0.165 实测不读它们，但历史版本读，
+ * 而且这三个键的值本来就该是时间，拦住写坏的值比放过去让某些版本炸站安全。
+ */
+const DATE_KEYS = ['date', 'lastmod', 'updated', 'publishdate', 'expirydate', 'expiredate', 'startdate', 'modified'];
+const DATE_KEY_SET = new Set(DATE_KEYS);
+
+/** 这个 front matter 键该不该按时间校？返回规范化后的键名（用于回执），不该则 null */
+function dateKeyAlias(key: string): string | null {
+  const lower = String(key ?? '').toLowerCase();
+  return DATE_KEY_SET.has(lower) ? lower : null;
+}
 
 const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -67,10 +83,12 @@ export function checkHugoDateValue(value: unknown): string | null {
 /** 一整份 front matter：返回第一条不可解析的时间错误（含字段名），没有则 null */
 export function checkHugoDates(front: Record<string, unknown> | null | undefined): string | null {
   if (!front || typeof front !== 'object') return null;
-  for (const k of DATE_KEYS) {
-    if (!(k in front)) continue;
-    const err = checkHugoDateValue(front[k]);
-    if (err) return `${k}：${err}`;
+  /* 按小写别名比对：Hugo 认这些键不分大小写，写成 Date: / expiryDate: 一样会被它解析 */
+  for (const [key, value] of Object.entries(front)) {
+    const alias = dateKeyAlias(key);
+    if (!alias) continue;
+    const err = checkHugoDateValue(value);
+    if (err) return `${key}${alias === key ? '' : `（Hugo 按 ${alias} 读）`}：${err}`;
   }
   return null;
 }
@@ -150,12 +168,55 @@ export function checkUploadBytes(ext: string, bytes: Uint8Array): string | null 
     return `文件内容其实是标记语言（开头「${ascii(bytes, 0, 12).replace(/[^\x21-\x7e]/g, ' ')}…」），不是 .${ext}：改名混进来会在图床域名上被人当页面读`;
   }
   const allowed = EXT_KINDS[ext.toLowerCase()];
+  const detected = detectKind(bytes);
   if (STRICT_EXTS.has(ext.toLowerCase()) && allowed?.length) {
-    const got = detectKind(bytes);
+    const got = detected;
     if (!got) return `.${ext} 的文件头不对（认出来的是「${got ?? '无法识别'}」）：把内容原样存成 .${ext} 会在图床域名上被误当别的类型`;
     if (!allowed.includes(got)) return `文件头是 ${got}，扩展名却是 .${ext}：两者不一致时前台按哪个类型处理说不准，请改成与内容相符的扩展名`;
   }
-  return null;
+  /* 魔数只证明「开头几个字节像」，证明不了这份文件能解码。台架 2026-10-29 实测：
+     16 字节（PNG 魔数 + IHDR 前几个字节）的文件当时是**收下了**，图库里就是一张永远打不开的破图；
+     变体口同理，`RIFF`+`WEBP` 后接一串垃圾也照收，而清单一旦记下这个档位，前台 srcset 就会去用它。
+     来源通常是浏览器截断的下载、上传中途关页面、以及往桶里灌脚本。判据放在这一个函数里，
+     上传口与变体口共用。 */
+  return checkStructure(detected ?? ext.toLowerCase(), bytes);
+}
+
+/** 结构完整性：只查「一定会炸」的几件事，不做格式洁癖（能解码的最小图 67 字节，所以不按大小一刀切） */
+function checkStructure(kind: string, b: Uint8Array): string | null {
+  const tail = (n: number) => ascii(b, Math.max(0, b.length - n), b.length);
+  const truncated = (what: string) =>
+    `这份 .${kind} 只有 ${b.length} 字节且${what}：像是下载或上传被截断的文件。媒体库里存成这样，前台引用它就是张永远打不开的破图，请重新导出完整文件`;
+  switch (kind) {
+    case 'png':
+      if (b.length < 24) return truncated('短于一个最小合法 PNG');
+      if (ascii(b, 12, 16) !== 'IHDR') return truncated('缺 IHDR 头块');
+      if (!tail(16).includes('IEND')) return truncated('结尾没有 IEND 结束块');
+      return null;
+    case 'jpeg':
+      if (b.length < 20) return truncated('短于一张最小合法 JPEG');
+      if (!(b[b.length - 2] === 0xff && b[b.length - 1] === 0xd9)) return truncated('结尾没有 FFD9 结束标记');
+      return null;
+    case 'gif':
+      if (b.length < 20) return truncated('短于一张最小合法 GIF');
+      if (b[b.length - 1] !== 0x3b && !tail(3).includes(';')) return truncated('结尾没有 GIF 终止字节');
+      return null;
+    case 'webp': {
+      if (b.length < 20) return truncated('短于一个最小合法 WebP');
+      const fourcc = ascii(b, 12, 16);
+      if (!['VP8 ', 'VP8L', 'VP8X', 'ANIM'].includes(fourcc)) return truncated(`第一个块不是图像数据块（读到的是「${fourcc.replace(/[^\x20-\x7e]/g, ' ')}」）`);
+      const declared = (b[4] | (b[5] << 8) | (b[6] << 16) | (b[7] << 24)) + 8;
+      /* RIFF 头里写的总长度比实际字节多 —— 就是被截断了（少一点可能是尾部填充，放过） */
+      if (declared > 8 && declared > b.length + 1) return truncated(`文件头声明 ${declared} 字节，实际只有 ${b.length} 字节`);
+      return null;
+    }
+    case 'pdf':
+      if (!tail(64).includes('%%EOF')) return truncated('结尾没有 %%EOF');
+      return null;
+    default:
+      /* 音视频与容器格式的原子结构太多种，判错的风险比收益大：这几类仍然只认魔数 */
+      return null;
+  }
 }
 
 /* ------------------------------------------------------------------ ④ 写进仓库的每一份文件 */
@@ -213,7 +274,8 @@ function checkMarkdownFrontDates(path: string, md: string): string | null {
     const m = /^\s*([A-Za-z][\w-]*)\s*:\s*(.+?)\s*$/.exec(line);
     if (!m) continue;
     const key = m[1]!;
-    if (!DATE_KEYS.includes(key)) continue;
+    /* 与上面 checkHugoDates 同一张表、同一种比法（小写别名）：两道闸不能一道严一道松 */
+    if (!dateKeyAlias(key)) continue;
     const raw = m[2]!.replace(/^["']|["']$/g, '');
     const err = checkHugoDateValue(raw);
     if (err) return `${path} 的 ${key}：${err}`;

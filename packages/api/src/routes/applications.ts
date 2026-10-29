@@ -28,6 +28,7 @@ import { rateLimit } from '../lib/rate-limit';
 import { fail, ok } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import type { AppEnv } from '../lib/app';
+import { zodZh } from '../lib/zmsg';
 
 /* 判据在 lib/httpUrl.ts（以前这里和后台友链、账号侧各抄了一份，措辞不同、严格程度也不同，
    而漏掉协议检查的恰好是后台那一份）。这句保留原来的说法，只在后面补一个例子。 */
@@ -63,7 +64,7 @@ publicApp.post('/apply', async (c) => {
   if (!(await getConfigBool(env, 'friendApplyEnabled', true))) fail(403, '本站已关闭友链在线申请');
 
   const parsed = applySchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '表单填写有误，请检查名称与网址');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '表单填写有误，请检查名称与网址'));
   const input = parsed.data;
 
   // 蜜罐命中也回一个成功，免得脚本知道自己被识破

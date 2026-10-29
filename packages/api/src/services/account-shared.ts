@@ -22,6 +22,7 @@ import * as mailer from './email';
 import { openSecret, verifyTotp } from './totp';
 import { fail } from '../lib/errors';
 import type { Ctx } from '../middleware/auth';
+import { fetchWithTimeout } from '../lib/fetch';
 
 export type UserRow = typeof users.$inferSelect;
 export type LoginPolicy = 'password' | 'password+totp' | 'github' | 'password+email-code';
@@ -186,7 +187,7 @@ export async function githubExchange(
 ): Promise<{ identity: GithubIdentity } | { error: string }> {
   let token = '';
   try {
-    const res = await fetch('https://github.com/login/oauth/access_token', {
+    const res = await fetchWithTimeout('https://github.com/login/oauth/access_token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
@@ -206,7 +207,7 @@ export async function githubExchange(
   }
 
   try {
-    const user = await fetch('https://api.github.com/user', {
+    const user = await fetchWithTimeout('https://api.github.com/user', {
       // GitHub 缺 User-Agent 就回 403；Workers 的 fetch 默认不带，必须自己加
       headers: { 'User-Agent': 'zero-cms (cloudflare-workers)', Authorization: `Bearer ${token.trim()}`, Accept: 'application/vnd.github+json' },
     });
@@ -237,7 +238,7 @@ export async function githubAccountOf(env: Env, userId: string): Promise<typeof 
 export async function githubProofValid(env: Env, row: typeof accounts.$inferSelect): Promise<boolean> {
   if (!row?.accessToken) return false;
   try {
-    const res = await fetch('https://api.github.com/user', {
+    const res = await fetchWithTimeout('https://api.github.com/user', {
       headers: { 'User-Agent': 'zero-cms (cloudflare-workers)', Authorization: `Bearer ${row.accessToken.trim()}`, Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) return false;

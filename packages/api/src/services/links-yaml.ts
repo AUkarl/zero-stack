@@ -45,8 +45,18 @@ export function normalizeFriendUrl(u: string): string {  return u
     .replace(/\/+$/, '');
 }
 
+/**
+ * 写进 links.yaml 的标量：友链的 name / desc / url 每一项在主题里都是**一行**。
+ * 这里先把控制字符拿掉再转义 —— 手写的双引号不会把 `\n` 转成 `\n`，
+ * 昵称里带回车就会在 YAML 里折成一条跨行的值，`desc` 里多个换行还能把后面几条友链的排版带歪。
+ */
 function quote(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  const oneLine = String(value ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .trim();
+  return `"${oneLine.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 const TOP_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]*:/;

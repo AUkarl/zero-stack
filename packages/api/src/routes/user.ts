@@ -22,6 +22,7 @@ import { requireUser } from '../middleware/auth';
 import { clientIp } from '../lib/http';
 import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
+import { zodZh } from '../lib/zmsg';
 
 const app = new Hono<AppEnv>();
 
@@ -76,7 +77,7 @@ const profileSchema = z.object({
 app.patch('/profile', async (c) => {
   const user = requireUser(c);
   const parsed = profileSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '资料填写有误');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '资料填写有误'));
   const db = createDb(c.env);
   const now = Math.floor(Date.now() / 1000);
   const image = (parsed.data.image || '').trim();

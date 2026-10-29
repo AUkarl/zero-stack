@@ -113,6 +113,9 @@ export type ConfigKey =
   // 用户中心：投稿与作者认证的全站总闸（具体某人能不能用，看后台勾的权限位）
   | 'draftsEnabled'
   | 'authorVerifyEnabled'
+  /** 新注册账号默认是否带投稿 / 作者认证权限（默认 false，站长手动放开） */
+  | 'newUserCanPublish'
+  | 'newUserCanAuthor'
   // SEO 不在这里：那一份参数是构建期的，走「前端管理 → SEO」写 data/seo.json
   // 内容提交回 Git（zero-cms 发布文章用）
   | 'githubOwner'
@@ -238,6 +241,8 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'translateKey',
   'draftsEnabled',
   'authorVerifyEnabled',
+  'newUserCanPublish',
+  'newUserCanAuthor',
   'githubOwner',
   'githubRepo',
   'githubBranch',
@@ -382,6 +387,9 @@ export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   translateKey: '',
   draftsEnabled: 'true',
   authorVerifyEnabled: 'true',
+  /* 默认关：与「用户页按账号勾选」的既有口径一致，站主要批量放开时才亲手打开这一项 */
+  newUserCanPublish: 'false',
+  newUserCanAuthor: 'false',
   githubLinksFile: 'data/links.yaml',
   cloudflarePagesBuildHook: '',
   cfZoneId: '',
@@ -673,6 +681,25 @@ export function lengthKeyBadValue(key: string, value: string): string | null {
   const max = textKeyMaxLen(key);
   if (value.length <= max) return null;
   return `${key} 太长了（现在 ${value.length} 个字符，最多 ${max}）：这一项会被直接写进页面或邮件，超限时整批都不保存`;
+}
+
+/**
+ * 除了邮件模板和 JSON 名单，每一项配置都必须是**一行**：
+ * `siteName` / `siteDescription` 原样进 `data/site.json` 与 `<title>`，`siteUrl` 原样替换
+ * `hugo.toml` 的 `baseURL` 那一行，`emailFrom` / `smtpHost` 进的是邮件信头。
+ * 值里带一个换行，等于往配置文件或信头里多插一行 —— `baseURL = "x/"` 后面跟一行
+ * `[params]` 就能把整站的参数改写。多行只允许出现在两处：邮件模板正文，和序列化成 JSON 的名单。
+ */
+export function lineShapeBadValue(key: string, value: string): string | null {
+  if (key.startsWith('emailTemplate')) return null;
+  if (JSON_CONFIG_KEYS[key]) return null;
+  const m = /[\r\n\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.exec(value);
+  if (!m) return null;
+  const what = m[0] === '\r' ? '回车' : m[0] === '\n' ? '换行' : `控制字符 0x${m[0].codePointAt(0)!.toString(16).padStart(2, '0')}`;
+  if (isSecretKey(key)) {
+    return `${key} 第 ${m.index + 1} 个字符是${what}：密钥必须是一整串，带换行说明粘贴时把回车也带进来了（复制时少选一行边界），已拦下没有保存`;
+  }
+  return `${key} 第 ${m.index + 1} 个字符是${what}，这一项必须是完整一行：它会原样写进站点配置或邮件信头，多出来的行会被 Hugo 和邮件当成新的一条配置。要换行请写到邮件模板里`;
 }
 
 /** 后台列表用的脱敏视图与「服务端是否已有值」标记 */

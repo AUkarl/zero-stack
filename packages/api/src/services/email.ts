@@ -3,7 +3,9 @@ import { sendViaSmtp } from '../adapters/smtp';
 import { createDb } from '../db/client';
 import { emailLogs } from '../db/schema';
 import { newId } from '../lib/crypto';
+import { assertNoHeaderBreaks } from '../lib/sanitize';
 import { getConfig, getConfigInt } from './config';
+import { fetchWithTimeout } from '../lib/fetch';
 
 export interface EmailResult {
   success: boolean;
@@ -81,6 +83,13 @@ export async function mailQuotaCheck(env: Env, count: number): Promise<{ ok: boo
  * input.logId 带上已有那行（队列消费）时不再新建，就地更新。
  */
 export async function sendEmail(env: Env, input: SendInput): Promise<EmailResult> {
+  /* 信头与收件人里绝对不能再有换行：SMTP 那一档的主题走 RFC2047 编码本来就带不上，
+     但 `emailProvider=cloudflare` 是用 join('\r\n') 手工拼 multipart 的，主题里的换行就是分段边界。
+     上游（lib/sanitize.ts）已经清过一遍，这里再兜一道 —— 最后一道防线不该指望调用方。 */
+  for (const [label, value] of [['收件人', input.to], ['主题', input.subject], ['发件地址', input.from ?? '']] as const) {
+    const bad = assertNoHeaderBreaks(label, String(value ?? ''));
+    if (bad) return { success: false, error: bad };
+  }
   const logId = await openEmailLog(env, input);
   const result = humanize(await deliverEmail(env, input));
   /* 成不成功都要给 /api/auth/send-code 留一个「最近通道在不在坏」的说法（见下面三个函数）：
@@ -269,7 +278,7 @@ async function sendViaResend(env: Env, input: SendInput): Promise<EmailResult> {
   if (!from) return { success: false, error: '未配置发件人地址' };
 
   try {
-    const res = await fetch('https://api.resend.com/emails', {
+    const res = await fetchWithTimeout('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -317,7 +326,7 @@ async function sendViaCloudflare(env: Env, input: SendInput): Promise<EmailResul
   ].join('\r\n');
 
   try {
-    const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/email/sending/send`, {
+    const res = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/email/sending/send`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
       body: mime,

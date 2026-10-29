@@ -1,4 +1,5 @@
 import { getConfig } from './config';
+import { fetchWithTimeout } from '../lib/fetch';
 
 /**
  * Cloudflare 边缘缓存按 URL 清除（Purge Cache）。
@@ -47,7 +48,7 @@ export async function purgePageUrls(env: Env, webPaths: string[]): Promise<Purge
   }
 
   try {
-    const res = await fetch(`https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(zone)}/purge_cache`, {
+    const res = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(zone)}/purge_cache`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ files: urls }),

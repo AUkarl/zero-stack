@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '../lib/fetch';
 /**
  * GitHub Contents API 适配：zero-cms 发布的文章最终落进站点仓库，
  * Hugo 仍由 GitHub 触发构建，保持"内容进 Git"这条主线。
@@ -80,7 +81,7 @@ async function readError(res: Response, target: { owner: string; repo: string; b
 /** 取当前文件内容与 sha，Hugo 的 md 是 UTF-8 文本，直接按 content 接口读 */
 export async function readFile(input: Omit<CommitInput, 'content' | 'message'>): Promise<{ content: string; sha: string } | null> {
   const url = `${API}/repos/${input.owner}/${input.repo}/contents/${encodeURIComponentPath(input.path)}?ref=${encodeURIComponent(input.branch)}`;
-  const res = await fetch(url, { headers: headers(input.token, 'application/vnd.github+json') });
+  const res = await fetchWithTimeout(url, { headers: headers(input.token, 'application/vnd.github+json') });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await readError(res, input));
 
@@ -96,7 +97,7 @@ export async function writeFile(input: CommitInput): Promise<CommitResult> {
   // 更新必须带上一版 sha，否则 GitHub 会拒绝并提示冲突
   let sha: string | undefined;
   let current: string | undefined;
-  const probe = await fetch(`${url}?ref=${encodeURIComponent(input.branch)}`, {
+  const probe = await fetchWithTimeout(`${url}?ref=${encodeURIComponent(input.branch)}`, {
     headers: headers(input.token, 'application/vnd.github+json'),
   });
   if (probe.ok) {
@@ -115,7 +116,7 @@ export async function writeFile(input: CommitInput): Promise<CommitResult> {
   let binary = '';
   for (const b of bytes) binary += String.fromCharCode(b);
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'PUT',
     headers: headers(input.token, 'application/vnd.github+json'),
     body: JSON.stringify({
@@ -161,11 +162,11 @@ export async function commitFiles(input: {
   const auth = headers(input.token, 'application/vnd.github+json');
   const where = { owner: input.owner, repo: input.repo, branch: input.branch };
 
-  const refRes = await fetch(`${base}/git/ref/heads/${encodeURIComponent(input.branch)}`, { headers: auth });
+  const refRes = await fetchWithTimeout(`${base}/git/ref/heads/${encodeURIComponent(input.branch)}`, { headers: auth });
   if (!refRes.ok) return { success: false, error: await readError(refRes, where) };
   const headSha = ((await refRes.json()) as { object: { sha: string } }).object.sha;
 
-  const commitRes = await fetch(`${base}/git/commits/${headSha}`, { headers: auth });
+  const commitRes = await fetchWithTimeout(`${base}/git/commits/${headSha}`, { headers: auth });
   if (!commitRes.ok) return { success: false, error: await readError(commitRes, where) };
   const baseTree = ((await commitRes.json()) as { tree: { sha: string } }).tree.sha;
 
@@ -175,7 +176,7 @@ export async function commitFiles(input: {
     const bytes = new TextEncoder().encode(f.content);
     let binary = '';
     for (const b of bytes) binary += String.fromCharCode(b);
-    const blobRes = await fetch(`${base}/git/blobs`, {
+    const blobRes = await fetchWithTimeout(`${base}/git/blobs`, {
       method: 'POST',
       headers: auth,
       body: JSON.stringify({ content: btoa(binary), encoding: 'base64' }),
@@ -188,7 +189,7 @@ export async function commitFiles(input: {
   /* 删除也要带 mode/type：只写 {path, sha:null} 会被 GitHub 回 422「Must supply a valid tree.mode」 */
   for (const p of deletes) tree.push({ path: p, mode: '100644', type: 'blob', sha: null });
 
-  const treeRes = await fetch(`${base}/git/trees`, {
+  const treeRes = await fetchWithTimeout(`${base}/git/trees`, {
     method: 'POST',
     headers: auth,
     body: JSON.stringify({ base_tree: baseTree, tree }),
@@ -198,7 +199,7 @@ export async function commitFiles(input: {
   /* 内容与现在完全一样时 tree 不会变 —— 不产生空提交，也不白触发一次构建 */
   if (treeSha === baseTree) return { success: true, commit: headSha, shas, unchanged: true };
 
-  const newCommitRes = await fetch(`${base}/git/commits`, {
+  const newCommitRes = await fetchWithTimeout(`${base}/git/commits`, {
     method: 'POST',
     headers: auth,
     body: JSON.stringify({ message: input.message, tree: treeSha, parents: [headSha] }),
@@ -206,7 +207,7 @@ export async function commitFiles(input: {
   if (!newCommitRes.ok) return { success: false, error: await readError(newCommitRes, where) };
   const newCommit = ((await newCommitRes.json()) as { sha: string }).sha;
 
-  const moveRes = await fetch(`${base}/git/refs/heads/${encodeURIComponent(input.branch)}`, {
+  const moveRes = await fetchWithTimeout(`${base}/git/refs/heads/${encodeURIComponent(input.branch)}`, {
     method: 'PATCH',
     headers: auth,
     body: JSON.stringify({ sha: newCommit, force: false }),
@@ -221,12 +222,12 @@ export async function commitFiles(input: {
 export async function deleteFile(input: { owner: string; repo: string; path: string; message: string; branch: string; token: string }): Promise<CommitResult> {
   const path = encodeURIComponentPath(input.path);
   const url = `${API}/repos/${input.owner}/${input.repo}/contents/${path}?ref=${encodeURIComponent(input.branch)}`;
-  const probe = await fetch(url, { headers: headers(input.token, 'application/vnd.github+json') });
+  const probe = await fetchWithTimeout(url, { headers: headers(input.token, 'application/vnd.github+json') });
   if (probe.status === 404) return { success: false, error: '文件不存在' };
   if (!probe.ok) return { success: false, error: await readError(probe, input) };
   const { sha } = (await probe.json()) as { sha: string };
 
-  const res = await fetch(`${url}&sha=${sha}`, {
+  const res = await fetchWithTimeout(`${url}&sha=${sha}`, {
     method: 'DELETE',
     headers: headers(input.token, 'application/vnd.github+json'),
     body: JSON.stringify({ message: input.message, branch: input.branch, sha }),
@@ -238,7 +239,7 @@ export async function deleteFile(input: { owner: string; repo: string; path: str
 /** 列目录，供后台文件树使用 */
 export async function listDir(input: { owner: string; repo: string; path: string; branch: string; token: string }): Promise<{ name: string; path: string; type: 'file' | 'dir' }[]> {
   const url = `${API}/repos/${input.owner}/${input.repo}/contents/${encodeURIComponentPath(input.path)}?ref=${encodeURIComponent(input.branch)}`;
-  const res = await fetch(url, { headers: headers(input.token, 'application/vnd.github+json') });
+  const res = await fetchWithTimeout(url, { headers: headers(input.token, 'application/vnd.github+json') });
   if (!res.ok) throw new Error(await readError(res, input));
   const body = (await res.json()) as { name: string; path: string; type: string }[];
   if (!Array.isArray(body)) return [];

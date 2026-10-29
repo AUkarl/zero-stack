@@ -7,8 +7,10 @@
  */
 
 import { getConfig } from './config';
+import { purgeTargetCache } from './target-cache';
 import { deleteViaTarget, listDirViaTarget, readFileFrom, repoBackend, resolveRepoTarget, runLocalBuildCheck, buildHealthReceipt, targetFromInput, writeViaTarget } from './repo';
 import type { RepoEntry, RepoFile, RepoFileResult, RepoTarget } from './repo';
+import { fetchWithTimeout } from '../lib/fetch';
 
 /** 历史导出名，调用方遍布后台各路由，保留 */
 export async function repoTarget(env: Env): Promise<RepoTarget> {
@@ -68,7 +70,7 @@ export async function triggerPagesBuild(env: Env): Promise<{ triggered: boolean;
   // error 仍然给一句短原因：后台有几处是直接打印它的，留空会退化成「接口没回结果」这种更吓人的话
   if (!hook) return { triggered: false, viaCommit: backend === 'github', error: backend === 'github' ? '没配 Pages 构建 Hook' : '本地后端不产生 Git 提交', backend };
   try {
-    const res = await fetch(hook, {
+    const res = await fetchWithTimeout(hook, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -117,6 +119,10 @@ export async function finishRepoWrites(
   triggerBuild = true,
 ): Promise<{ build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
   if (!changed) return { build: null, buildHealth: null };
+  /* 探活缓存跟着一起作废：评论/点赞的 targetExists 结果存 6 分钟，不清就会出现
+     「刚发布的文章说这一页不存在」与「删掉的文章还收评论」两个方向各 6 分钟的空窗。
+     判据与键都在 services/target-cache.ts，清除点只有这一个。 */
+  await purgeTargetCache(env);
   const build = triggerBuild ? await triggerPagesBuild(env) : null;
   return { build, buildHealth: await runLocalBuildCheck(env) };
 }

@@ -17,6 +17,16 @@ import { appendFriends, normalizeFriendUrl, parseLinksYaml, removeFriend, replac
 export interface LinksFileResult {
   /** 是否真的提交了一次改动 */
   synced: boolean;
+  /**
+   * `synced:false` 到底是哪一种「没写成」—— 台架 2026-10-29 报的就是这条：
+   * 三种情况（本来就没有变化 / 没配仓库 / 提交失败）以前只靠 `error` 的文字区分，
+   * 界面一律读成「同步失败」，站主以为改动丢了。
+   *   · `unchanged` 仓库里已经是这个样子，没有任何待提交的差异；
+   *   · `not-found` 要改的那一条根本不在数据文件里（删除时最常见）；
+   *   · `no-repo`   站点仓库没配好，本次只动了数据库；
+   *   · `failed`    读 / 写仓库真的失败了，`error` 里是服务商原文。
+   */
+  reason?: 'unchanged' | 'not-found' | 'no-repo' | 'failed';
   /** 没写成时给管理员看的原因 */
   error: string | null;
   /** 这一版文件的 blob 号，下次乐观锁要比对的就是它（没提交时为 null） */
@@ -63,22 +73,22 @@ async function patch(
   try {
     settings = await repoTarget(env);
   } catch {
-    return { synced: false, error: '未配置站点仓库，本次只改了数据库', sha: null };
+    return { synced: false, reason: 'no-repo', error: '未配置站点仓库，本次只改了数据库', sha: null };
   }
   const path = await linksFilePath(env);
   try {
     const file = await readFile({ ...settings, path });
     const before = file?.content ?? null;
     const out = mutator(before);
-    if (!out) return { synced: false, error: `仓库里的 ${path} 没有这一条，无需改动`, sha: null };
+    if (!out) return { synced: false, reason: 'not-found', error: `仓库里的 ${path} 没有这一条，无需改动`, sha: null };
     // 行切片重组后结尾换行容易丢，补回来：数据文件少这一个字节，Git 上就是一条无谓的改动
     const next = out.text.endsWith('\n') ? out.text : out.text + '\n';
-    if (before !== null && next === before) return { synced: false, error: out.note ?? '内容没有变化', sha: null };
+    if (before !== null && next === before) return { synced: false, reason: 'unchanged', error: out.note ?? '内容没有变化', sha: null };
     const res = await writeFile({ ...settings, path, content: next, message });
-    if (!res.success) return { synced: false, error: res.error ?? '提交失败', sha: null };
+    if (!res.success) return { synced: false, reason: 'failed', error: res.error ?? '提交失败', sha: null };
     return { synced: true, error: null, sha: res.sha ?? null };
   } catch (e) {
-    return { synced: false, error: e instanceof Error ? e.message : String(e), sha: null };
+    return { synced: false, reason: 'failed', error: e instanceof Error ? e.message : String(e), sha: null };
   }
 }
 

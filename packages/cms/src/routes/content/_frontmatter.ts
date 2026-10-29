@@ -29,6 +29,15 @@ const KNOWN_KEYS = [
 
 const KNOWN = new Set<string>(KNOWN_KEYS);
 
+/**
+ * 日期键按小写归一。Hugo 读这几个键**不分大小写**（实测 `Date:`、`DATE:`、`Lastmod:` 它都会解析），
+ * 后台以前按精确键名读，于是手写成 `Date:` 的文章在表单里是「发布时间空着」，保存时又补一条小写 `date:`，
+ * 同一篇里两个日期键 —— 与 `services/hugo-guard.ts` 里那张小写别名表是同一个口径。
+ * 只归一表单真的管理的那几个键：`publishDate` / `expiryDate` 这些后台没有输入框，
+ * 归一了会把站长手写的值整条丢掉，它们照旧走 extras 原样保留。
+ */
+const FORM_DATE_KEYS: Record<string, string> = { date: 'date', updated: 'updated', lastmod: 'lastmod' };
+
 export interface PostForm {
   title: string;
   subtitle: string;
@@ -124,7 +133,7 @@ export function parseFront(front: string): FrontDoc {
       i++;
       continue;
     }
-    const key = m[1];
+    const key = FORM_DATE_KEYS[m[1].toLowerCase()] ?? m[1];
     const raw = m[2].trim();
     if (raw === '') {
       const items: string[] = [];

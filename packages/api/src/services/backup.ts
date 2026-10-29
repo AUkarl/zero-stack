@@ -38,6 +38,7 @@ import {
 import { SECRET_KEYS, getConfig, invalidateConfigCache } from './config';
 import { SPAM_PATTERN_FILE } from './moderation';
 import { purgeContentTitleCache } from './content-title';
+import { purgeTargetCache } from './target-cache';
 import { readFileFrom, resolveRepoTarget, runLocalBuildCheck, walkFiles, writeViaTarget, type BuildHealth, type RepoTarget } from './repo';
 import { triggerPagesBuild } from './git';
 import { listBuckets, listMediaObjects } from './media';
@@ -954,6 +955,9 @@ export async function importBackup(env: Env, raw: unknown, opts: ImportBackupOpt
   }
 
   if (!dryRun && wrotePaths.length) await purgeContentTitleCache(env, wrotePaths);
+  /* 恢复整站等于一次性重建了文章与时刻：那一格「这一页存不存在」的探活缓存必须跟着作废，
+     否则搬回来的文章在 6 分钟内仍然收不到评论与点赞（清除点与判据见 services/target-cache.ts）。 */
+  if (!dryRun && wroteFiles) await purgeTargetCache(env);
 
   /* 分批时只在某个区真正写完的那一次触发重建，别每批都点一次构建 */
   if (!dryRun && wroteFiles && !outcome.resume) {

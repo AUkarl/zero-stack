@@ -17,6 +17,7 @@
  */
 
 import { getConfig } from './config';
+import { fetchWithTimeout } from '../lib/fetch';
 
 /** 后端认识的全部 provider kind（与 cms 下拉字符串一一对应） */
 export type TranslateProvider =
@@ -254,7 +255,7 @@ async function chatCompletions(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
@@ -317,7 +318,7 @@ async function freeTranslate(env: Env, preset: Preset, text: string, source?: st
   try {
     if (provider === 'mymemory') {
       const url = `${endpoint}?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(`${src}|${tgt}`)}&rf=2`;
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetchWithTimeout(url, { signal: controller.signal });
       if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
       const body = (await res.json()) as {
         responseData?: { translatedText?: string };
@@ -333,7 +334,7 @@ async function freeTranslate(env: Env, preset: Preset, text: string, source?: st
     }
 
     if (provider === 'libretranslate') {
-      const res = await fetch(endpoint, {
+      const res = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ q: text, src, tgt, format: 'text' }),
@@ -349,7 +350,7 @@ async function freeTranslate(env: Env, preset: Preset, text: string, source?: st
 
     // google
     const url = `${endpoint}?client=gtx&sl=${encodeURIComponent(src)}&st=1&dt=t&tl=${encodeURIComponent(tgt)}&q=${encodeURIComponent(text)}`;
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetchWithTimeout(url, { signal: controller.signal });
     if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
     const data = (await res.json()) as unknown;
     const translated = flattenGoogle(data);

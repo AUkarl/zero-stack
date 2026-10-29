@@ -28,7 +28,7 @@ import { sendDraftReviewResult } from '../services/review-mail';
 import { clientIp } from '../lib/http';
 import { canonHandle } from '../lib/slug';
 import { avatarForEmail } from '../lib/avatar';
-import { errorMessage, fail, ok } from '../lib/errors';
+import { errorMessage, fail, ok, okRows } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import type { AppEnv } from '../lib/app';
 
@@ -223,10 +223,8 @@ draftsAdmin.get('/', async (c) => {
   const query = where ? base.where(where) : base;
   const rows = await query.orderBy(desc(postDrafts.createdAt)).limit(limit).offset(offset);
   const total = await db.select({ n: sql<number>`count(*)` }).from(postDrafts).where(where);
-  return ok({
-    items: rows.map((r) => ({ ...r, tags: parseTags(r.tags) })),
-    total: Number(total[0]?.n ?? 0),
-  });
+  const list = rows.map((r) => ({ ...r, tags: parseTags(r.tags) }));
+  return okRows(list, { total: Number(total[0]?.n ?? 0) });
 });
 
 draftsAdmin.get('/stats', async (c) => {

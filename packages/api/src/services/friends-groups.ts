@@ -21,6 +21,7 @@ import { finishRepoWrites } from './git';
 import { newId } from '../lib/crypto';
 import { httpUrlField, optionalHttpUrlField } from '../lib/httpUrl';
 import { fail } from '../lib/errors';
+import { zodZh } from '../lib/zmsg';
 
 type FriendRow = typeof friends.$inferSelect;
 
@@ -189,7 +190,7 @@ export interface FriendActor {
 /** 新增：kind 缺省 'friend'，sortOrder 缺省排到该组末尾 */
 export async function createFriend(env: Env, admin: FriendActor, body: unknown, meta: FriendMeta = {}) {
   const parsed = friendCreateSchema.safeParse(body);
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '名称与合法 URL 为必填');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '名称与合法 URL 为必填'));
   const kind = normalizeFriendKind(parsed.data.kind);
   if (await clashByNormalizedUrl(env, parsed.data.url)) fail(409, '该站点已被收录（同一地址不能出现两次；要换分组请用 PATCH 的 kind）');
 
@@ -219,7 +220,7 @@ export async function createFriend(env: Env, admin: FriendActor, body: unknown, 
 /** 修改：可改 kind（在友链与站点联盟之间移动）与 sortOrder（改位置） */
 export async function updateFriend(env: Env, admin: FriendActor, id: string, body: unknown, meta: FriendMeta = {}) {
   const parsed = friendPatchSchema.safeParse(body);
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '参数有误');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '参数有误'));
   const db = createDb(env);
   const before = await load(env, id);
   if (!before) fail(404, '友链不存在');
@@ -292,7 +293,7 @@ export async function deleteFriend(env: Env, admin: FriendActor, id: string, met
  */
 export async function reorderFriends(env: Env, admin: FriendActor, body: unknown, meta: FriendMeta = {}) {
   const parsed = reorderSchema.safeParse(body);
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? 'items 需为 [{id,kind,sortOrder}]');
+  if (!parsed.success) fail(400, zodZh(parsed.error, 'items 需为 [{id,kind,sortOrder}]'));
   const db = createDb(env);
   const ids = [...new Set(parsed.data.items.map((i) => i.id))];
   const rows = await db.select().from(friends).where(inArray(friends.id, ids));

@@ -46,7 +46,9 @@ function safeEqual(a: string, b: string): boolean {
 app.post('/', async (c) => {
   const secret = ((c.env as unknown as { BUILD_REPORT_TOKEN?: string }).BUILD_REPORT_TOKEN ?? '').trim();
   if (!secret) {
-    fail(500, '本站没开构建结果回报：给 Worker 加一条 Secret `BUILD_REPORT_TOKEN`（随机长字符串），再在内容仓的 GitHub Secrets 里放同名的一份（生成的 deploy.yml 读的就是它）。没开之前构建结果无处可报，后台也就不会显示站点是否停在旧版 —— 不影响部署本身。');
+    /* 503 = 「这项没开通」，不是「服务器坏了」：内容仓 CI 每次构建都调这里，没配 Secret 时
+       这一步要能被认出来是「跳过」，而不是一个看着像站点坏掉的 500。 */
+    fail(503, '本站没开构建结果回报：给 Worker 加一条 Secret `BUILD_REPORT_TOKEN`（随机长字符串），再在内容仓的 GitHub Secrets 里放同名的一份（生成的 deploy.yml 读的就是它）。没开之前构建结果无处可报，后台也就不会显示站点是否停在旧版 —— 不影响部署本身。');
   }
   if (!safeEqual(secret, c.req.header('x-build-report-token') ?? '')) fail(401, '构建回报令牌不对');
   const body = (await c.req.json().catch(() => null)) as Partial<BuildReport> | null;

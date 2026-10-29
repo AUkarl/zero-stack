@@ -4,7 +4,7 @@ import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
 import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
-import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, jsonKeyBadValue, lengthKeyBadValue, textKeyMaxLen, ALL_CONFIG_KEYS, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
+import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, jsonKeyBadValue, lengthKeyBadValue, lineShapeBadValue, textKeyMaxLen, ALL_CONFIG_KEYS, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
 import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
 import { ensureAdminAuthorIdentity } from '../services/admin-author';
 import { avatarForEmail, emailMd5 } from '../lib/avatar';
@@ -30,10 +30,11 @@ import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
 import { clientIp, ipFallbackCount } from '../lib/http';
 import { datedSlug } from '../lib/postName';
-import { errorMessage, fail, ok } from '../lib/errors';
+import { errorMessage, fail, ok, okRows } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import { recountLifetimeCounters } from '../services/stats';
 import { deleteFile, listDir, readFile } from '../services/git';
+import { purgeTargetCache } from '../services/target-cache';
 import { finishRepoWrites, repoTarget, triggerPagesBuild, buildReceipt } from '../services/git';
 import { buildHealthReceipt, commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, runLocalBuildCheck, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
@@ -110,6 +111,22 @@ app.patch('/config', async (c) => {
    * 现在到底是什么状态。null 只给密钥用，表示「把已存的那份清掉」；
    * 留空字符串对密钥的含义是「不改」（密钥读取恒回空串，原样提交不能抹掉密码）。
    */
+  /* 这几项**各另有的一份在内容仓里**，而那一半本接口写不到：
+       siteName        ↔ data/site.json 的 name（前台 `<title>`、og:site_name、RSS 频道名）
+       siteUrl         ↔ hugo.toml 的 baseURL（canonical / og:url / sitemap / RSS / robots 全由它生成）
+       siteDescription ↔ data/site.json 的 description
+       siteLogo / siteFavicon ↔ data/site.json 的 logo / favicon
+     只改数据库那半的结果是「信里用新域名、前台还建在旧域名上」，而且两边都回「已保存」——最难查的那种。
+     后台「设置」页没有这几项的输入框，会撞上这条的只有脚本；指路的那条路（「前端管理 → 基本信息」）
+     本来就把两处一起写并触发重建。值没变的不拦：面板整份回送时不该被无谓拒下。 */
+  const REPO_TWIN_KEYS: Record<string, string> = {
+    siteName: '内容仓 data/site.json 的 name',
+    siteUrl: '内容仓 hugo.toml 的 baseURL 与 data/site.json 的 siteUrl',
+    siteDescription: '内容仓 data/site.json 的 description',
+    siteLogo: '内容仓 data/site.json 的 logo',
+    siteFavicon: '内容仓 data/site.json 的 favicon',
+  };
+
   const writes: { key: ConfigKey; value: string; valueType: string }[] = [];
   for (const [raw, value] of Object.entries(parsed.data)) {
     if (!isConfigKey(raw)) fail(400, `未知配置项 ${raw}`);
@@ -132,6 +149,21 @@ app.patch('/config', async (c) => {
     /** 文本键看长度：这些值是原样拼进 `<title>` / JSON-LD / 邮件里的，超上限等于全站显示事故 */
     const tooLong = lengthKeyBadValue(key, asText);
     if (tooLong) fail(400, tooLong);
+    /**
+     * 单行闸门（见 services/config.ts 的 lineShapeBadValue）。只对「这次真在改的值」把关：
+     * 库里存量已带换行的旧项不该把整张设置页的保存一起挡下 —— 那些项前端并没有重新提交改动。
+     */
+    if ((await getConfig(c.env, key)) !== asText) {
+      const badLine = lineShapeBadValue(key, asText);
+      if (badLine) fail(400, badLine);
+    }
+    /* 这几项在内容仓里各另有的一份，本接口只写得到数据库那一半（判路与键表见循环上面那段注释）。 */
+    if (REPO_TWIN_KEYS[key] && (await getConfig(c.env, key)) !== asText) {
+      fail(
+        400,
+        `${key} 不在 PATCH /api/admin/config 里改：它在内容仓里另有的一份（${REPO_TWIN_KEYS[key]}），这一条接口只写得到数据库那一半，改完两边就分叉。请改后台「前端管理 → 基本信息」那一项（脚本送 POST /api/admin/frontend 的 site 段也一样），那一条路会把仓库那份一起写掉并触发站点重建。`,
+      );
+    }
     /** 枚举键统一按小写存：接口送 'SMTP' 也要归成 'smtp' —— 分流处（发信按通道、主题按 provider）认的是小写值 */
     const stored = ENUM_CONFIG_KEYS[key] && typeof value === 'string' ? asText.trim().toLowerCase() : asText;
     writes.push({
@@ -210,7 +242,7 @@ app.get('/comments', async (c) => {
   /* 顺手把文章标题带上：审核时只看到 `/posts/20261025002/` 认不出是哪篇（站长的文件名就是日期串）。
      标题走 services/content-title 那份 24 小时缓存，认不到留空，界面自己回落到地址。 */
   const titles = await contentTitles(c.env, filtered.map((r) => r.postSlug));
-  return ok(filtered.map((r) => ({ ...r, postTitle: titles.get(r.postSlug) ?? '' })));
+  return okRows(filtered.map((r) => ({ ...r, postTitle: titles.get(r.postSlug) ?? '' })));
 });
 
 app.post('/comments/:id/moderate', async (c) => {
@@ -321,20 +353,16 @@ app.get('/audit', async (c) => {
     limit: Number(c.req.query('limit')) || 100,
     offset: Number(c.req.query('offset')) || 0,
   });
-  return ok({
-    total,
-    limit,
-    offset,
-    rows: rows.map((r) => ({
-      id: r.id,
-      actorName: r.actorName,
-      action: r.action,
-      target: r.target,
-      detail: parseDetail(r.detail),
-      ip: r.ip,
-      createdAt: r.createdAt,
-    })),
-  });
+  const list = rows.map((r) => ({
+    id: r.id,
+    actorName: r.actorName,
+    action: r.action,
+    target: r.target,
+    detail: parseDetail(r.detail),
+    ip: r.ip,
+    createdAt: r.createdAt,
+  }));
+  return okRows(list, { total, limit, offset, rows: list });
 });
 
 /** 脏数据不该让整个审计列表 500 */
@@ -379,6 +407,14 @@ function validateContentPath(p: string): { path: string } | { error: string } {
   if (BAD_PATH_CHARS.test(clean)) return { error: '文件名含有系统保留字符，请去掉 : " < > | ? * 与控制字符' };
   if (segs[segs.length - 1]!.trim() === '.md') return { error: '文件名不能为空' };
   if (clean.length > 300) return { error: '路径过长（上限 300 字符）' };
+  /* 文件名按 **字节** 再卡一道：一个汉字 3 字节，200 个汉字的名字在这里是 200 字符（上面的闸拦不住），
+     但 ext4 的单个路径段上限是 255 字节、Windows 的 MAX_PATH 是 260 字符 —— 
+     超过之后是「仓库里存着、前台某台机器检不出来」那种失败。
+     上限取 255：后台的 slug 生成器最多给 80 个字符（汉字 = 240 字节），正当名字一律过得去。 */
+  const nameBytes = new TextEncoder().encode(segs[segs.length - 1]!).length;
+  if (nameBytes > 255) {
+    return { error: `文件名过长（${nameBytes} 字节，上限 255）：一个汉字占 3 个字节，文件系统算的是字节不是字数` };
+  }
   return { path: clean };
 }
 
@@ -435,7 +471,27 @@ type ContentOutcome =
   | { ok: true; path: string; sha?: string; bytes: number; notify: NotifyResult; purgedBuild: string[]; futureDraft: string | null }
   | { ok: false; path: string; reason: 'invalid' | 'conflict' | 'failed'; error: string };
 
-type NotifyResult = { jobId?: string; sent?: number; failed?: number; skipped?: string };
+/**
+ * 「发布后群发」这一步的回执。形状只有一种，**每种情况都带齐六个键**：
+ * 台架 2026-10-29 报的是旧形状「正常发完才有 recipients/sent/failed，跳过时只有 skipped」，
+ * 界面得为两种形状分别处理，而且跳过那一支连「几个订阅者、为什么没发」都没说。
+ * 现在 `recipients` 永远有（没订阅者就是 0），`reason` 永远说一句人话。
+ */
+type NotifyResult = {
+  status: 'off' | 'skipped' | 'sent' | 'queued' | 'failed';
+  reason: string | null;
+  jobId: string | null;
+  recipients: number;
+  sent: number;
+  failed: number;
+};
+
+/** 审计里那一格要短：把上面的对象压成一句能扫读的结论 */
+function notifyNote(n: NotifyResult): string {
+  const head = { off: '未请求群发', skipped: '群发跳过', sent: '已群发', queued: '群发排队中', failed: '群发失败' }[n.status];
+  const count = `收件人 ${n.recipients}，发出 ${n.sent}，失败 ${n.failed}`;
+  return n.reason ? `${head}（${count}）：${n.reason}` : `${head}（${count}）`;
+}
 
 /** 将来日期被显式转成草稿后说给站主的那一句（回执与审计都用它） */
 function futureDraftNote(from: string): string {
@@ -592,7 +648,9 @@ async function finishContentItem(
     purgedBuild.push(...(await pruneLocalBuild(settings, { ...ref, title: String(parsed.front.title ?? '').trim() })));
   }
 
-  const notify: NotifyResult = item.notifySubscribers ? await notifyPostSubscribers(env, adminId, prepared.path, parsed) : {};
+  const notify: NotifyResult = item.notifySubscribers
+    ? await notifyPostSubscribers(env, adminId, prepared.path, parsed)
+    : { status: 'off', reason: '本次没勾选「推送后群发」', jobId: null, recipients: 0, sent: 0, failed: 0 };
   return {
     ok: true,
     path: prepared.path,
@@ -659,8 +717,9 @@ async function writeContentItem(env: Env, admin: { id?: string | null }, item: C
 
 /** 「发布后群发订阅」：只有非草稿的文章能发，草稿只入库不推送 */
 async function notifyPostSubscribers(env: Env, adminId: string, path: string, parsed: ParsedMarkdown): Promise<NotifyResult> {
-  if (!/\/posts\//.test(path)) return { skipped: '只有文章可以群发' };
-  if (isDraftFront(parsed.front)) return { skipped: '草稿不群发' };
+  const quiet = (status: NotifyResult['status'], reason: string): NotifyResult => ({ status, reason, jobId: null, recipients: 0, sent: 0, failed: 0 });
+  if (!/\/posts\//.test(path)) return quiet('skipped', '只有文章可以群发');
+  if (isDraftFront(parsed.front)) return quiet('skipped', '草稿不群发');
 
   const site = await resolveSiteName(env);
   /* 兜底绝不能是整条仓库路径：那会直接出现在订阅者信的主题与正文 <h2> 里
@@ -682,7 +741,17 @@ async function notifyPostSubscribers(env: Env, adminId: string, path: string, pa
     createdBy: adminId,
   });
   const run = await runBroadcastJob(env, jobId);
-  return { jobId, sent: run.sent, failed: run.failed };
+  const status: NotifyResult['status'] = run.status === 'done' ? 'sent' : run.status === 'failed' ? 'failed' : 'queued';
+  return {
+    status,
+    jobId,
+    recipients: run.recipients,
+    sent: run.sent,
+    failed: run.failed,
+    /* 一个订阅者都没有也算「这一步走完了」，但必须说清为什么发了 0 封 ——
+       以前这一支既没有 recipients 也没有 error，界面只能显示「已提交」 */
+    reason: run.error ?? (run.recipients === 0 ? '没有已确认的订阅者，这一封没有收件人' : null),
+  };
 }
 
 /** 整批写完统一做的一次收尾：清后台文章列表缓存 + 触发一次站点重建 + （本地后端）构建体检。
@@ -716,7 +785,7 @@ app.put('/content/file', async (c) => {
     detail: {
       event: 'put',
       bytes: outcome.bytes,
-      notify: outcome.notify.skipped ?? outcome.notify.jobId ?? null,
+      notify: notifyNote(outcome.notify),
       ...(outcome.purgedBuild.length ? { purgedBuild: outcome.purgedBuild } : {}),
       ...(outcome.futureDraft ? { futureDraft: outcome.futureDraft } : {}),
     },
@@ -875,6 +944,8 @@ app.delete('/content/file', async (c) => {
 
   await kvDelete(env, POSTS_CACHE_KEY);
   await purgeContentTitleCache(env, [path]);
+  /* 删掉的文件也要把探活结果一起清掉：不然 6 分钟内评论/点赞还会往这张不存在的页面上攒数据 */
+  await purgeTargetCache(env);
   const build = c.req.query('build') === '0' ? null : await triggerPagesBuild(env);
   /* 重建之外还要清边缘缓存：重建只换源站那一份，边缘上旧的 HTML 副本还在，
      不清的话「后台删了文章、前端还能打开」会一直复现，而且用户强刷也没用。
@@ -1191,13 +1262,14 @@ app.get('/media/list', async (c) => {
     return desc ? b.key.localeCompare(a.key) : a.key.localeCompare(b.key);
   });
 
-  return ok({
+  const page = filtered.slice(0, cap);
+  return okRows(page, {
     bucket: bucket.id,
     kind,
     sort: desc ? 'desc' : 'asc',
     total: filtered.length,
     counts: { all: all.length, ...Object.fromEntries(['image', 'audio', 'video', 'doc', 'other'].map((k) => [k, all.filter((o) => o.kind === k).length])) },
-    objects: filtered.slice(0, cap),
+    objects: page,
   });
 });
 
@@ -1469,7 +1541,7 @@ app.post('/email/notify-test', async (c) => {
 app.get('/email-logs', async (c) => {
   requireAdmin(c);
   const rows = await createDb(c.env).select().from(emailLogs).orderBy(desc(emailLogs.createdAt)).limit(200);
-  return ok(rows);
+  return okRows(rows);
 });
 
 /** 四种邮件模板的种类，后台与调用点都用这套名字 */
@@ -1567,7 +1639,7 @@ app.get('/subscribers', async (c) => {
     .where(status === 'all' ? undefined : eq(subscribers.status, status))
     .orderBy(desc(subscribers.createdAt))
     .limit(limit);
-  return ok(rows);
+  return okRows(rows);
 });
 
 /* ---------------- 订阅者管理：确认 / 退订 / 删除 ---------------- */

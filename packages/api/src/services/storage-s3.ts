@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '../lib/fetch';
 /**
  * 最小 S3 兼容客户端：AWS Signature V4（AWS4-HMAC-SHA256）手写，零依赖，Workers 直接跑。
  *
@@ -159,7 +160,7 @@ async function signedFetch(
   const signature = toHex(await hmac(kSigning, stringToSign));
 
   const url = `${origin}${canonicalUri}${canonicalQs ? `?${canonicalQs}` : ''}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: input.method,
     headers: {
       ...headerMap,

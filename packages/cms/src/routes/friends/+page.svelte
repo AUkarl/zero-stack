@@ -161,7 +161,12 @@
 
   /** 后台每次改动都会同步 data/links.yaml，接口把那一步的结果放在 linksFile 里带回来 */
   interface FileBacked {
-    linksFile?: { synced: boolean; error: string | null; buildHealth?: BuildHealth | null };
+    linksFile?: {
+      synced: boolean;
+      reason?: 'unchanged' | 'not-found' | 'no-repo' | 'failed';
+      error: string | null;
+      buildHealth?: BuildHealth | null;
+    };
   }
 
   /**
@@ -170,11 +175,19 @@
    * 而且**写进去了还不算**：那份 yaml 一旦写坏（实测过段头 `friends: []` 后面挂条目那种），
    * Hugo 是整站构建失败、Pages 不换部署，所以 buildHealth 红的时候必须在这里点名 ——
    * 判据与提示都用 lib/api.ts 那一份 healthWarn，别在这一页再手抄一句。
+   *
+   * `synced:false` 有两种是**正常**的（本来就是这个样子 / 文件里没这一条），
+   * 以前一律报成「站点数据文件没改」，看着像改动丢了；现在按 reason 分开说。
    */
   function reportFile(res: FileBacked | null | undefined, verb: string) {
     const f = res?.linksFile;
-    notice = f?.synced ? `${verb}，已同步站点数据文件（等下一次构建刷新页面）` : `${verb}（只改了数据库）`;
-    if (f && !f.synced) error = `站点数据文件没改：${f.error ?? '未知原因'}`;
+    const benign = f?.reason === 'unchanged' || f?.reason === 'not-found';
+    notice = f?.synced
+      ? `${verb}，已同步站点数据文件（等下一次构建刷新页面）`
+      : benign
+        ? `${verb}，数据文件本来就是这个样子（${f?.error ?? '无需改动'}）`
+        : `${verb}（只改了数据库）`;
+    if (f && !f.synced && !benign) error = `站点数据文件没改：${f.error ?? '未知原因'}`;
     const warn = f ? healthWarn(f.buildHealth) : '';
     if (warn) notice = `${notice} ${warn}`;
     setTimeout(() => (notice = ''), 8000);

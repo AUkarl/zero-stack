@@ -9,6 +9,7 @@ import { newId, randomToken } from '../lib/crypto';
 import { avatarChainForEmail, emailMd5, isEmail, nicknameFromEmail } from '../lib/avatar';
 import { fail, ok } from '../lib/errors';
 import { canonSlug } from '../lib/slug';
+import { cleanInline, cleanMultiline } from '../lib/sanitize';
 import { clientIp, userAgent } from '../lib/http';
 import { hashIp, visitorMeta } from '../lib/ua';
 import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
@@ -615,7 +616,8 @@ app.post('/', async (c) => {
   const db = createDb(env);
   const user = c.get('user') ?? null;
 
-  const content = body.content.trim();
+  /* 正文保留换行、去掉 CR 与控制字符；昵称这类单行字段一律压成一行（判据在 lib/sanitize.ts） */
+  const content = cleanMultiline(body.content, MAX_CONTENT);
   if (!content) fail(400, '内容不能为空');
 
   /* 纯格式校验放在限流之前：写错邮箱/网址的请求不该占掉同一 IP 的 2 条/5 分钟额度，
@@ -681,7 +683,7 @@ app.post('/', async (c) => {
   }
 
   const profile = user ? await profileOf(env, user.id) : null;
-  const name = ((user ? profile?.name ?? user.name : body.name) ?? '').trim() || nicknameFromEmail(email);
+  const name = cleanInline((user ? profile?.name ?? user.name : body.name) ?? '', 64) || nicknameFromEmail(email);
 
   const now = Math.floor(Date.now() / 1000);
   const id = newId();
@@ -890,7 +892,7 @@ app.patch('/:id', async (c) => {
   const parsed = editSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) fail(400, `评论内容不能为空且不超过 ${MAX_CONTENT} 字`);
   if (!user && !ownerKeyFromRequest(c, parsed.data)) fail(401, '请先登录，或携带编辑凭证');
-  const content = parsed.data.content.trim();
+  const content = cleanMultiline(parsed.data.content, MAX_CONTENT);
   if (!content) fail(400, '评论内容不能为空');
 
   const env = c.env;

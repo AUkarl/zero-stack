@@ -53,10 +53,12 @@
     },
     {
       title: '用户中心',
-      desc: '这里是全站总闸；具体哪个人能投稿、能申请认证，在「用户」页按账号勾选。关掉总闸后即便已勾权限也不会开放。',
+      desc: '这里是全站总闸；具体哪个人能投稿、能申请认证，在「用户」页按账号勾选。关掉总闸后即便已勾权限也不会开放——接口侧同样会拒，不只是前端把入口藏起来。',
       fields: [
         { key: 'draftsEnabled', label: '开放投稿', kind: 'bool', hint: '投稿先进库，审核通过才写入仓库' },
         { key: 'authorVerifyEnabled', label: '开放作者认证申请', kind: 'bool' },
+        { key: 'newUserCanPublish', label: '新注册默认可投稿', kind: 'bool', hint: '开关只影响之后注册的账号，已有账号仍在「用户」页按人勾选' },
+        { key: 'newUserCanAuthor', label: '新注册默认可申请认证', kind: 'bool', hint: '同上：新账号自带「作者认证申请」权限位，认证本身仍要审核' },
       ],
     },
     {

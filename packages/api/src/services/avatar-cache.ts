@@ -16,6 +16,7 @@
 import { emailMd5 } from '../lib/avatar';
 import { apiBase } from './config';
 import { objectUrl, putMediaObject, resolveBucket, type MediaBucket } from './media';
+import { fetchWithTimeout } from '../lib/fetch';
 
 /** 头像超过这个大小就不收（正常头像 5~80KB） */
 const MAX_BYTES = 300 * 1024;
@@ -65,7 +66,7 @@ export async function refreshAvatarCache(env: Env, email: string, urls: string[]
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), Math.min(left, budgetMs >= 3000 ? 3000 : 900));
     try {
-      const res = await fetch(url, { signal: ctrl.signal, headers: { 'user-agent': 'zero-avatar-fetch/1.0' }, redirect: 'follow' });
+      const res = await fetchWithTimeout(url, { signal: ctrl.signal, headers: { 'user-agent': 'zero-avatar-fetch/1.0' }, redirect: 'follow' });
       if (!res.ok) continue;
       const type = (res.headers.get('content-type') ?? '').toLowerCase();
       if (!type.startsWith('image/')) continue;

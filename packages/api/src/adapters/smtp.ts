@@ -41,13 +41,26 @@ async function write(socket: Socket, text: string): Promise<void> {
   }
 }
 
-/** 多行应答以 "NNN " 结尾的那一行为最终响应 */
-async function readReply(socket: Socket): Promise<string> {
+/**
+ * 多行应答以 "NNN " 结尾的那一行为最终响应。
+ *
+ * `untilMs` 是**整次发信的截止时间戳**：上一版这里没有任何时限，对端 TCP 连上了但不吐数据
+ * （端口与加密方式配错、防火墙把包吃掉、服务商按 IP 掐线）时，`reader.read()` 会一直挂着 ——
+ * 台架 2026-10-29 实测：同一封信，端口没人监听 2 秒就回 502，STARTTLS 档 95 秒不返回，
+ * 前台的「订阅 / 找回密码 / 测试发信」跟着一起挂到 Workers 上限，用户什么提示都拿不到。
+ */
+async function readReply(socket: Socket, untilMs: number): Promise<string> {
   const reader = socket.readable.getReader();
   let buffer = '';
   try {
     for (;;) {
-      const { value, done } = await reader.read();
+      const left = untilMs - Date.now();
+      if (left <= 0) throw new Error(smtpTimeoutText);
+      const raced = await Promise.race([
+        reader.read(),
+        new Promise<never>((_res, rej) => setTimeout(() => rej(new Error(smtpTimeoutText)), left)),
+      ]);
+      const { value, done } = raced;
       if (value) buffer += new TextDecoder().decode(value);
       const lines = buffer.split(EOL).filter((l) => l.length >= 4);
       const final = lines.filter((l) => /^\d{3} /.test(l)).pop();
@@ -62,6 +75,10 @@ async function readReply(socket: Socket): Promise<string> {
     }
   }
 }
+
+/** 整次发信的时限（一次 SMTP 对话正常也就一两秒，超这个数就是对方不对劲，别把用户挂住） */
+const SMTP_DEADLINE_MS = 12_000;
+const smtpTimeoutText = `发信在 ${Math.round(SMTP_DEADLINE_MS / 1000)} 秒内没有完成：服务器连上了但不回话（多数是端口与加密方式不匹配 —— 465 要勾「隐式 TLS」，587/25 不勾；也可能是对方按 IP 掐线或中途丢包）。请在「设置 → 发信」按服务商文档核一遍端口与开关，再用本页「测试发信」复现`;
 
 function b64(s: string): string {
   const bytes = enc.encode(s);
@@ -134,43 +151,56 @@ function hostnameOf(email: string): string {
 
 export async function sendViaSmtp(o: SmtpOptions): Promise<SmtpResult> {
   let socket: Socket | null = null;
+  /* 整次对话共用一个截止时间：任何一步（读应答、写命令、TLS 握手）超过它就整体失败，
+     而不是让前台的「订阅 / 找回密码 / 测试发信」跟着挂到 Workers 上限（台架实测 STARTTLS
+     档能挂 95 秒不返回）。上一版这些 await 一个都没有时限。 */
+  const until = Date.now() + SMTP_DEADLINE_MS;
+  const reply = (sock: Socket) => readReply(sock, until);
+  const send = async (sock: Socket, text: string): Promise<void> => {
+    const left = until - Date.now();
+    if (left <= 0) throw new Error(smtpTimeoutText);
+    await Promise.race([
+      write(sock, text),
+      new Promise<never>((_r, rej) => setTimeout(() => rej(new Error(smtpTimeoutText)), left)),
+    ]);
+  };
   try {
     socket = connect(
       { hostname: o.host, port: o.port },
       { secureTransport: o.implicitTls ? 'on' : 'starttls', allowHalfOpen: false },
     );
 
-    const greeting = await readReply(socket);
+    const greeting = await reply(socket);
     if (!greeting.startsWith('220')) return { success: false, error: `连接失败：${greeting || '服务器无应答'}` };
 
     let data: Socket = socket;
     const helo = `EHLO ${hostnameOf(o.from)}${EOL}`;
     if (!o.implicitTls) {
-      await write(socket, helo);
-      await readReply(socket);
-      await write(socket, `STARTTLS${EOL}`);
-      const tls = await readReply(socket);
+      await send(socket, helo);
+      await reply(socket);
+      await send(socket, `STARTTLS${EOL}`);
+      const tls = await reply(socket);
       if (!tls.startsWith('220')) return { success: false, error: `STARTTLS 被拒绝：${tls}` };
       /* 不传 expectedServerHostname：workerd 不认识这个选项，传了只是打一行
          「NOSENTRY startTls called with unsupported expectedServerHostname option」把它静默丢掉，
          看起来像做了主机名校验、其实什么都没做（实测：插桩后 A/B 两条日志都打，说明调用本身没抛错，
          失败发生在其后的握手阶段）。证书链该不该信仍由运行时判断 —— 本地那台自签证书就是被拒的一方。
          想在这层再绑一次主机名，只能在拿到连接后自行比对，别指望这个选项。 */
-      data = socket.startTls();
+      data = await Promise.race([Promise.resolve(socket.startTls()), new Promise<never>((_r, rej) => setTimeout(() => rej(new Error(smtpTimeoutText)), Math.max(250, until - Date.now())))]);
     }
-    await write(data, helo);
-    await readReply(data);
+    await send(data, helo);
+    await reply(data);
 
-    await write(data, `AUTH LOGIN${EOL}`);
-    const auth = await readReply(data);
+    await send(data, `AUTH LOGIN${EOL}`);
+    const auth = await reply(data);
     if (!auth.startsWith('334')) return { success: false, error: `服务器不支持 AUTH LOGIN：${auth}` };
 
-    await write(data, `${b64(o.user)}${EOL}`);
-    const userReply = await readReply(data);
+    await send(data, `${b64(o.user)}${EOL}`);
+    const userReply = await reply(data);
     if (!userReply.startsWith('334')) return { success: false, error: `用户名被拒绝：${userReply}` };
 
-    await write(data, `${b64(o.password)}${EOL}`);
-    const passReply = await readReply(data);
+    await send(data, `${b64(o.password)}${EOL}`);
+    const passReply = await reply(data);
     if (!passReply.startsWith('235')) {
       return {
         success: false,
@@ -178,27 +208,27 @@ export async function sendViaSmtp(o: SmtpOptions): Promise<SmtpResult> {
       };
     }
 
-    await write(data, `MAIL FROM:<${o.from}>${EOL}`);
-    const fromReply = await readReply(data);
+    await send(data, `MAIL FROM:<${o.from}>${EOL}`);
+    const fromReply = await reply(data);
     if (!fromReply.startsWith('250')) return { success: false, error: `发件人被拒绝：${fromReply}` };
 
     const rcptLines: string[] = [];
-    await write(data, `RCPT TO:<${o.to}>${EOL}`);
-    const toReply = await readReply(data);
+    await send(data, `RCPT TO:<${o.to}>${EOL}`);
+    const toReply = await reply(data);
     rcptLines.push(toReply.trim());
     if (!toReply.startsWith('250') && !toReply.startsWith('251')) {
       return { success: false, error: `收件人被拒绝：${toReply}`, detail: rcptLines.join(' | ') };
     }
 
-    await write(data, `DATA${EOL}`);
-    const ready = await readReply(data);
+    await send(data, `DATA${EOL}`);
+    const ready = await reply(data);
     if (!ready.startsWith('354')) return { success: false, error: `无法进入 DATA 阶段：${ready}`, detail: rcptLines.join(' | ') };
 
-    await write(data, `${dotStuff(buildMessage(o))}${EOL}.${EOL}`);
-    const sent = await readReply(data);
+    await send(data, `${dotStuff(buildMessage(o))}${EOL}.${EOL}`);
+    const sent = await reply(data);
     if (!sent.startsWith('250')) return { success: false, error: `投递失败：${sent}`, detail: rcptLines.join(' | ') };
 
-    await write(data, `QUIT${EOL}`);
+    await send(data, `QUIT${EOL}`);
     safeClose(data);
     return { success: true, detail: [...rcptLines, sent.trim()].join(' | ') };
   } catch (e) {

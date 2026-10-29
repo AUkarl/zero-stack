@@ -3,6 +3,7 @@ import { createDb } from '../db/client';
 import { comments } from '../db/schema';
 import { getConfig, getConfigBool, getConfigInt, getConfigJson } from '../services/config';
 import { readRepoFileQuiet } from './frontmatter';
+import { fetchWithTimeout } from '../lib/fetch';
 
 /**
  * 评论垃圾（广告、违法、色情、赌博、诈骗等）判定：本地规则打分为主，外部服务可选叠加。
@@ -627,7 +628,7 @@ export async function providerVerdict(
 async function genericVerdict(endpoint: string, keyId: string, content: string): Promise<ProviderOutcome> {
   return withTimeout(
     async (signal) => {
-      const res = await fetch(endpoint, {
+      const res = await fetchWithTimeout(endpoint, {
         method: 'POST',
         signal,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${keyId}`, 'X-Api-Key': keyId },
@@ -644,7 +645,7 @@ async function genericVerdict(endpoint: string, keyId: string, content: string):
 async function moderateJsVerdict(endpoint: string, keyId: string, content: string): Promise<ProviderOutcome> {
   const out = await withTimeout<ProviderOutcome>(
     async (signal) => {
-      const res = await fetch(endpoint, {
+      const res = await fetchWithTimeout(endpoint, {
         method: 'POST',
         signal,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${keyId}` },
@@ -694,7 +695,7 @@ async function neteaseVerdict(endpoint: string, secretId: string, secretKey: str
     async (signal) => {
       const signature = await sha256Hex(`${secretId}${nonce}${sorted}${timestamp}${secretKey}`);
       const form = new URLSearchParams({ ...params, signature });
-      const res = await fetch(`${url.protocol}//${url.host}${url.pathname}`, {
+      const res = await fetchWithTimeout(`${url.protocol}//${url.host}${url.pathname}`, {
         method: 'POST',
         signal,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -746,7 +747,7 @@ async function aliyunVerdict(endpoint: string, accessKeyId: string, secret: stri
         .join('&');
       const stringToSign = `POST&${aliyunEncode('/')}&${aliyunEncode(canonical)}`;
       const signature = await hmacBase64(`${secret}&`, stringToSign);
-      const res = await fetch(`${url.protocol}//${url.host}/`, {
+      const res = await fetchWithTimeout(`${url.protocol}//${url.host}/`, {
         method: 'POST',
         signal,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -792,7 +793,7 @@ async function tencentVerdict(endpoint: string, secretId: string, secretKey: str
       const secretSigning = await hmacRaw(secretService, 'tc3_request', 'SHA-256');
       const signature = [...(await hmacRaw(secretSigning, stringToSign, 'SHA-256'))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
-      const res = await fetch(`${url.protocol}//${host}/`, {
+      const res = await fetchWithTimeout(`${url.protocol}//${host}/`, {
         method: 'POST',
         signal,
         headers: {
@@ -884,7 +885,7 @@ async function externalVerdict(env: Env, text: string): Promise<{ score: number;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3000);
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTimeout(endpoint, {
       method: 'POST',
       signal: controller.signal,
       headers: {

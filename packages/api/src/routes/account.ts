@@ -62,7 +62,7 @@ import { emailHash, hashPassword, newId, verifyPassword } from '../lib/crypto';
 import { clientIp, userAgent } from '../lib/http';
 import { hashIp } from '../lib/ua';
 import { rateLimit } from '../lib/rate-limit';
-import { fail, ok } from '../lib/errors';
+import { fail, ok, okRows } from '../lib/errors';
 import { normalizeFriendUrl } from '../services/links-yaml';
 import { HTTP_URL_HINT, httpUrlField, optionalHttpUrlField } from '../lib/httpUrl';
 import { socialRowsSchema } from '../services/authors';
@@ -81,6 +81,7 @@ import {
   type UserRow,
 } from '../services/account-shared';
 import type { AppEnv } from '../lib/app';
+import { zodZh } from '../lib/zmsg';
 
 const app = new Hono<AppEnv>();
 const deletionsAdmin = new Hono<AppEnv>();
@@ -522,6 +523,10 @@ async function upsertFriendApplication(c: Context, target: UserRow, input: z.inf
 
 app.post('/friend-application', async (c) => {
   const { target } = await resolveAccountTarget(c);
+  /* 与公开入口 POST /api/friends/apply 同一道闸：两个写入口只关一个，
+     后台「关闭友链申请」登录后就仍然能递，等于没关。 */
+  if (!(await getConfigBool(c.env, 'friendsEnabled', true))) fail(403, '友链功能已关闭');
+  if (!(await getConfigBool(c.env, 'friendApplyEnabled', true))) fail(403, '本站已关闭友链在线申请');
   const parsed = friendSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) fail(400, '站点名称与站点地址为必填');
   // upsertFriendApplication 自己就返回 ok(...)，这里不能再包一层 data
@@ -860,14 +865,18 @@ app.get('/drafts', async (c) => {
     .where(eq(postDrafts.userId, target.id))
     .orderBy(desc(postDrafts.createdAt))
     .limit(100);
-  return ok({ items: rows.map(draftShape), total: rows.length });
+  const list = rows.map(draftShape);
+  return okRows(list, { total: rows.length });
 });
 
 app.post('/drafts', async (c) => {
   const { target } = await resolveAccountTarget(c);
-  if (!target.canPublish && target.role !== 'admin') fail(403, '站主尚未开放你的投稿权限');
+  /* 总闸在接口侧同样要拦：以前 draftsEnabled 只用来决定前端显不显示表单，
+     关掉后直接 POST 仍然能入库，「关掉投稿」只是藏起来。 */
+  if (!(await getConfigBool(c.env, 'draftsEnabled', true))) fail(403, '本站当前关闭了投稿，站主在后台「设置 → 用户中心」打开「开放投稿」后即可提交。');
+  if (!target.canPublish && target.role !== 'admin') fail(403, '站主尚未开放你的投稿权限：请站主在后台「用户」页勾选该账号的「投稿权限」（新账号是否默认带上，看「设置 → 用户中心」的「新注册默认可投稿」）');
   const parsed = draftSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '投稿内容有误');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '投稿内容有误：检查标题、正文与文件名'));
   const d = parsed.data;
   const db = createDb(c.env);
   const id = newId();
@@ -918,7 +927,7 @@ app.patch('/drafts/:id', async (c) => {
   if (row.status === 'pending') fail(409, '审核中，暂不能修改');
   if (row.status === 'approved') fail(409, '已发布的投稿不能在这里修改');
   const parsed = draftSchema.partial().safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '投稿内容有误');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '投稿内容有误：检查标题、正文与文件名'));
   const d = parsed.data;
   /* 文件名与新建同一条口径（lib/postName.ts）：填了按填的、清空退回自动名。
      这里只改还没发布的稿子，所以换 slug 不会牵动评论/统计/收藏的键（那些只在发布后才有）。 */
@@ -1034,7 +1043,7 @@ app.get('/author-request', async (c) => {
   const blocked = !enabled
     ? '站点当前关闭了作者认证入口，站主在「设置 → 用户中心」打开后即可申请。'
     : !allowed
-      ? '你还没有共创权限，请站主在后台「用户」页把你的用户组设为「共创」。'
+      ? '你还没有作者认证申请权限，请站主在后台「用户」页勾选该账号的「作者认证申请」。'
       : returned
         ? ''
         : me.authorVerified
@@ -1078,7 +1087,9 @@ app.get('/author-request', async (c) => {
 app.post('/author-request', async (c) => {
   const { target } = await resolveAccountTarget(c);
   const me = withAdminAuthorBits(target);
-  if (!me.canAuthor) fail(403, '站主尚未开放你的作者认证入口');
+  /* 总闸同样要在写入口生效：GET 那边早就按它算 canApply，但直接 POST 一直能递。 */
+  if (!(await getConfigBool(c.env, 'authorVerifyEnabled', true))) fail(403, '本站当前关闭了作者认证申请，站主在后台「设置 → 用户中心」打开「开放作者认证申请」后即可提交。');
+  if (!me.canAuthor) fail(403, '站主尚未开放你的作者认证入口：请站主在后台「用户」页勾选该账号的「作者认证申请」（新账号是否默认带上，看「设置 → 用户中心」的「新注册默认可申请认证」）');
   /* 站长「退回改资料」之后（最新那份是 returned）允许再交一次：认证位保留，改的是笔名与资料本身 */
   const latest = await createDb(c.env)
     .select({ status: authorRequests.status })
@@ -1091,7 +1102,7 @@ app.post('/author-request', async (c) => {
     fail(409, target.role === 'admin' ? '管理员本来就是认证作者，作者资料请在「我的信息 → 站长作者资料」里改' : '你已通过作者认证，如需修改资料请直接联系站主');
   }
   const parsed = authorSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '认证资料有误（赞赏图最多三张）');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '认证资料有误（赞赏图最多三张）'));
   const db = createDb(c.env);
   const pending = await db
     .select({ id: authorRequests.id })
@@ -1127,7 +1138,7 @@ app.patch('/friend-application/:id', async (c) => {
   if (!row || row.userId !== target.id) fail(404, '申请不存在');
   if (row.status === 'approved') fail(409, '已通过的申请请在正文里直接留言给站主');
   const parsed = friendSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) fail(400, parsed.error.issues[0]?.message ?? '参数有误');
+  if (!parsed.success) fail(400, zodZh(parsed.error, '参数有误'));
   const d = parsed.data;
   const url = normalizeFriendUrl(String(d.url || d.friendLink || '').trim());
   if (!url) fail(400, '请填写站点地址');

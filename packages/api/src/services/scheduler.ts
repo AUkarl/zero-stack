@@ -11,6 +11,7 @@ import { linksFilePath } from './friends-file';
 import { triggerPagesBuild } from './git';
 import { flushStatCounters, reconcileLifetimeCounters } from './stats';
 import { newId } from '../lib/crypto';
+import { fetchWithTimeout } from '../lib/fetch';
 
 export interface JobOutcome {
   name: string;
@@ -204,7 +205,7 @@ async function checkFriends(env: Env): Promise<string> {
   for (const f of rows) {
     let ok = false;
     try {
-      const res = await fetch(f.url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(15_000) });
+      const res = await fetchWithTimeout(f.url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(15_000) });
       ok = res.ok || res.status === 403 || res.status === 401; // 反爬站别误判为失效
     } catch {
       ok = false;
@@ -254,7 +255,7 @@ async function fetchFriendFeeds(env: Env, feedWindow?: Map<string, Set<string>>)
   for (const f of rows) {
     const feedUrl = f.rssUrl ?? (await inferFeed(f.url));
     try {
-      const res = await fetch(feedUrl, { signal: AbortSignal.timeout(15_000), headers: { 'user-agent': 'zero-cms/1.0 (+rss)' } });
+      const res = await fetchWithTimeout(feedUrl, { signal: AbortSignal.timeout(15_000), headers: { 'user-agent': 'zero-cms/1.0 (+rss)' } });
       if (!res.ok) continue;
       const xml = await res.text();
       /* 他自己填的头像不能反过来当「这篇文章的封面」—— 好几站的正文首图就是那张头像，
@@ -514,7 +515,7 @@ async function probeSiteIcon(url: string): Promise<string> {
   }
   const http = (s: string) => (/^https?:\/\//i.test(s) ? s.slice(0, 500) : '');
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       redirect: 'follow',
       signal: AbortSignal.timeout(10_000),
       headers: { 'user-agent': 'zero-cms/1.0 (+friend-icons)', Accept: 'text/html,*/*' },
@@ -539,7 +540,7 @@ async function probeSiteIcon(url: string): Promise<string> {
     /* 首页取不到就直接试 favicon.ico，很多站首页反爬但 favicon 放行 */
   }
   try {
-    const res = await fetch(`${origin}/favicon.ico`, { redirect: 'follow', signal: AbortSignal.timeout(8_000) });
+    const res = await fetchWithTimeout(`${origin}/favicon.ico`, { redirect: 'follow', signal: AbortSignal.timeout(8_000) });
     if (res.ok && /^image/i.test(res.headers.get('content-type') ?? '')) return http(`${origin}/favicon.ico`);
   } catch {
     /* 没 favicon 的站不少见，留空即可 */
@@ -564,7 +565,7 @@ async function inferFeed(siteUrl: string): Promise<string> {
   for (const suffix of FEED_SUFFIXES) {
     const candidate = base + suffix;
     try {
-      const res = await fetch(candidate, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8_000) });
+      const res = await fetchWithTimeout(candidate, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8_000) });
       if (!res.ok) continue;
       const head = (await res.text()).slice(0, 512);
       if (/<(rss|feed|rdf)[\s>]/i.test(head)) return candidate;

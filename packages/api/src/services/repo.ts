@@ -14,6 +14,7 @@ import { checkRepoWrite } from './hugo-guard';
 import { fail } from '../lib/errors';
 import { writeAudit, type AuditAction } from './audit';
 import * as gh from '../adapters/github';
+import { fetchWithTimeout } from '../lib/fetch';
 
 export type RepoBackend = 'github' | 'local';
 
@@ -352,7 +353,7 @@ function localHttp(env: Env | undefined): string {
 
 async function bridge<T>(env: Env | undefined, op: string, payload: Record<string, unknown>): Promise<T> {
   const base = localHttp(env);
-  const res = await fetch(`${base}/${op}`, {
+  const res = await fetchWithTimeout(`${base}/${op}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -389,7 +390,7 @@ export async function runLocalBuildCheck(env: Env): Promise<BuildHealth | null> 
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (token) headers['x-repo-bridge'] = token;
   try {
-    const res = await fetch(`${base}/doctor`, {
+    const res = await fetchWithTimeout(`${base}/doctor`, {
       method: 'POST',
       headers,
       body: '{}',

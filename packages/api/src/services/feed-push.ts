@@ -12,6 +12,7 @@ import { subscribers } from '../db/schema';
 import { getConfig, getConfigBool } from './config';
 import { mailQuotaCheck, queueEmail, renderEmail } from './email';
 import { cleanSummary } from './feed-summary';
+import { fetchWithTimeout } from '../lib/fetch';
 
 const STATE_KEY = 'zero:subscribe-push:last';
 
@@ -186,7 +187,7 @@ async function fetchFeed(url: string): Promise<FeedItem[]> {
   const timer = setTimeout(() => controller.abort(), 8000);
   let xml = '';
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { Accept: 'application/rss+xml, application/xml, text/xml', 'User-Agent': 'zero-api/1.0 (subscribe push)' },
       signal: controller.signal,
     });

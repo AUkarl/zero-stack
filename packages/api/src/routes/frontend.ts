@@ -14,6 +14,7 @@ import {
 import { clientIp } from '../lib/http';
 import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
+import { zodZh } from '../lib/zmsg';
 
 /**
  * 前端管理：基本信息 / 导航 / 首页 / 页脚 / 关于 / 工坊 / 时刻 / 友链申请 / SEO。
@@ -380,7 +381,7 @@ async function readSection(
     return {
       value: null,
       extras: {},
-      notice: `${SECTIONS[key].label}：${dataPath(dir, SECTIONS[key].file)} 解析失败（${res.error.issues[0]?.message ?? '格式错误'}），保存会以新内容覆盖。`,
+      notice: `${SECTIONS[key].label}：${dataPath(dir, SECTIONS[key].file)} 解析失败（${zodZh(res.error, '格式错误，这一份文件里哪个字段不对')}），保存会以新内容覆盖。`,
     };
   }
   const known = knownKeys(SECTIONS[key].schema);
@@ -612,7 +613,7 @@ app.post('/', async (c) => {
       for (const k of Object.keys(probe)) if (!known.has(k)) ignored.push(`${SECTIONS[key].label}.${k}`);
     }
     const res = SECTIONS[key].schema.safeParse(probe);
-    if (!res.success) fail(400, `${SECTIONS[key].label}保存失败：${res.error.issues[0]?.message ?? '字段不合法'}`);
+    if (!res.success) fail(400, `${SECTIONS[key].label}保存失败：${zodZh(res.error, '字段不合法')}`);
     const prev = await readSection(c.env, dir, key);
     /* 出盘不能用「过完 schema 的对象」这一份：schema 只登记面板上那些键，
        本站自己往 data/*.json 里加的键会被 z.object 整条抹掉。所以先把不认识的键垫在下面，
@@ -646,21 +647,25 @@ app.post('/', async (c) => {
 
   /* 站点地址一变，连带改两处 —— 否则就是「后台改了地址，前台 canonical 还是旧域名」：
        ① hugo.toml 的 baseURL：canonical / og:url / sitemap / RSS / robots 全部由它生成；
-       ② 友链申请页（data/apply.json）里「链接」「RSS」两条展示值（只替换与旧地址完全相同的值）。 */
+       ② 友链申请页（data/apply.json）里「链接」「RSS」两条展示值（只替换与旧地址完全相同的值）。
+     `siteUrlOld` 为空也算「要跟着改」：新站的第一次填地址（site.json 里那一份本来就是空的）
+     同样得把 hugo.toml 的 baseURL 定下来，不然第一版站点永远建在 create:site 写的占位域名上。 */
   const extra: { path: string; content: string }[] = [];
-  if (siteUrlNew && siteUrlOld && siteUrlNew !== siteUrlOld) {
+  if (siteUrlNew && siteUrlNew !== siteUrlOld) {
     const norm = (u: string) => u.replace(/\/+$/, '');
     const oldBase = norm(siteUrlOld);
     const newBase = norm(siteUrlNew);
 
     const hugo = await readRepoFile(c.env, 'hugo.toml').catch(() => null);
-    if (hugo?.content && /^baseURL\s*=\s*"[^"]*"/m.test(hugo.content)) {
+    if (hugo?.content && /^baseURL\s*=\s*"[^"]*"/m.test(hugo.content) && !hugo.content.includes(`baseURL = "${newBase}/"`)) {
       extra.push({ path: 'hugo.toml', content: hugo.content.replace(/^baseURL\s*=\s*"[^"]*"/m, `baseURL = "${newBase}/"`) });
     }
 
     const applyPath = dataPath(dir, 'apply.json');
     const applyFile = await readRepoFile(c.env, applyPath).catch(() => null);
-    if (applyFile?.content) {
+    /* 旧地址为空时**不**动 apply.json：那几处替换按「与旧地址完全相同」命中，
+       空串会撞上留空的展示项，把不相干的两行改掉。 */
+    if (oldBase && applyFile?.content) {
       try {
         const j = JSON.parse(applyFile.content) as { myInfo?: { label?: string; value?: string }[] };
         let touched = false;

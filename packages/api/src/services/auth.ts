@@ -3,6 +3,7 @@ import { sessions, users } from '../db/schema';
 import { createDb } from '../db/client';
 import { hashPassword, newId, verifyToken, signToken, randomToken } from '../lib/crypto';
 import { ensureAdminAuthorIdentity, withAdminAuthorBits } from './admin-author';
+import { getConfigBool } from './config';
 import { fail } from '../lib/errors';
 
 export interface AuthUser {
@@ -43,13 +44,25 @@ export async function createUser(
 ): Promise<string> {
   const db = createDb(env);
   const id = newId();
+  const role = input.role ?? 'reader';
+  /* 注册即按站长在「设置 → 用户中心」开的默认权限落库：
+     表里的 default(false) 只兜底没走这条路的写入。管理员恒有权限，不受开关影响。 */
+  const granted =
+    role === 'admin'
+      ? { canPublish: true, canAuthor: true }
+      : {
+          canPublish: await getConfigBool(env, 'newUserCanPublish', false),
+          canAuthor: await getConfigBool(env, 'newUserCanAuthor', false),
+        };
   await db.insert(users).values({
     id,
     email: input.email.trim().toLowerCase(),
     name: input.name ?? null,
-    role: input.role ?? 'reader',
+    role,
     emailVerified: input.emailVerified ?? false,
     invitedBy: input.invitedBy ?? null,
+    canPublish: granted.canPublish,
+    canAuthor: granted.canAuthor,
     passwordHash: input.password ? await hashPassword(input.password) : null,
   });
   return id;

@@ -3,7 +3,7 @@ import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Context } from 'hono';
 import { createDb } from '../db/client';
 import { commentLikes, comments, reactions } from '../db/schema';
-import { getConfig, getConfigBool } from '../services/config';
+import { getConfigBool } from '../services/config';
 import { anonymousFingerprint, newId } from '../lib/crypto';
 import { hashIp } from '../lib/ua';
 import { readRepoFile } from '../services/repo';
@@ -12,6 +12,7 @@ import { clientIp } from '../lib/http';
 import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
 import { mapChunks, parseKeys } from '../lib/batch';
 import { canonSlug } from '../lib/slug';
+import { contentDirs, readTargetFlag, writeTargetFlag } from '../services/target-cache';
 import type { AuthUser } from '../services/auth';
 import type { AppEnv } from '../lib/app';
 
@@ -38,17 +39,14 @@ export async function targetExists(env: Env, slug: string): Promise<boolean> {
   if (clean.split('/').some((seg) => seg === '.' || seg === '..')) return false;
   const hit = /^(posts|moments)\/([^/]+)$/.exec(clean);
 
-  const cacheKey = `zero:target:${clean}`;
-  try {
-    const cached = await env.CACHE.get(cacheKey, { type: 'text' });
-    if (cached === '1') return true;
-    if (cached === '0') return false;
-  } catch {
-    /* KV 读不到就照常探一次 */
-  }
+  /* 键、TTL 与作废点都在 services/target-cache.ts 那一处，别在这里再拼一遍字面量 */
+  const cached = await readTargetFlag(env, clean);
+  if (cached === '1') return true;
+  if (cached === '0') return false;
 
-  const postsDir = (await getConfig(env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
-  const momentsDir = (await getConfig(env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
+  const dirs = await contentDirs(env);
+  const postsDir = dirs.posts;
+  const momentsDir = dirs.moments;
   let found = false;
   if (hit) {
     for (const dir of [postsDir, momentsDir]) {
@@ -85,11 +83,7 @@ export async function targetExists(env: Env, slug: string): Promise<boolean> {
       }
     }
   }
-  try {
-    await env.CACHE.put(cacheKey, found ? '1' : '0', { expirationTtl: 360 });
-  } catch {
-    /* 写不进缓存就下次再探 */
-  }
+  await writeTargetFlag(env, clean, found);
   return found;
 }
 

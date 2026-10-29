@@ -15,7 +15,7 @@
  *   POST /api/security/github/unbind      解绑
  *   GET  /api/security/github/status      是否配置、是否已绑
  *
- * GitHub 凭据没配时一律 501 + 中文说明缺哪个环境变量，不静默退回。
+ * GitHub 凭据没配时一律 503（这项没开通）+ 中文说明缺哪个环境变量，不静默退回。
  */
 
 import { Hono } from 'hono';
@@ -55,12 +55,13 @@ import { clientIp, userAgent } from '../lib/http';
 import { rateLimit } from '../lib/rate-limit';
 import { ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
+import { zodZh } from '../lib/zmsg';
 
 const app = new Hono<AppEnv>();
 
-/** errors.ts 的 fail() 只收录了常用状态码，501 这里拼一个同样形状的响应 */
+/** fail() 之外还要带附加字段（githubConfigured / missing），这里拼一个与它同形状的响应 */
 function httpError(status: number, message: string, extra: Record<string, unknown> = {}): never {
-  throw new HTTPException(status as 501, { res: Response.json({ error: status, message, ...extra }, { status }) });
+  throw new HTTPException(status as 503, { res: Response.json({ error: status, message, ...extra }, { status }) });
 }
 
 function nowSec(): number {
@@ -280,7 +281,7 @@ app.post('/totp/enable', async (c) => {
   const user = requireUser(c);
   await rateLimit(c, 'totp-enable', 10, 3600, user.id);
   const parsed = enableSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) httpError(400, parsed.error.issues[0]?.message ?? '参数有误');
+  if (!parsed.success) httpError(400, zodZh(parsed.error, '参数有误'));
   const row = await loadUserRow(c.env, user.id);
   if (row.totpEnabled) httpError(409, '身份验证器已经开启，无需重复绑定');
 
@@ -382,10 +383,10 @@ async function githubStart(c: Context): Promise<Response> {
   const body = await readJsonBody(c);
   const hint = String(c.req.query('intent') ?? body.intent ?? '').trim();
   const oauth = githubOAuth(c.env, requestOrigin(c));
-  if (!oauth.configured) httpError(501, githubUnavailableMessage(oauth), { githubConfigured: false, missing: oauth.missing });
+  if (!oauth.configured) httpError(503, githubUnavailableMessage(oauth), { githubConfigured: false, missing: oauth.missing });
   if (!oauth.redirectUri) {
     httpError(
-      501,
+      503,
       `GitHub 回调地址未配置：请设置环境变量 GITHUB_REDIRECT_URI，值为 ${requestOrigin(c)}/api/security/github/callback`,
       { githubConfigured: true },
     );

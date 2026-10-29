@@ -12,7 +12,7 @@ import { requireAdmin } from '../middleware/auth';
 import { clientIp } from '../lib/http';
 import { canonHandle } from '../lib/slug';
 import { deriveHandle, userGroupName, withAdminAuthorBits } from '../services/admin-author';
-import { fail, ok } from '../lib/errors';
+import { fail, ok, okRows } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
 
 /**
@@ -119,24 +119,25 @@ app.get('/', async (c) => {
       )
     : rows;
 
-  return ok({
-    total: filtered.length,
-    data: filtered
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .map((raw) => {
-        // 管理员那一行读出来就是全亮的（库里值与显示口径不再分两套）
-        const r = withAdminAuthorBits(raw);
-        return {
-          ...r,
-          invitedCode: codeById.get(r.invitedBy ?? '') ?? null,
-          /** 库里的原值（friend|coauthor），PATCH 回填用这个 */
-          user_group: r.userGroup,
-          /** 显示口径：管理员为 owner（站长） */
-          userGroupView: userGroupView(r),
-          user_group_name: userGroupName(r),
-        };
-      }),
-  });
+  const list = filtered
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map((raw) => {
+      // 管理员那一行读出来就是全亮的（库里值与显示口径不再分两套）
+      const r = withAdminAuthorBits(raw);
+      return {
+        ...r,
+        invitedCode: codeById.get(r.invitedBy ?? '') ?? null,
+        /** 库里的原值（friend|coauthor），PATCH 回填用这个 */
+        user_group: r.userGroup,
+        /** 显示口径：管理员为 owner（站长） */
+        userGroupView: userGroupView(r),
+        user_group_name: userGroupName(r),
+      };
+    });
+
+  /* 形状：`{data:{items,total,data}}` + 顶层同值的 `items/total`。旧读者照旧读 `data.data`，
+     新脚本与后台一律读 `items` —— 管理列表口过去有三种形状，自测脚本按错键名取数就报「列表是空的」。 */
+  return okRows(list, { total: filtered.length, data: list });
 });
 
 app.patch('/:id', async (c) => {
