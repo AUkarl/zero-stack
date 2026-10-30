@@ -39,7 +39,7 @@
   </label>
   <p class="muted small">
     工坊页开不开（<code>[work] enable</code>）以及描述显不显示（<code>show_desc</code>）仍然读 params.toml，这里只存正文和项目列表。
-    说明与每个项目的描述都支持 Markdown 与站内短链：<code>[文字](https://…)</code>、<code>[[文章标识符]]</code>。
+    说明与项目描述支持 Markdown 与 <code>[[文章标识符]]</code> 短链。
   </p>
 </section>
 

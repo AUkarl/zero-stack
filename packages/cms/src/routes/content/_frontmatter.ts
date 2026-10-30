@@ -25,6 +25,7 @@ const KNOWN_KEYS = [
   'author',
   'toc',
   'math',
+  'comments',
   /** 只通过链接访问的页面：build / sitemap / robots 三件一起由「隐藏」开关写 */
   'build',
   'sitemap',
@@ -66,6 +67,8 @@ export interface PostForm {
   math: boolean;
   /** 不在列表 / RSS / sitemap 里出现，只能通过链接访问（build.list=never） */
   hidden: boolean;
+  /** 允许评论：false 时写 comments: false，主题就不渲染这一页的评论组件 */
+  comments: boolean;
 }
 
 export function emptyForm(): PostForm {
@@ -86,6 +89,7 @@ export function emptyForm(): PostForm {
     toc: true,
     math: false,
     hidden: false,
+    comments: true,
   };
 }
 
@@ -222,6 +226,8 @@ export function formFromDoc(doc: FrontDoc): PostForm {
     math: bool(doc, 'math', false),
     /* Hugo 0.145 起 _build 改名为 build；两种写法都认 */
     hidden: (scalar(doc, 'build.list') || scalar(doc, '_build.list')) === 'never',
+    /* 没写这个键 = 允许评论；显式写 false 才关 */
+    comments: scalar(doc, 'comments') !== 'false',
   };
 }
 
@@ -257,6 +263,8 @@ export function frontFromForm(f: PostForm, doc: FrontDoc): string {
   if (f.pinned) push('pinned', 'true');
   push('toc', f.toc ? 'true' : 'false');
   push('math', f.math ? 'true' : 'false');
+  /* 默认允许评论，只在关掉时写一行，免得每篇文章都多一个键 */
+  if (!f.comments) push('comments', 'false');
 
   /* 「隐藏」开关独占这三件：勾上就写成「建而不列」（只通过链接访问），
      取消就一个都不写。以前它们躺在 extras 里，而 extras 的回写只拼了 `键: 值`、

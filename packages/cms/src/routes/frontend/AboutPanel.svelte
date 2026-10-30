@@ -82,10 +82,7 @@
     头像、名字、以及各个区块要不要显示（<code>show_bio</code> / <code>show_site</code> / <code>show_declaration</code> 等开关）
     仍然读 params.toml 的 <code>[about]</code>；这里存的是区块正文本身。
   </p>
-  <p class="muted small">
-    下面这些正文都支持 Markdown 与站内短链：<code>[文字](https://…)</code>、<code>[文字](/about/)</code>、
-    <code>[[文章标识符]]</code>（渲染成站内文章链接）、<code>**加粗**</code>。
-  </p>
+  <p class="muted small">支持 Markdown 与 <code>[[文章标识符]]</code> 短链。</p>
 </section>
 
 {#each PARA_BLOCKS as b (b.field)}

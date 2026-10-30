@@ -111,6 +111,7 @@
     <div class="preview"><h4>正文预览</h4>{@html html}</div>
   {:else}
     <textarea
+      id="bodyEditor"
       rows={rows}
       placeholder={placeholder}
       bind:value
@@ -159,6 +160,8 @@
     font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
     font-size: 0.86rem;
     line-height: 1.65;
+    min-height: 320px;
+    resize: vertical;
   }
   .tip {
     margin: 0;

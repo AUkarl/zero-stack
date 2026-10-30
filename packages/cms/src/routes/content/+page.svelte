@@ -233,6 +233,8 @@
 
   // 新文章
   let showNew = $state(false);
+  /** 左栏目录：打开一篇文章后自动收起，把宽度让给编辑区；顶部「目录」可以再展开 */
+  let listOpen = $state(true);
   let newTitle = $state('');
   let newSlug = $state('');
   let newDir = $state('content/zh/posts');
@@ -284,8 +286,15 @@
     }
   }
 
+  /** 当前活着的正文框：优先按 id 取（不依赖「先点过正文」才有的引用），拿不到才退回上一步的位置 */
+  function bodyArea(): HTMLTextAreaElement | null {
+    const el = document.getElementById('bodyEditor');
+    if (el instanceof HTMLTextAreaElement && el.isConnected) return el;
+    return area && area.isConnected ? area : null;
+  }
+
   function insertShortcode(sc: Shortcode) {
-    const live = area && area.isConnected ? area : null;
+    const live = bodyArea();
     const from = live ? live.selectionStart : body.length;
     const to = live ? live.selectionEnd : body.length;
     body = body.slice(0, from) + sc.text + body.slice(to);
@@ -304,7 +313,7 @@
 
   /** 在光标处插入一段文本（图片 ![]()、音视频按短代码），并把光标停在插入内容之后 */
   function insertFragment(text: string) {
-    const live = area && area.isConnected ? area : null;
+    const live = bodyArea();
     const from = live ? live.selectionStart : body.length;
     const to = live ? live.selectionEnd : body.length;
     body = body.slice(0, from) + text + body.slice(to);
@@ -384,6 +393,7 @@
       baseBody = parts.body;
       sha = d.data.sha;
       notice = d.data.exists ? '' : '（新文件，保存后写入仓库）';
+      listOpen = false;
     } catch (e) {
       error = e instanceof Error ? e.message : '读取文件失败';
     } finally {
@@ -411,6 +421,8 @@
       toc: f.toc,
       math: f.math,
     };
+    /* 关评论才写：没这个键就是允许评论 */
+    if (!f.comments) payload.comments = false;
     /* 「只通过链接访问」：三件一起写，接口那边会把嵌套表序列化成 YAML 块 */
     if (f.hidden) {
       payload.build = { list: 'never', render: 'always' };
@@ -590,6 +602,7 @@
   <div class="row">
     <button onclick={() => (showNew = !showNew)}>＋ 新文章</button>
     <button onclick={() => void browse(dir)} disabled={loading}>{loading ? '读取中…' : '刷新目录'}</button>
+    <button class="ghost" onclick={() => (listOpen = !listOpen)} aria-expanded={listOpen} title="展开 / 收起左侧目录">目录</button>
     <button class="ghost" onclick={() => (showDrafts = !showDrafts)} aria-expanded={showDrafts}>
       本地暂存{queued ? ` ${queued}` : ''}
     </button>
@@ -690,7 +703,7 @@
   </p>
 {/if}
 
-<div class="split">
+<div class="split" class:list-collapsed={!listOpen}>
   <div class="card files">
     <div class="crumbs muted">
       {#each crumbs as c, i}
@@ -787,7 +800,11 @@
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.hidden} />
-            <span>不在列表 / RSS / sitemap 里出现（只通过链接访问，如隐私政策）</span>
+            <span>不在列表 / RSS / sitemap 里出现（只通过链接访问）</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.comments} />
+            <span>允许评论（取消则这篇文章不显示评论组件）</span>
           </label>
           <label class="wgt">
             weight
@@ -816,7 +833,7 @@
 
         <div class="body" role="presentation" onclick={capture} onkeyup={capture}>
           <ShortcodeBar oninsert={insertShortcode} onmedia={() => (showInsertMedia = true)} />
-          <MarkdownEditor bind:value={body} rows={20} placeholder="Markdown 正文…" plainLinks shortBase={frontUrl('/posts/') || '/posts/'} />
+          <MarkdownEditor bind:value={body} rows={26} placeholder="Markdown 正文…" plainLinks shortBase={frontUrl('/posts/') || '/posts/'} />
         </div>
 
         {#if tr?.ready}
@@ -897,6 +914,13 @@
     grid-template-columns: 300px 1fr;
     gap: 0.9rem;
     align-items: start;
+  }
+  /* 目录收起：编辑区吃满整行 */
+  .split.list-collapsed {
+    grid-template-columns: 1fr;
+  }
+  .split.list-collapsed .files {
+    display: none;
   }
   .files {
     display: flex;
