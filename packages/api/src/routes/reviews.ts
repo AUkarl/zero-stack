@@ -28,6 +28,7 @@ import { sendDraftReviewResult } from '../services/review-mail';
 import { clientIp } from '../lib/http';
 import { canonHandle } from '../lib/slug';
 import { avatarForEmail } from '../lib/avatar';
+import { isoDateCst } from '../lib/datetime';
 import { errorMessage, fail, ok, okRows } from '../lib/errors';
 import { requireAdmin } from '../middleware/auth';
 import type { AppEnv } from '../lib/app';
@@ -122,7 +123,7 @@ async function rememberSubmitterAuthor(env: Env, userId: string, actor: { id?: s
  * authorKey 优先传账号的作者标识（users.handle），没有标识的才退回昵称。
  */
 export function buildPostMarkdown(row: typeof postDrafts.$inferSelect, authorKey: string): string {
-  const date = new Date((row.publishedAt ?? Math.floor(Date.now() / 1000)) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const date = isoDateCst(row.publishedAt ?? Math.floor(Date.now() / 1000));
   const lines = ['---', `title: ${toYamlString(row.title)}`, `date: ${date}`];
   if (row.summary) lines.push(`description: ${toYamlString(row.summary)}`);
   if (row.category) {

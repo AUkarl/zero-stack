@@ -125,6 +125,7 @@
   <textarea
     {rows}
     placeholder={placeholder}
+    aria-label={t('commentContent')}
     bind:value
     bind:this={area}
     onkeydown={onkeydown}
@@ -145,7 +146,7 @@
   {/if}
 
   {#if fields}{@render fields()}{/if}
-  {#if error}<p class="error-text">{error}</p>{/if}
+  {#if error}<p class="error-text" role="alert">{error}</p>{/if}
 
   <div class="actions">
     {#if packs.length}

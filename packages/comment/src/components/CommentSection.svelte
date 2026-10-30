@@ -83,6 +83,8 @@
   let mainDraft = $state('');
   let mainError = $state('');
   let mainSubmitting = $state(false);
+  /* 发出去之后的那句「发布成功 / 审核中」：看得见的那条只是文案，
+     读屏靠页面里常驻的 .sr-only[role=status] 播报（临时插入的元素不保证会被念出来）。 */
   let doneMessage = $state('');
 
   async function load(
@@ -471,7 +473,8 @@
       {#if loadingMore}<span class="hint inline">{t('loadingMore')}</span>{/if}
     </div>
 
-    {#if doneMessage}<p class="done">{doneMessage}</p>{/if}
+    <p class="sr-only" role="status" aria-live="polite">{doneMessage}</p>
+    {#if doneMessage}<p class="done" aria-hidden="true">{doneMessage}</p>{/if}
 
     {#if !collapsed}
       <div class="main-form">
@@ -678,6 +681,7 @@
   .hint.id-hint { margin: 0.35rem 0 0; font-size: 0.78rem; }
   .error-text { color: var(--zc-danger); font-size: 0.85rem; }
   .done { color: var(--zc-ok); font-size: 0.88rem; margin: 0 0 0.6rem; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .sorts { display: flex; align-items: center; gap: 0.35rem; margin: -0.4rem 0 0.9rem; flex-wrap: wrap; }
   .sorts button {
     font: inherit; font-size: 0.78rem; padding: 0.15rem 0.6rem; border-radius: 999px;
