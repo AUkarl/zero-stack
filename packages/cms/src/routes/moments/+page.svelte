@@ -412,8 +412,7 @@
 </div>
 
 <p class="muted small">
-  发布即写仓库 <code>{momentsDir}/&lt;slug&gt;.md</code>，目录取自设置页 githubMomentsDir；卡片按 front matter 的
-  images / video / music 渲染。正文里的站内短链 <code>[[…]]</code> 只算文本，不计入媒体数量。
+  发布即写仓库 <code>{momentsDir}/&lt;slug&gt;.md</code>，目录取自设置页 githubMomentsDir。
 </p>
 {#if error}<p class="err">{error}</p>{/if}
 {#if notice}<p class="ok">{notice}</p>{/if}
@@ -424,7 +423,7 @@
     {#if editing}<button class="sm ghost" onclick={resetForm}>改为新建</button>{/if}
   </div>
 
-  <MarkdownEditor bind:value={body} rows={5} placeholder="此刻的想法、照片或链接…" shortBase={frontUrl('/posts/') || '/posts/'} />
+  <MarkdownEditor bind:value={body} rows={5} placeholder="此刻的想法、照片或链接…" shortBase={frontUrl('/posts/') || '/posts/'} showTip={false} />
 
   <div class="grid2">
     <label>日期<input type="datetime-local" bind:value={date} /></label>

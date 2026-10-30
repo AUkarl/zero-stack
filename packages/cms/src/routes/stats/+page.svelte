@@ -56,6 +56,7 @@
     subscribers: number;
     users: number;
     email: Record<string, number>;
+    pendingDrafts?: number;
     excludeLegacy?: boolean;
   }
   /** 按页面汇总的点赞 / 收藏：票数远大于 actors 就是刷出来的 */
@@ -102,7 +103,7 @@
     try {
       const clean = excludeLegacy ? '&excludeLegacy=1' : '';
       const cleanQ = excludeLegacy ? '?excludeLegacy=1' : '';
-      const [s, t, dv, tp, bz, rx, ps, cfg, ct] = await Promise.all([
+      const [s, t, dv, tp, bz, rx, ps, cfg, ct, ds] = await Promise.all([
         get<{ data: Summary }>(`/api/analytics/summary${cleanQ}`),
         get<{ data: Point[] }>(`/api/analytics/trend?days=${days}${clean}`),
         get<{ data: Devices }>(`/api/analytics/devices${cleanQ}`),
@@ -113,12 +114,13 @@
         get<{ data: Record<string, string> }>('/api/admin/config'),
         // 文章/时刻计数是独立的递归目录接口；它失败不能把整页统计带崩
         get<{ data: { posts: number; moments: number } }>('/api/admin/stats/content').catch(() => null),
+        get<{ data: { pending?: number } }>('/api/admin/drafts/stats').catch(() => null),
       ]);
       summary = s.data;
       trend = t.data;
       devices = dv.data;
       top = tp.data;
-      biz = { ...bz.data, posts: ct?.data?.posts, moments: ct?.data?.moments };
+      biz = { ...bz.data, posts: ct?.data?.posts, moments: ct?.data?.moments, pendingDrafts: ds?.data?.pending };
       reactions = rx.data;
       const map: Record<string, string> = {};
       for (const p of ps.data ?? []) {
@@ -235,7 +237,7 @@
 
 <div class="row spread head">
   <h2>访问统计</h2>
-  <div class="row">
+  <div class="toolbar">
     <select bind:value={days}>
       <option value={7}>近 7 天</option>
       <option value={14}>近 14 天</option>
@@ -248,7 +250,7 @@
     <button class="sm" onclick={() => void recount()} disabled={recounting} title="按现有明细重算「建站以来累计」；会先演习并让你确认">
       {recounting ? '重算中…' : '按明细重算累计'}
     </button>
-    <label class="row small" title="排除从旧站导入的评论、浏览与点赞；只影响本页视图，不改库里的数据">
+    <label class="small check" title="排除从旧站导入的评论、浏览与点赞；只影响本页视图，不改库里的数据">
       <input type="checkbox" bind:checked={excludeLegacy} />
       排除导入数据
     </label>
@@ -298,27 +300,9 @@
   {/each}
 </div>
 
-{#if summary && hasIp}
+{#if summary}
   <p class="muted small ipnote">
-    访客口径：按加盐哈希后的访客 IP 去重（迁移前没有哈希的老记录退回会话指纹）。{summary.retentionNote || ''}
-    其余「今日 / 明细」类数字只覆盖保留期内的明细。
-    浏览量为页面浏览次数（同一人刷新多次算多次），爬虫与监控探针的访问不入库
-    {#if typeof summary.botFilteredThisHour === 'number'}
-      （本实例这一小时里被判为机器人并丢弃的是 <b>{summary.botFilteredThisHour}</b> 条——
-      冷启动会清零，不是全站累计；「今天数字为什么少了一半」先看这一条再猜）
-    {:else}
-      ；
-    {/if}
-    「今日」的日界按后台配置键 statsUtcOffsetHours（默认东八区 8）切，不再是 UTC 零点。
-  </p>
-{/if}
-
-{#if summary && !hasIp}
-  <p class="muted small ipnote">
-    访客口径说明：后端 <code>/api/analytics/summary</code> 没有返回 <code>todayUniqueIpVisitors</code> /
-    <code>totalUniqueIpVisitors</code> / <code>allTimeViews</code> 这几个按 IP 去重的字段（旧版接口，
-    只能给出 {summary.totalVisitors} 这个累计访客数），所以「独立访客」「建站以来累计访问人数」显示为 —、
-    「累计访问量」退回累计总访问量。后端补上字段后本页自动生效。
+    访客数据按 IP 去重。总访问量与独立访客是永久计数器，其余数据保留 {summary.retentionDays ?? 365} 天，用于按天/按页的趋势与排行。
   </p>
 {/if}
 
@@ -405,6 +389,8 @@
           { label: '时刻', value: biz.moments ?? '—' },
           { label: '评论总数', value: biz.comments },
           { label: '待审评论', value: biz.pendingComments },
+          { label: '投稿待审', value: biz.pendingDrafts ?? '—' },
+          { label: '点赞 / 收藏', value: reactions?.reactionRows ?? '—' },
           { label: '订阅者', value: biz.subscribers },
           { label: '注册用户', value: biz.users },
           { label: '邮件已发', value: biz.email?.sent ?? 0 },
@@ -425,8 +411,7 @@
   <h3>点赞与收藏（按页面，票数最多的前 30 页）</h3>
   {#if reactions}
     <p class="muted small">
-      全站 {reactions.reactionRows} 条点赞 / 收藏记录，分布在 {reactions.pages} 个地址上。「不同来源」是按登录账号或匿名访客身份数的：
-      票数远大于来源数，说明同一页被同一批身份反复刷过。匿名身份只认 IP（换 User-Agent 不再算新的一票）。
+      全站 {reactions.reactionRows} 条点赞 / 收藏记录，分布在 {reactions.pages} 个地址上。「按IP和账号去重」。
     </p>
     <div class="list-scroll table-scroll">
       <table>
@@ -464,14 +449,32 @@
 
 <style>
   .head {
-    margin-bottom: 0.6rem;
+    margin-bottom: 0.8rem;
     flex-wrap: wrap;
+    align-items: flex-start;
   }
-  .head .row {
+  .toolbar {
+    display: flex;
+    align-items: center;
     flex-wrap: wrap;
+    gap: 0.5rem;
   }
-  .head label {
+  .toolbar select,
+  .toolbar button {
+    height: 34px;
+    min-height: 34px;
+  }
+  .toolbar select {
+    width: auto;
+    min-width: 110px;
+  }
+  .check {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
     white-space: nowrap;
+    font-size: 0.84rem;
   }
   .mono {
     font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -483,8 +486,12 @@
   .kpis {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-    gap: 0.6rem;
+    gap: 0.8rem;
     margin-bottom: 0.8rem;
+  }
+  /* 站点数据固定两行、每行五个；侧栏展开/折叠都不改变这个排布 */
+  .biz .kpis {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
   .kpi {
     display: flex;
@@ -504,18 +511,31 @@
     font-size: 0.78rem;
   }
   .ipnote {
-    margin: -0.2rem 0 0.8rem;
+    margin: 0 0 0.8rem;
+    line-height: 1.7;
   }
-  .ipnote code {
-    background: var(--panel-2);
-    border-radius: 4px;
-    padding: 0 0.25rem;
+  .head + .ok,
+  .head + .warn,
+  .head + .err,
+  .ok.small,
+  .warn,
+  .err {
+    margin: 0 0 0.8rem;
+  }
+  section.card {
+    margin: 0 0 0.8rem;
+  }
+  .cols > section.card {
+    margin: 0;
+  }
+  .reactions-card {
+    margin-bottom: 0;
   }
   .cols {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 0.8rem;
-    margin-top: 0.8rem;
+    margin: 0 0 0.8rem;
     align-items: start;
   }
   /* 分析卡片统一定高，卡片里最多显示 10 行，其余在卡片内部滚动。
@@ -594,7 +614,7 @@
     white-space: nowrap;
   }
   .biz {
-    margin-top: 0.8rem;
+    margin: 0 0 0.8rem;
   }
   table {
     font-size: 0.85rem;
@@ -625,7 +645,7 @@
   .track {
     height: 8px;
     border-radius: 999px;
-    background: #f0f1f3;
+    background: var(--panel-2);
     overflow: hidden;
   }
   .fill {
@@ -636,5 +656,14 @@
   .bn {
     text-align: right;
     color: var(--muted);
+  }
+  @media (max-width: 720px) {
+    .biz .kpis {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .toolbar select,
+    .toolbar button {
+      flex: 1 1 auto;
+    }
   }
 </style>

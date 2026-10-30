@@ -422,18 +422,42 @@
   .fold {
     margin-left: auto;
     flex: none;
-    width: 26px;
-    height: 26px;
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
     padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
-    color: var(--muted);
-    border-color: transparent;
-    background: transparent;
+    font-size: 1rem;
+    color: var(--fg);
+    border-color: var(--border);
+    background: var(--panel-2);
     box-shadow: none;
   }
   .fold:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--panel-2);
+  }
+  /* 主题按钮只有图标：保证 36px 命中区与深色下的对比 */
+  .theme {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.15rem;
     color: var(--fg);
     background: var(--panel-2);
+    border-color: var(--border);
+  }
+  .theme:hover {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .me {
     display: flex;
@@ -486,14 +510,28 @@
   }
   /* 折叠：只留图标与头像 */
   aside.collapsed {
-    width: 68px;
+    width: 72px;
   }
   aside.collapsed .brand,
   aside.collapsed .me .meta,
-  aside.collapsed nav .grp,
   aside.collapsed nav .txt,
   aside.collapsed nav .cnt {
     display: none;
+  }
+  /* 折叠后分类标题没有了，用细分隔线保住分组感 */
+  aside.collapsed nav .grp {
+    display: block;
+    flex: 0 0 1px;
+    height: 1px;
+    min-height: 1px;
+    margin: 0.55rem 0.4rem;
+    padding: 0;
+    background: var(--border);
+    font-size: 0;
+    letter-spacing: 0;
+  }
+  aside.collapsed nav .grp:first-child {
+    margin-top: 0.15rem;
   }
   aside.collapsed .brandrow {
     justify-content: center;
@@ -506,9 +544,20 @@
     justify-content: center;
     padding: 0.15rem 0 0.75rem;
   }
+  aside.collapsed nav {
+    gap: 6px;
+    padding: 0.25rem 0.55rem 0.6rem;
+  }
   aside.collapsed nav a {
     justify-content: center;
-    padding: 0.55rem 0;
+    padding: 0.7rem 0;
+  }
+  aside.collapsed .ico {
+    width: 20px;
+    height: 20px;
+  }
+  aside.collapsed .foot {
+    padding: 0.65rem 0.5rem 0.9rem;
   }
   nav {
     flex: 1;
@@ -557,10 +606,10 @@
     white-space: nowrap;
   }
   .ico {
-    width: 16px;
-    height: 16px;
+    width: 17px;
+    height: 17px;
     flex: none;
-    opacity: 0.8;
+    opacity: 1;
   }
   nav a.active .ico {
     opacity: 1;
@@ -575,15 +624,10 @@
     padding: 0 6px;
   }
   .foot {
-    padding: 0.55rem 0.95rem 0.85rem;
+    padding: 0.65rem 0.95rem 0.9rem;
     display: flex;
     justify-content: flex-start;
     border-top: 1px solid var(--border);
-  }
-  .foot button {
-    background: transparent;
-    color: var(--muted);
-    border-color: var(--border);
   }
   main {
     flex: 1;
@@ -632,7 +676,7 @@
     padding: 0;
     background: transparent;
     border-color: var(--border);
-    color: #3f5138;
+    color: var(--fg);
   }
   .burger svg {
     width: 18px;
@@ -640,7 +684,7 @@
   }
   .bar .out {
     background: transparent;
-    color: #55684c;
+    color: var(--muted);
     border-color: var(--border);
   }
   .scrim {
@@ -688,7 +732,7 @@
       content: '';
       display: block;
       height: 1px;
-      background: #d3ddc4;
+      background: var(--border);
     }
     .cnt {
       position: absolute;

@@ -578,7 +578,7 @@
     aspect-ratio: 1;
     object-fit: cover;
     border-radius: 6px;
-    background: #f2f2f2;
+    background: var(--panel-2);
   }
   .file {
     aspect-ratio: 1;

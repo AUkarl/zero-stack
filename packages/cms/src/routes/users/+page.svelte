@@ -1082,7 +1082,7 @@
     font-size: 0.72rem;
     border-radius: 999px;
     padding: 0.04rem 0.42rem;
-    background: #f1f2f4;
+    background: var(--panel-2);
     color: var(--muted);
     border: 1px solid var(--border);
   }

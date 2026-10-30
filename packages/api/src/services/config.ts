@@ -97,8 +97,6 @@ export type ConfigKey =
   | 'spamThreshold'
   | 'spamKeywords'
   | 'spamLinkRatio'
-  | 'spamMaxUrls'
-  | 'spamMinWords'
   | 'spamHoldPending'
   | 'spamRuleWeight'
   | 'spamUseBuiltinPatterns'
@@ -240,8 +238,6 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'spamThreshold',
   'spamKeywords',
   'spamLinkRatio',
-  'spamMaxUrls',
-  'spamMinWords',
   'spamHoldPending',
   'spamRuleWeight',
   'spamUseBuiltinPatterns',
@@ -396,8 +392,6 @@ export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   spamThreshold: '60',
   spamKeywords: '[]',
   spamLinkRatio: '0.5',
-  spamMaxUrls: '3',
-  spamMinWords: '2',
   /** true（默认）= 命中垃圾先进「待审核」由人判定；false = 直接标成 spam 进「垃圾评论」队列 */
   spamHoldPending: 'true',
   /** 明确规则（关键词 / 默认规则集 / 自定义正则 / 仓库文件）的单条命中分；默认 70 高于 spamThreshold 60，一条即拦 */
@@ -579,8 +573,6 @@ export const NUMERIC_CONFIG_KEYS: ConfigKey[] = [
   'inviteCodeLength',
   'inviteCodeUses',
   'poststatsViewWindowDays',
-  'spamMaxUrls',
-  'spamMinWords',
   'spamRuleWeight',
   'spamThreshold',
   'spamLinkRatio',

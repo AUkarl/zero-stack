@@ -327,16 +327,16 @@
 
 <style>
   .head {
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.8rem;
   }
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
-    gap: 0.7rem;
-    margin-bottom: 0.7rem;
+    gap: 0.8rem;
+    margin-bottom: 0.8rem;
   }
   .cards.four {
-    margin-bottom: 1rem;
+    margin-bottom: 0.8rem;
   }
   .stat {
     display: flex;
@@ -353,7 +353,7 @@
     font-size: 0.82rem;
   }
   .stat .n {
-    color: #b7bcc4;
+    color: var(--muted);
     font-size: 0.72rem;
   }
   .dash {

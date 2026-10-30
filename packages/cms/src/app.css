@@ -9,6 +9,7 @@
    否则系统深色那一支要额外维护一层映射，改一处忘一处。
    ============================================================ */
 :root {
+  color-scheme: light;
   --bg: #f6f7fb;
   --panel: #ffffff;
   --panel-2: #f2f4f8;
@@ -41,6 +42,7 @@
 }
 
 :root[data-theme='dark'] {
+  color-scheme: dark;
   --bg: #0b0f16;
   --panel: #121826;
   --panel-2: #182031;
@@ -67,6 +69,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root[data-theme='system'] {
+    color-scheme: dark;
     --bg: #0b0f16;
     --panel: #121826;
     --panel-2: #182031;
@@ -156,6 +159,25 @@ textarea {
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::selection {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 html,
@@ -243,16 +265,16 @@ button.sm {
   padding: 0.18rem 0.6rem;
   font-size: 0.82rem;
 }
+/* 次要操作也要看得见：纯文字按钮在深色下几乎消失，统一成浅底描边 */
 button.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
-  box-shadow: none;
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--fg);
 }
 button.ghost:hover {
   background: var(--panel-2);
-  border-color: transparent;
-  color: var(--fg);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 input,
@@ -269,6 +291,29 @@ select {
 input[type='checkbox'],
 input[type='radio'] {
   accent-color: var(--accent);
+}
+/* 控件统一高度：顶部工具栏里 select 与按钮不再一高一低 */
+input:not([type='checkbox']):not([type='radio']),
+select {
+  min-height: 36px;
+}
+button {
+  min-height: 34px;
+}
+button.sm {
+  min-height: 30px;
+}
+select {
+  padding-right: 1.8rem;
+}
+option {
+  background: var(--panel);
+  color: var(--fg);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
 }
 input:focus,
 textarea:focus,
@@ -300,7 +345,7 @@ label {
   color: var(--muted);
 }
 .muted.small {
-  margin-left: 0.4rem;
+  margin-left: 0.35rem;
 }
 .err {
   color: var(--bad);
@@ -320,6 +365,13 @@ label {
   gap: var(--gap);
   align-items: center;
   flex-wrap: wrap;
+}
+/* 页头右侧的操作条：select / input / button 统一高度，不再一高一低 */
+.head .row > button,
+.head .row > select,
+.head .row > input {
+  height: 34px;
+  min-height: 34px;
 }
 .spread {
   justify-content: space-between;

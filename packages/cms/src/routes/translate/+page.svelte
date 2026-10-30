@@ -268,7 +268,7 @@
       </label>
       <button class="sm" onclick={() => void loadDocs()} disabled={docLoading}>{docLoading ? '读取中…' : '刷新文章列表'}</button>
       {#if selectedDoc}<p class="muted small path">{selectedDoc.path}</p>{/if}
-原文可以是任意语言，译文写进上面选的目标语言。
+      <p class="muted small">原文可以是任意语言，译文写进上面选的目标语言。</p>
     </div>
 
     <div class="col">
@@ -365,15 +365,26 @@ date/author/comments 等字段保持不变，仅标题/摘要/描述与正文翻
   }
   .work {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
     gap: 0.9rem;
+    align-items: start;
   }
   .col {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.55rem;
     border-left: 2px solid var(--border);
     padding-left: 0.7rem;
+    min-width: 0;
+  }
+  .col select {
+    width: 100%;
+  }
+  .col > button {
+    align-self: flex-start;
+  }
+  .col > button.primary {
+    width: 100%;
   }
   .lbl {
     font-size: 0.78rem;

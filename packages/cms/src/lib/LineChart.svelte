@@ -42,9 +42,9 @@
   </div>
   <svg viewBox="0 0 {W} {H}" role="img" preserveAspectRatio="none">
     {#each gridYs as y}
-      <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke="#eee" />
+      <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke="var(--border)" />
     {/each}
-    <line x1={PAD.l} y1={H - PAD.b} x2={W - PAD.r} y2={H - PAD.b} stroke="#ddd" />
+    <line x1={PAD.l} y1={H - PAD.b} x2={W - PAD.r} y2={H - PAD.b} stroke="var(--border-strong)" />
     {#each series as s (s.name)}
       <polyline points={pts(s.values)} fill="none" stroke={s.color} stroke-width="2" stroke-linejoin="round" />
       {#if s.values.length === n && n > 0}
@@ -57,7 +57,7 @@
       {/if}
     {/each}
     {#each tickIdx as i}
-      <text x={PAD.l + ((W - PAD.l - PAD.r) * i) / Math.max(1, n - 1)} y={H - 5} font-size="10" fill="#999" text-anchor="middle">
+      <text x={PAD.l + ((W - PAD.l - PAD.r) * i) / Math.max(1, n - 1)} y={H - 5} font-size="10" fill="var(--muted)" text-anchor="middle">
         {labels[i]?.slice(5) ?? ''}
       </text>
     {/each}

@@ -510,7 +510,11 @@
       {#each items as f, i (f.id)}
         <div class="frow">
           <div class="fmain">
-            {#if f.avatar}<img class="av" src={assetUrl(f.avatar) || f.avatar} alt="" loading="lazy" />{/if}
+            {#if f.avatar}
+              <img class="av" src={assetUrl(f.avatar) || f.avatar} alt="" loading="lazy" />
+            {:else}
+              <span class="av ph" aria-hidden="true">{(f.name || '?').slice(0, 1).toUpperCase()}</span>
+            {/if}
             <div class="ftext">
               <a class="flink" href={f.url} target="_blank" rel="noreferrer noopener" title={f.url}>{f.name}</a>
               {#if f.description}<p class="muted small desc" title={f.description}>{f.description}</p>{/if}
@@ -755,6 +759,14 @@
     object-fit: cover;
     background: var(--accent-soft);
     flex: none;
+  }
+  .av.ph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-weight: 650;
+    font-size: 0.8rem;
   }
   .fops {
     display: flex;

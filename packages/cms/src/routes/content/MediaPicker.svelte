@@ -339,7 +339,7 @@
   .upbar {
     height: 6px;
     border-radius: 999px;
-    background: #eef2e6;
+    background: var(--panel-2);
     overflow: hidden;
     margin: 0.1rem 0 0.2rem;
   }

@@ -908,10 +908,10 @@
           {#if form.image}<img class="cover" src={assetUrl(form.image) || form.image} alt="封面预览" loading="lazy" />{/if}
         </div>
 
-        <div class="row toggles">
+        <div class="toggles">
           <label class="switch">
             <input type="checkbox" bind:checked={form.draft} />
-            <span>草稿（勾上只存进仓库，前台不渲染；取消勾选才发布）</span>
+            <span>草稿（选中为草稿，前端不显示）</span>
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.pinned} />
@@ -923,8 +923,10 @@
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.comments} />
-            <span>允许评论（取消则这篇文章不显示评论组件）</span>
+            <span>允许评论（取消则不加载评论组件）</span>
           </label>
+        </div>
+        <div class="row toggles-extra">
           <label class="wgt">
             weight
             <input
@@ -1018,6 +1020,22 @@
   .new {
     margin-bottom: 0.8rem;
   }
+  .new .row {
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .new .row input,
+  .new .row select,
+  .new .row button {
+    height: 36px;
+  }
+  .new .row input {
+    flex: 1 1 220px;
+  }
+  .new .row select {
+    flex: 0 1 190px;
+    min-width: 150px;
+  }
   .new p {
     margin: 0.5rem 0 0;
     font-size: 0.8rem;
@@ -1041,7 +1059,7 @@
     line-height: 1.5;
     color: var(--muted);
   }
-  .badge.hid { border-color: #d6a35c; color: #a9741f; }
+  .badge.hid { border-color: var(--warn-border); color: var(--warn); background: var(--warn-soft); }
   .del { margin-left: 0.5rem; }
   .toast {
     position: fixed;
@@ -1123,12 +1141,19 @@
   .pane {
     display: flex;
     flex-direction: column;
-    gap: 0.65rem;
+    gap: 0.75rem;
+  }
+  .pane .row > input:not([type='checkbox']):not([type='radio']),
+  .pane .row > select,
+  .pane .row > button {
+    height: 36px;
+    min-height: 36px;
   }
   .grid2 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-    gap: 0.6rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem 0.8rem;
+    align-items: start;
   }
   .block {
     display: flex;
@@ -1171,12 +1196,21 @@
     align-self: flex-start;
   }
   .toggles {
-    gap: 1rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem 0.9rem;
+    align-items: center;
+    padding: 0.15rem 0;
+  }
+  .toggles-extra {
+    gap: 1.25rem;
+    align-items: center;
   }
   .switch {
     flex-direction: row;
     align-items: center;
     gap: 0.4rem;
+    min-height: 26px;
     font-size: 0.86rem;
     color: var(--fg);
   }
@@ -1192,6 +1226,8 @@
   }
   .wgt input {
     width: 88px;
+    height: 32px;
+    min-height: 32px;
     padding: 0.2rem 0.4rem;
   }
   .small {
@@ -1208,10 +1244,17 @@
   .tr {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.55rem;
     margin-top: 0.7rem;
     padding-top: 0.7rem;
-    border-top: 1px solid var(--border, var(--border));
+    border-top: 1px solid var(--border);
+  }
+  .tr .row {
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .tr select {
+    min-width: 150px;
   }
   .tr textarea {
     font-family: ui-monospace, Consolas, monospace;
@@ -1220,6 +1263,12 @@
   }
   @media (max-width: 900px) {
     .split {
+      grid-template-columns: 1fr;
+    }
+    .grid2 {
+      grid-template-columns: 1fr;
+    }
+    .toggles {
       grid-template-columns: 1fr;
     }
   }

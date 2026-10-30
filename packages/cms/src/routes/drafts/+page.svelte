@@ -316,14 +316,14 @@
           <tr>
             <td>{r.title}</td>
             <td class="mono">{r.slug.startsWith('draft-') ? '发布时自动命名' : r.slug}</td>
-            <td>{r.authorName || '—'}<span class="muted small">{r.authorEmail ?? ''}</span></td>
+            <td class="author">{r.authorName || '—'}<span class="muted small">{r.authorEmail ?? ''}</span></td>
             <td class="clip">{[r.category, ...r.tags].filter(Boolean).join(' · ') || '—'}</td>
             <td><span class="badge {statusBadge(r)}">{statusText(r)}</span></td>
             <td title={fmtDate(r.createdAt)}>{timeAgo(r.createdAt)}</td>
             <td class="ops">
               <button class="sm" onclick={() => openDraft(r)} disabled={busy === r.id}>{open?.id === r.id ? '收起' : '查看/编辑'}</button>
               {#if canReview(r)}
-                <button class="sm" onclick={() => void remove(r)} disabled={busy === r.id}>删</button>
+                <button class="sm danger" onclick={() => void remove(r)} disabled={busy === r.id}>删除</button>
               {:else if r.status === 'approved' && !r.publishedPath}
                 <button class="sm" onclick={() => void republish(r)} disabled={busy === r.id}>补发</button>
               {/if}
@@ -331,7 +331,7 @@
           </tr>
           {#if open?.id === r.id}
             <tr class="detail">
-              <td colspan="8">
+              <td colspan="7">
                 <div class="meta">
                   {#if r.publishedPath}<span class="muted small">已写入 {r.publishedPath}</span>{/if}
                   {#if r.reviewNote}<span class="muted small">上次备注：{r.reviewNote}</span>{/if}
@@ -434,6 +434,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .author {
+    max-width: 230px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .ops {
     white-space: nowrap;
   }
@@ -453,9 +459,10 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 0.6rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem 0.8rem;
     padding: 0.3rem 0;
+    align-items: start;
   }
   .full {
     grid-column: 1 / -1;
@@ -481,7 +488,13 @@
     flex-direction: row;
     align-items: center;
     gap: 0.4rem;
+    min-height: 26px;
     color: var(--fg);
     font-size: 0.84rem;
+  }
+  @media (max-width: 640px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

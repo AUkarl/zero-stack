@@ -43,15 +43,12 @@
   <p class="muted empty">暂无数据</p>
 {:else}
   <div class="pie-wrap">
-    <div class="pie" style="background:{gradient}">
-      <span class="center"><b>{data.total}</b><small>次</small></span>
-    </div>
+    <div class="pie" style="background:{gradient}"></div>
     <ul class="legend">
       {#each data.segments as s, i (s.k)}
         <li>
           <i style="background:{COLORS[i % COLORS.length]}"></i>
           <span class="k" title={s.k}>{s.k}</span>
-          <span class="n">{s.n}</span>
           <span class="p">{pct(s.n)}%</span>
         </li>
       {/each}
@@ -80,23 +77,6 @@
     border-radius: 50%;
     background: var(--panel);
   }
-  .center {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    line-height: 1.1;
-  }
-  .center b {
-    font-size: 1.1rem;
-  }
-  .center small {
-    font-size: 0.68rem;
-    color: var(--muted);
-  }
   .legend {
     flex: 1;
     min-width: 0;
@@ -110,7 +90,7 @@
   }
   .legend li {
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto auto;
+    grid-template-columns: 8px minmax(0, 1fr) auto;
     gap: 0.35rem;
     align-items: center;
   }
@@ -124,15 +104,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .legend .n {
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-  }
   .legend .p {
-    color: var(--muted);
+    color: var(--fg);
     font-variant-numeric: tabular-nums;
-    min-width: 2.2em;
+    min-width: 2.8em;
     text-align: right;
+    font-weight: 600;
   }
   .empty {
     margin: 0.4rem 0;

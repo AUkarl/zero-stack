@@ -7,6 +7,7 @@
     placeholder = '',
     shortBase = '/post/',
     plainLinks = false,
+    showTip = true,
     disabled = false,
   }: {
     value?: string;
@@ -18,6 +19,8 @@
      * 给真正按文章发布的编辑器打开这个开关：按钮改插普通 Markdown 链接，提示也换口径。
      */
     plainLinks?: boolean;
+    /** 时刻编辑框只要纯粹的写作区，不需要语法提示 */
+    showTip?: boolean;
     disabled?: boolean;
   } = $props();
 
@@ -95,7 +98,17 @@
     {#if plainLinks}
       <button type="button" class="sm" disabled={disabled} onclick={() => wrap('[', '](/posts/文章标识符/)', '显示文字')}>站内文章链接</button>
     {:else}
-      <button type="button" class="sm" disabled={disabled} onclick={() => insert('[[文章标识符|显示文字]]')}>站内短链</button>
+      <button
+        type="button"
+        class="sm"
+        disabled={disabled}
+        title="插入 [[文章标识符]]；先选中一段文字则把它当作标识符"
+        onclick={() => {
+          const el = area;
+          const sel = el ? value.slice(el.selectionStart, el.selectionEnd).trim() : '';
+          if (sel) wrap('[[', ']]', sel);
+          else insert('[[文章标识符]]');
+        }}>站内短链</button>
     {/if}
     <button type="button" class="sm" disabled={disabled} onclick={() => prefix('## ', '小标题')}>标题</button>
     <button type="button" class="sm" disabled={disabled} onclick={() => prefix('> ', '引用')}>引用</button>
@@ -120,6 +133,7 @@
       bind:this={area}
     ></textarea>
   {/if}
+  {#if showTip}
   <p class="muted small tip">
     {#if plainLinks}
       支持标题 / 列表 / 引用 / 代码 / 表格；站内文章用普通链接写
@@ -130,6 +144,7 @@
       <code>[[文章标识符|显示文字]]</code>，渲染成 <code>{shortBase}文章标识符/</code>。
     {/if}
   </p>
+  {/if}
 </div>
 
 <style>
@@ -184,14 +199,14 @@
     line-height: 1.8;
   }
   .preview :global(pre) {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 8px;
     padding: 0.7rem 0.8rem;
     overflow: auto;
     font-size: 0.83rem;
   }
   .preview :global(code) {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0.05rem 0.3rem;
     font-size: 0.86em;

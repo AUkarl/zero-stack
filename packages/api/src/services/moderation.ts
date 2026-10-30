@@ -180,9 +180,6 @@ export function normalizeText(raw: string): string {
   return despaced.toLowerCase();
 }
 
-function urlCount(text: string): number {
-  return (text.match(URL_RE) ?? []).length;
-}
 
 function linkChars(text: string): number {
   return (text.match(URL_RE) ?? []).join('').length;
@@ -927,8 +924,6 @@ export async function inspectComment(env: Env, input: Candidate, options: Inspec
   const emptyBreakdown: VerdictBreakdown = { local: [], builtin: [], custom: [], file: [], fileError: null, provider: null };
   if (!enabled) return { spam: false, score: 0, reason: '', hold, breakdown: emptyBreakdown, rules: [], provider: null };
 
-  const maxUrls = await getConfigInt(env, 'spamMaxUrls', 3);
-  const minWords = await getConfigInt(env, 'spamMinWords', 2);
   const linkRatioLimit = Number((await getConfig(env, 'spamLinkRatio')) ?? '0.5');
   const keywordsSetting = await getConfigJson<string[]>(env, 'spamKeywords', []);
   const extraKeywords = Array.isArray(keywordsSetting) ? keywordsSetting.map((k) => String(k).trim()).filter(Boolean) : [];
@@ -980,12 +975,10 @@ export async function inspectComment(env: Env, input: Candidate, options: Inspec
     if (p.re.test(raw)) add(p.weight, p.label, 'regex', p.re.source);
   }
 
-  const urls = urlCount(text);
-  if (urls > maxUrls) add(35, `链接数 ${urls} 超过上限 ${maxUrls}`, 'text', 'spamMaxUrls');
+  const urls = (text.match(URL_RE) ?? []).length;
   const compact = text.replace(/\s+/g, '');
   const ratio = compact.length ? linkChars(text) / compact.length : 0;
   if (ratio > linkRatioLimit) add(30, `链接字符占比 ${Math.round(ratio * 100)}%`, 'text', 'spamLinkRatio');
-  if (urls > 0 && compact.replace(URL_RE, '').length < minWords * 2) add(25, '正文几乎只有链接', 'text', 'spamMinWords');
 
   const linkHost = hostOf(input.authorLink);
   if (linkHost) {

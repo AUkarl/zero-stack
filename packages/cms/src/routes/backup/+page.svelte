@@ -1105,7 +1105,7 @@
   }
   .pill.bad {
     background: var(--bad-soft);
-    color: #b3261e;
+    color: var(--bad);
   }
   .mono {
     font-family: ui-monospace, Consolas, monospace;

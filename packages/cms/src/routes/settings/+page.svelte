@@ -819,15 +819,26 @@
 {/if}
 
 {#snippet fieldList(list: Field[])}
-  <div class="fields">
-    {#each list as f (f.key)}
-      <div class="field {f.kind === 'textarea' || f.kind === 'lines' ? 'wide' : ''}">
-        {#if f.kind === 'bool'}
+  {@const bools = list.filter((f) => f.kind === 'bool')}
+  {@const rest = list.filter((f) => f.kind !== 'bool')}
+  {#if bools.length}
+    <div class="bools">
+      {#each bools as f (f.key)}
+        <div class="bool">
           <label class="switch">
             <input type="checkbox" checked={boolValue(f.key)} onchange={(e) => setVal(f.key, e.currentTarget.checked)} />
             <span>{f.label}</span>
           </label>
-        {:else if f.kind === 'select'}
+          {#if f.hint}<span class="muted hint">{f.hint}</span>{/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+  {#if rest.length}
+  <div class="fields">
+    {#each rest as f (f.key)}
+      <div class="field {f.kind === 'textarea' || f.kind === 'lines' ? 'wide' : ''}">
+        {#if f.kind === 'select'}
           <label>
             {f.label}
             <select value={cfg[f.key] ?? ''} onchange={(e) => setVal(f.key, e.currentTarget.value)}>
@@ -874,6 +885,7 @@
       </div>
     {/each}
   </div>
+  {/if}
 {/snippet}
 
 {#snippet testSend()}
@@ -1108,10 +1120,21 @@
     gap: 0.2rem;
     word-break: break-all;
   }
+  .bools {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.7rem 1.2rem;
+    padding: 0.8rem 1rem 0.2rem;
+  }
+  .bool {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
   .fields {
     display: grid;
-    /* min(100%, 230px)：窄屏时列宽不会超过容器，否则整块被撑出横向滚动，字也挤变形 */
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.7rem 0.9rem;
     padding: 0.8rem 1rem 1rem;
   }
@@ -1158,6 +1181,12 @@
   }
   .small {
     font-size: 0.76rem;
+  }
+  @media (max-width: 720px) {
+    .bools,
+    .fields {
+      grid-template-columns: 1fr;
+    }
   }
   .foot {
     margin-top: 1rem;

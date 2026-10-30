@@ -67,8 +67,6 @@
     'spamHoldPending',
     'spamRuleWeight',
     'spamUseBuiltinPatterns',
-    'spamMinWords',
-    'spamMaxUrls',
     'spamLinkRatio',
     'spamKeywords',
     'spamCustomRegex',
@@ -266,7 +264,7 @@
     for (const k of changedKeys) {
       const raw = cfg[k] ?? '';
       if (k === 'spamEnabled' || k === 'spamHoldPending' || k === 'spamUseBuiltinPatterns') payload[k] = raw === 'true';
-      else if (k === 'spamThreshold' || k === 'spamMinWords' || k === 'spamMaxUrls' || k === 'spamRuleWeight')
+      else if (k === 'spamThreshold' || k === 'spamRuleWeight')
         payload[k] = raw === '' ? '' : Number(raw);
       else payload[k] = raw; // 密钥留空时不会进 changedKeys，天然不覆盖
     }
@@ -432,10 +430,6 @@
   </div>
 </div>
 
-<p class="muted small">
-  评论入库前按下面的规则打分（0-100），分数达到阈值即判为垃圾评论。登录用户的阈值自动 +20，作者越可信越宽松。
-</p>
-
 {#if error}<p class="err">{error}</p>{/if}
 {#if notice}<p class="ok">{notice}</p>{/if}
 
@@ -449,42 +443,26 @@
       </label>
       <label class="switch">
         <input type="checkbox" checked={cfg.spamHoldPending === 'true'} onchange={(e) => (cfg.spamHoldPending = e.currentTarget.checked ? 'true' : 'false')} />
-        <span>命中后先进「待审核」而不是「垃圾评论」</span>
+        <span>命中是否进待审</span>
       </label>
-      <p class="hint">
-        开（默认）：命中的先压进「待审核」，由你决定放行还是判杀 —— 规则总有误杀，先进待审评论不会凭空消失。
-        关：命中直接标为垃圾，进「垃圾评论」队列，不再占你的待审核。站长与管理员本人的评论两种情况下都不扫描。
-      </p>
+      <p class="hint">开：命中进「待审核」。关：命中进「垃圾评论」。</p>
       <label class="switch">
         <input
           type="checkbox"
           checked={cfg.spamUseBuiltinPatterns === 'true'}
           onchange={(e) => (cfg.spamUseBuiltinPatterns = e.currentTarget.checked ? 'true' : 'false')}
         />
-        <span>启用内置默认规则集（赌博 / 色情 / 诈骗 / 违法物品 / 广告导流 / 英文垃圾）</span>
+        <span>启用默认规则集</span>
       </label>
       <label>
         明确规则单条分值
         <input type="number" min="1" max="100" bind:value={cfg.spamRuleWeight} />
-        <span class="muted hint">
-          默认 70。关键词、内置默认规则集、下面的自定义正则、仓库规则文件命中时各加这么多分 ——
-          高于判定阈值就意味着「你写了这条，命中就一定拦下来」；改小它才需要多条同时命中才拦。
-        </span>
+        <span class="muted hint">数值越高越严；默认 70</span>
       </label>
       <label>
         判定阈值
         <input type="number" min="1" max="100" bind:value={cfg.spamThreshold} />
-        <span class="muted hint">默认 60，越小越严格</span>
-      </label>
-      <label>
-        最少字数
-        <input type="number" min="0" bind:value={cfg.spamMinWords} />
-        <span class="muted hint">短于该字数加分，默认 2</span>
-      </label>
-      <label>
-        最多外链数
-        <input type="number" min="0" bind:value={cfg.spamMaxUrls} />
-        <span class="muted hint">超过即加分，默认 3</span>
+        <span class="muted hint">数值越低越严；默认 60</span>
       </label>
       <label>
         链接字数占比线
@@ -504,12 +482,8 @@
       <input placeholder="输入后回车添加" onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addKeyword(e.currentTarget.value); e.currentTarget.value = ''; } }} />
     </div>
 
-    <h4>自定义正则</h4>
-    <p class="muted small">
-      每行一条，写成 <code>/正则/flags</code>、裸正则或普通关键词；一条命中的分值就是上面的「明确规则单条分值」（默认 70，一条即过阈值）。
-      保存进配置键 <code>spamCustomRegex</code>。匹配前会先归一化：全角转半角、去零宽字符、压掉中文之间的空格，
-      所以「加 微 信」「加ＶＸ」这类拆字写法同样命中。
-    </p>
+    <h4>自定义正则（本机保存）</h4>
+    <p class="muted small">每行一条，写成 <code>/正则/flags</code>、裸正则或普通关键词。</p>
     <div class="row">
       <button class="sm" onclick={() => void copyDefaultPatterns()} disabled={defaultsBusy}>
         {defaultsBusy ? '读取中…' : '复制内置默认规则到下面'}
@@ -575,8 +549,12 @@
       </div>
     </section>
 
-    <section class="card">
-      <h4>仓库正则文件{pfPath ? ` ${pfPath}` : ''}</h4>
+    <details class="card repo-file">
+      <summary><span>仓库规则文件（高级）</span>{#if pfPath}<code>{pfPath}</code>{/if}</summary>
+      <p class="muted small">
+        和上面的「自定义正则」二选一即可：这一份会提交进内容仓库，随站点走，适合多台设备/多人共享；
+        日常改规则用上面那个就够了。
+      </p>
       <p class="muted small">
         站点仓库里那份共享正则清单，落在仓库根的 <code>.zero/spam-patterns.txt</code>，读写走
         <code>GET / PUT /api/admin/spam/pattern-file</code>。别把它挪进 <code>data/</code>：
@@ -595,7 +573,7 @@
         <button class="sm" onclick={() => void loadPatternFile()} disabled={pfLoading}>重载</button>
         <button class="primary" onclick={() => void savePatternFile()} disabled={pfSaving || pfText === pfSaved}>{pfSaving ? '写入中…' : '写入文件'}</button>
       </div>
-    </section>
+    </details>
   </div>
 </div>
 
@@ -610,7 +588,7 @@
   </div>
   <div class="row">
     <button class="primary" onclick={() => void runProbe()} disabled={probing || !probe.content.trim()}>{probing ? '打分中…' : '试跑'}</button>
-    <button class="sm" onclick={() => void runAiProbe()} disabled={aiProbing || !probe.content.trim() || !ai?.ready}>
+    <button onclick={() => void runAiProbe()} disabled={aiProbing || !probe.content.trim() || !ai?.ready}>
       {aiProbing ? 'AI 判断中…' : 'AI 判一下'}
     </button>
     {#if !ai?.ready}<span class="muted small">AI 未配置，去设置里选服务商并填密钥</span>{/if}
@@ -756,12 +734,29 @@
   }
   .fields {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.6rem 0.8rem;
     margin: 0.5rem 0;
+    align-items: start;
+  }
+  .fields label > input:not([type='checkbox']):not([type='radio']),
+  .fields label > select {
+    width: 100%;
+    height: 36px;
+  }
+  .fields > label.switch,
+  .fields > p.hint {
+    grid-column: 1 / -1;
+  }
+  .fields > p.hint {
+    margin: 0;
+  }
+  .fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .fields.tight {
     margin-top: 0.4rem;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   }
   .hint {
     font-size: 0.72rem;
@@ -852,8 +847,8 @@
     font-size: 0.7rem;
     border-radius: 999px;
     background: var(--accent-soft);
-    border: 1px solid #c7d2fe;
-    color: #3730a3;
+    border: 1px solid var(--border-strong);
+    color: var(--accent);
     white-space: nowrap;
   }
   .pat {
@@ -913,6 +908,64 @@
   }
   .queue {
     margin-top: 0.9rem;
+  }
+  .repo-file {
+    padding: 0.85rem 1rem;
+  }
+  .repo-file > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    list-style: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .repo-file > summary::-webkit-details-marker {
+    display: none;
+  }
+  .repo-file > summary::before {
+    content: '▸';
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .repo-file[open] > summary::before {
+    content: '▾';
+  }
+  .repo-file > summary code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .repo-file[open] > summary {
+    margin-bottom: 0.5rem;
+  }
+  .queue table {
+    table-layout: fixed;
+    min-width: 880px;
+  }
+  .queue th:nth-child(1) { width: 150px; }
+  .queue th:nth-child(3) { width: 170px; }
+  .queue th:nth-child(4) { width: 58px; }
+  .queue th:nth-child(5) { width: 190px; }
+  .queue th:nth-child(6) { width: 92px; }
+  .queue th:nth-child(7) { width: 190px; }
+  .queue td:nth-child(1),
+  .queue td:nth-child(4),
+  .queue td:nth-child(6) {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .queue td:nth-child(3) a {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .queue .on {
     background: var(--accent);
