@@ -394,7 +394,7 @@
   /** 提交给后台的结构化字段：后端按 front + body 拼 Hugo 头 */
   function frontPayload(f: PostForm): Record<string, unknown> {
     const weight = String(f.weight ?? '').trim();
-    return {
+    const payload: Record<string, unknown> = {
       title: f.title.trim(),
       subtitle: f.subtitle.trim(),
       date: fromDateInput(f.date),
@@ -411,6 +411,13 @@
       toc: f.toc,
       math: f.math,
     };
+    /* 「只通过链接访问」：三件一起写，接口那边会把嵌套表序列化成 YAML 块 */
+    if (f.hidden) {
+      payload.build = { list: 'never', render: 'always' };
+      payload.sitemap = { disable: true };
+      payload.robots = 'noindex, nofollow';
+    }
+    return payload;
   }
 
   async function removeFile() {
