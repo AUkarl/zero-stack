@@ -14,10 +14,17 @@
   /** 站点账号系统里 role 只有 admin / reader：后台只属于 admin，其他人进来一律当作不存在这个页面 */
   const isAdmin = $derived(session.user?.role === 'admin');
   $effect(() => {
-    if (!ready || !isAdmin || avatarTried) return;
+    if (!ready || !isAdmin || avatarTried || avatar) return;
     avatarTried = true;
     get<{ data: { profile?: { avatar?: string | null } | null } }>('/api/admin/authors/me')
-      .then((d) => (avatar = assetUrl(d.data?.profile?.avatar) || ''))
+      .then((d) => {
+        avatar = assetUrl(d.data?.profile?.avatar) || '';
+        try {
+          sessionStorage.setItem('zero-cms-avatar', avatar);
+        } catch {
+          /* 隐私模式写不了，这次会话内还有 */
+        }
+      })
       .catch(() => (avatar = ''));
   });
   const denied = $derived(!isLogin && ready && !!session.user && !isAdmin);
@@ -40,7 +47,7 @@
     }
   }
   /** 管理员头像：读用户资料里的 image（站内相对路径也能用） */
-  let avatar = $state('');
+  let avatar = $state(typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('zero-cms-avatar') || '' : '');
   let avatarTried = false;
   let themeMode = $state<ThemeMode>('system');
   if (typeof localStorage !== 'undefined') {

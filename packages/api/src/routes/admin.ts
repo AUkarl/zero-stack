@@ -3,7 +3,7 @@ import { kvDelete, kvGet, kvPut } from '../services/kv-cache';
 import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDb } from '../db/client';
-import { comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
+import { adminDrafts, comments, emailLogs, jobRuns, reactions, subscribers, users, visits } from '../db/schema';
 import { getAllConfig, getConfig, apiBase, isConfigKey, isSecretKey, maskSecrets, numericKeyBadValue, enumKeyBadValue, jsonKeyBadValue, lengthKeyBadValue, lineShapeBadValue, textKeyMaxLen, ALL_CONFIG_KEYS, ENUM_CONFIG_KEYS, setConfig, type ConfigKey } from '../services/config';
 import { emailOtpAvailable, LOGIN_POLICIES } from '../services/account-shared';
 import { ensureAdminAuthorIdentity } from '../services/admin-author';
@@ -974,20 +974,18 @@ app.delete('/content/file', async (c) => {
   });
 });
 
-/* ---------------- 文章草稿：私有 R2 桶，一篇一个对象（覆盖写） ---------------- */
+/* ---------------- 文章草稿箱：D1（一篇一行，同一路径覆盖） ---------------- */
 
 /**
- * 后台「存草稿」的存放处。以前在浏览器 localStorage 里，换台设备就没了；
- * 现在按登录账号存进私有 R2 桶（只有 Worker 读得到，不经任何公开域名）。
+ * 后台「存草稿」的存放处。历史：浏览器 localStorage → 私有 R2 → D1。
+ * 现在是 D1：草稿是「几百 KB 以内的小文档 + 需要按时间列出」，一次查询就能出元数据，
+ * 读写都是一行；R2 更适合大对象，存这种小文档反而多一层 list + get。
  *
- * 键：article-drafts/<userId>/<encodeURIComponent(文章路径)>.json —— 路径直接进键，
- * 同一篇再存就是覆盖同一个对象，不会「改一次多一个文件」。
- * 列表只读 customMetadata（标题 / 保存时间 / 字节数），正文按需再取。
+ * 唯一键 (user_id, path)：同一篇再存就是覆盖同一行，不会越存越多。
+ * 每行上限贴着 D1 的单行上限（2MB）留一点余量。
+ * 不参与备份导出：草稿是临时工作副本，真正的保存动作是「保存到 Git」。
  */
-const ARTICLE_DRAFT_PREFIX = 'article-drafts';
-const ARTICLE_DRAFT_MAX = 2 * 1024 * 1024;
-
-const draftKey = (uid: string, path: string) => `${ARTICLE_DRAFT_PREFIX}/${uid}/${encodeURIComponent(path)}.json`;
+const ARTICLE_DRAFT_MAX = 1_900_000;
 
 function draftPath(input: string): string {
   const path = String(input ?? '').trim();
@@ -995,59 +993,117 @@ function draftPath(input: string): string {
   return path;
 }
 
+/** 上一版把草稿放在 R2：每个用户第一次进草稿箱时搬一次，搬完删对象、记个 KV 标记 */
+async function importR2Drafts(env: Env, uid: string): Promise<void> {
+  const flag = `zero:admin:drafts:r2-migrated:${uid}`;
+  if (await kvGet(env, flag)) return;
+  try {
+    const listed = await env.R2.list({ prefix: `article-drafts/${uid}/`, limit: 200 });
+    for (const o of listed.objects) {
+      const obj = await env.R2.get(o.key);
+      if (!obj) continue;
+      const data = (await obj.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!data || typeof data.path !== 'string' || typeof data.content !== 'string') continue;
+      if (!data.content.trim() || data.content.length > ARTICLE_DRAFT_MAX) continue;
+      await upsertDraftRow(env, uid, data);
+      await env.R2.delete(o.key);
+    }
+  } catch {
+    /* R2 没绑定或读失败：不挡草稿箱 */
+  }
+  await kvPut(env, flag, '1', 365 * 86400);
+}
+
+/** 写入/覆盖一篇草稿（D1 upsert），返回保存结果 */
+async function upsertDraftRow(env: Env, uid: string, d: Record<string, unknown>): Promise<{ path: string; savedAt: number }> {
+  const db = createDb(env);
+  const now = Math.floor(Date.now() / 1000);
+  const path = draftPath(String(d.path ?? ''));
+  const content = typeof d.content === 'string' ? d.content : '';
+  if (!content.trim()) fail(400, '草稿正文为空');
+  if (content.length > ARTICLE_DRAFT_MAX) fail(413, '这篇草稿超过 1.9MB，存不进草稿箱；请直接推送到仓库');
+  const title = String(d.title ?? '').slice(0, 120);
+  const front = JSON.stringify(d.front ?? {});
+  const body = String(d.body ?? '');
+  const sha = String(d.sha ?? '');
+  const notify = d.notifySubscribers ? 1 : 0;
+  await db
+    .insert(adminDrafts)
+    .values({ id: newId(), userId: uid, path, title, content, front, body, sha, notify, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [adminDrafts.userId, adminDrafts.path],
+      set: { title, content, front, body, sha, notify, updatedAt: now },
+    });
+  return { path, savedAt: now * 1000 };
+}
+
 app.get('/article-drafts', async (c) => {
   const admin = requireAdmin(c);
+  const db = createDb(c.env);
   const want = c.req.query('path');
   if (want) {
-    const obj = await c.env.R2.get(draftKey(admin.id, draftPath(want)));
-    if (!obj) fail(404, '这份草稿不在了');
-    const data = (await obj.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!data) fail(500, '草稿内容解析失败');
-    return ok(data);
+    const rows = await db
+      .select()
+      .from(adminDrafts)
+      .where(and(eq(adminDrafts.userId, admin.id), eq(adminDrafts.path, draftPath(want))))
+      .limit(1);
+    const row = rows[0];
+    if (!row) fail(404, '这份草稿不在了');
+    let front: Record<string, unknown> = {};
+    try {
+      front = JSON.parse(row.front) as Record<string, unknown>;
+    } catch {
+      front = {};
+    }
+    return ok({
+      path: row.path,
+      title: row.title,
+      savedAt: row.updatedAt * 1000,
+      bytes: row.content.length,
+      notifySubscribers: row.notify === 1,
+      front,
+      body: row.body,
+      content: row.content,
+      sha: row.sha,
+    });
   }
-  const listed = await c.env.R2.list({
-    prefix: `${ARTICLE_DRAFT_PREFIX}/${admin.id}/`,
-    limit: 200,
-    include: ['customMetadata'],
+  await importR2Drafts(c.env, admin.id);
+  const rows = await db
+    .select({
+      path: adminDrafts.path,
+      title: adminDrafts.title,
+      updatedAt: adminDrafts.updatedAt,
+      bytes: sql<number>`length(${adminDrafts.content})`,
+      notify: adminDrafts.notify,
+    })
+    .from(adminDrafts)
+    .where(eq(adminDrafts.userId, admin.id))
+    .orderBy(desc(adminDrafts.updatedAt))
+    .limit(200);
+  return ok({
+    items: rows.map((r) => ({
+      path: r.path,
+      title: r.title,
+      savedAt: r.updatedAt * 1000,
+      bytes: Number(r.bytes ?? 0),
+      notifySubscribers: r.notify === 1,
+    })),
   });
-  const items = listed.objects
-    .map((o) => ({
-      path: String(o.customMetadata?.path ?? ''),
-      title: String(o.customMetadata?.title ?? ''),
-      savedAt: Number(o.customMetadata?.savedAt ?? 0),
-      bytes: o.size,
-      notifySubscribers: o.customMetadata?.notify === '1',
-    }))
-    .filter((x) => x.path)
-    .sort((a, b) => a.savedAt - b.savedAt);
-  return ok({ items });
 });
 
 app.put('/article-drafts', async (c) => {
   const admin = requireAdmin(c);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) fail(400, '缺少请求体');
-  const path = draftPath(String(body.path ?? ''));
-  const content = typeof body.content === 'string' ? body.content : '';
-  if (!content.trim()) fail(400, '草稿正文为空');
-  if (content.length > ARTICLE_DRAFT_MAX) fail(413, '这篇草稿超过 2MB，存不进暂存箱；请直接推送到仓库');
-  const now = Date.now();
-  const title = String(body.title ?? '').slice(0, 120);
-  await c.env.R2.put(
-    draftKey(admin.id, path),
-    JSON.stringify({ ...body, path, title, savedAt: now }),
-    {
-      httpMetadata: { contentType: 'application/json; charset=utf-8' },
-      customMetadata: { path, title, savedAt: String(now), notify: body.notifySubscribers ? '1' : '0' },
-    },
-  );
-  return ok({ path, savedAt: now });
+  const saved = await upsertDraftRow(c.env, admin.id, body);
+  return ok(saved);
 });
 
 app.delete('/article-drafts', async (c) => {
   const admin = requireAdmin(c);
   const path = draftPath(c.req.query('path') ?? '');
-  await c.env.R2.delete(draftKey(admin.id, path));
+  const db = createDb(c.env);
+  await db.delete(adminDrafts).where(and(eq(adminDrafts.userId, admin.id), eq(adminDrafts.path, path)));
   return ok({ path, deleted: true });
 });
 

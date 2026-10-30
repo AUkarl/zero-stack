@@ -523,6 +523,39 @@ export const postDrafts = sqliteTable(
 );
 
 /* ------------------------------------------------------------------
+ * 管理员的文章草稿（后台「存草稿」）
+ * ----------------------------------------------------------------
+ * 一篇一个行，(user_id, path) 唯一：再存就是覆盖同一行，不会越存越多。
+ * 以前放在浏览器 localStorage，后来放私有 R2；草稿是「几百 KB 以内的小文档 +
+ * 需要按时间列表」，放 D1 更合适：一次查询就能列出元数据，读写都是一行。
+ * 不参与备份导出：草稿是临时工作副本，真正的保存动作是「保存到 Git」。
+ * ----------------------------------------------------------------*/
+export const adminDrafts = sqliteTable(
+  'admin_drafts',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** 仓库里的目标路径，如 content/zh/posts/x.md */
+    path: text('path').notNull(),
+    title: text('title').notNull().default(''),
+    /** 推送时直接用这份整篇 markdown，不再回编辑器取值 */
+    content: text('content').notNull(),
+    /** 结构化 front 对象（JSON 字符串），推送时随 batch 一起送 */
+    front: text('front').notNull().default('{}'),
+    body: text('body').notNull().default(''),
+    sha: text('sha').notNull().default(''),
+    notify: integer('notify').notNull().default(0),
+    updatedAt: integer('updated_at').notNull().default(unixNow),
+  },
+  (t) => [
+    uniqueIndex('admin_drafts_user_path_idx').on(t.userId, t.path),
+    index('admin_drafts_user_time_idx').on(t.userId, t.updatedAt),
+  ],
+);
+
+/* ------------------------------------------------------------------
  * 作者认证：读者提交笔名与社交证明，管理员核验后置 author_verified
  * ----------------------------------------------------------------*/
 

@@ -57,7 +57,7 @@
 
   /* ---------------- 本地暂存队列：「保存本地」→ 右上角「保存到 Git」 ---------------- */
 
-  /** 草稿箱：服务端（私有 R2）只回元数据，正文在推送 / 打开时按需取 */
+  /** 草稿箱：服务端（D1）只回元数据，正文在推送 / 打开时按需取 */
   let drafts = $state<DraftMeta[]>([]);
   let showDrafts = $state(false);
   let pushing = $state(false);
@@ -156,7 +156,7 @@
     setTimeout(() => (notice = ''), 5000);
   }
 
-  /** 存草稿：写进私有 R2 的草稿箱（同一篇覆盖同一个对象），不碰仓库 */
+  /** 存草稿：写进草稿箱（同一篇覆盖同一行），不碰仓库 */
   async function saveLocal() {
     if (!file) {
       error = '还没有可暂存的文件：左列点开一篇，或先「新建文章」；若刚才读取报错，见下方错误信息';
@@ -180,7 +180,7 @@
     baseForm = { ...form };
     baseBody = body;
     doc = parseFront(frontFromForm(form, doc));
-    notice = '已存进草稿箱（私有 R2），点右上角「保存到 Git」才会进仓库';
+    notice = '已存进草稿箱，点右上角「保存到 Git」才会进仓库';
     setTimeout(() => (notice = ''), 4000);
   }
 
@@ -729,7 +729,7 @@
   <div class="card drafts">
     <div class="row spread">
       <h3>草稿箱（{queued} 篇）</h3>
-      <span class="muted small">存在私有 R2 桶里（登录同一账号在哪台设备都能看到），没有进内容仓库；推送成功即从这里删除。</span>
+      <span class="muted small">存在服务端（登录同一账号在哪台设备都能看到），没有进内容仓库；推送成功即从这里删除。</span>
     </div>
     {#if legacy.length}
       <p class="warn">
@@ -844,7 +844,7 @@
     {#if file}
       <div class="card pane">
         <div class="row spread">
-          <span class="muted small">「存草稿」进私有 R2 草稿箱；右上角「保存到 Git」才会写进仓库</span>
+          <span class="muted small">「存草稿」进草稿箱；右上角「保存到 Git」才会写进仓库</span>
           <div class="row">
             {#if dirty}<span class="warn">未保存</span>{/if}
             {#if draftOf(drafts, file)}<span class="muted small">已在本地暂存</span>{/if}
