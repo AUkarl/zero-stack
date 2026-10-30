@@ -25,6 +25,10 @@ const KNOWN_KEYS = [
   'author',
   'toc',
   'math',
+  /** 只通过链接访问的页面：build / sitemap / robots 三件一起由「隐藏」开关写 */
+  'build',
+  'sitemap',
+  'robots',
 ] as const;
 
 const KNOWN = new Set<string>(KNOWN_KEYS);
@@ -60,6 +64,8 @@ export interface PostForm {
   author: string;
   toc: boolean;
   math: boolean;
+  /** 不在列表 / RSS / sitemap 里出现，只能通过链接访问（build.list=never） */
+  hidden: boolean;
 }
 
 export function emptyForm(): PostForm {
@@ -79,6 +85,7 @@ export function emptyForm(): PostForm {
     author: '',
     toc: true,
     math: false,
+    hidden: false,
   };
 }
 
@@ -213,6 +220,8 @@ export function formFromDoc(doc: FrontDoc): PostForm {
     author: scalar(doc, 'author'),
     toc: bool(doc, 'toc', true),
     math: bool(doc, 'math', false),
+    /* Hugo 0.145 起 _build 改名为 build；两种写法都认 */
+    hidden: (scalar(doc, 'build.list') || scalar(doc, '_build.list')) === 'never',
   };
 }
 
@@ -249,9 +258,26 @@ export function frontFromForm(f: PostForm, doc: FrontDoc): string {
   push('toc', f.toc ? 'true' : 'false');
   push('math', f.math ? 'true' : 'false');
 
+  /* 「隐藏」开关独占这三件：勾上就写成「建而不列」（只通过链接访问），
+     取消就一个都不写。以前它们躺在 extras 里，而 extras 的回写只拼了 `键: 值`、
+     没拼嵌套子行 —— 后台一保存，build/sitemap 就变成空键，文章又回到列表里。 */
+  if (f.hidden) {
+    lines.push('build:', '  list: never', '  render: always');
+    lines.push('sitemap:', '  disable: true');
+    push('robots', '"noindex, nofollow"');
+  }
+
   for (const e of doc.extras) {
+    /* 这三件已经由 hidden 统一管了；旧文件里残留的写法不再原样带回来，免得两份打架 */
+    if (e.key === 'build' || e.key === 'sitemap' || e.key === 'robots' || e.key === '_build') continue;
     if (e.items) {
       pushList(e.key, e.items);
+      continue;
+    }
+    if (e.block) {
+      /* 嵌套表（menus / outputs / 自己加的段落）：键头 + 原始缩进行一起写回 */
+      lines.push(`${e.key}:`);
+      for (const b of e.block) lines.push(b);
       continue;
     }
     push(e.key, e.value);

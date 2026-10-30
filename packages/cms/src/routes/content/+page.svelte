@@ -778,6 +778,10 @@
             <input type="checkbox" bind:checked={form.pinned} />
             <span>置顶（首页精选排在前）</span>
           </label>
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.hidden} />
+            <span>不在列表 / RSS / sitemap 里出现（只通过链接访问，如隐私政策）</span>
+          </label>
           <label class="wgt">
             weight
             <input
