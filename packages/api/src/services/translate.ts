@@ -179,7 +179,14 @@ export async function translateStatus(env: Env): Promise<TranslateStatus> {
   const preset = PRESET_MAP.get(raw);
 
   if (!preset) {
-    return { provider: 'none', model: cfgModel, ready: false, hint: `未知的翻译服务 ${raw}`, family: 'none', needsKey: false };
+    return {
+      provider: 'none',
+      model: cfgModel,
+      ready: false,
+      hint: `原来的翻译服务 ${raw} 已下线或拼写有误：到「设置 → 机器翻译」重新选一个`,
+      family: 'none',
+      needsKey: false,
+    };
   }
 
   const base = { provider: preset.kind, family: preset.family, needsKey: preset.needsKey };
