@@ -667,7 +667,7 @@
     <input type="checkbox" bind:checked={notifySubscribers} />
     <span>发布后群发订阅</span>
   </label>
-  <span class="muted small">勾选后本次保存会请求后端向已确认订阅者推送本文（notifySubscribers）。</span>
+  <span class="muted small">勾选后本次保存会推送给已确认的订阅者。</span>
   {#if file}<code class="path" title={file}>{file}</code>{/if}
 </div>
 
@@ -683,8 +683,7 @@
       <button class="primary" onclick={newPost}>创建</button>
     </div>
     <p class="muted">
-      将生成 {pathPreview} 并打开结构化表单。文件名留空时按「发布那天 + 当天序号」自动取（与读者投稿那条完全一致），
-      填了就用填的。文章页只写 posts 目录，时刻请在「时刻」页发布。
+      将生成 {pathPreview}。文件名留空时按「发布日 + 序号」自动取；文章页只写 posts 目录，时刻请在「时刻」页发布。
     </p>
   </div>
 {/if}
