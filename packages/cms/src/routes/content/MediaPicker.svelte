@@ -199,13 +199,19 @@
     if (e.key === 'Escape') open = false;
   }
 
+  /** 弹层焦点：打开时把焦点移进来，关闭还回原来的按钮；键盘用户不用从头 Tab */
+  let box = $state<HTMLDivElement | null>(null);
+
   $effect(() => {
     if (!open) return;
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    queueMicrotask(() => box?.focus());
     void loadMediaBases();
     void (async () => {
       await loadBuckets();
       await loadObjects(true);
     })();
+    return () => prev?.focus();
   });
 </script>
 
@@ -213,6 +219,7 @@
   <div class="mask" role="presentation" onclick={() => (open = false)} onkeydown={onKeydown}>
     <div
       class="box card"
+      bind:this={box}
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -234,7 +241,7 @@
           </select>
         </label>
         <input class="pfx" placeholder="前缀目录，如 uploads/" bind:value={prefix} />
-        <input placeholder="按文件名筛选" bind:value={q} />
+        <input placeholder="按文件名筛选" aria-label="按文件名筛选" bind:value={q} />
         <button class="sm" onclick={() => void loadObjects(true)} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
         <button class="sm" onclick={pickLocal} disabled={uploading}>{uploading ? `上传中 ${uploadPct}%` : '上传本地文件'}</button>
         <input type="file" class="fileinput" aria-label="选择要上传的本地文件" bind:this={fileEl} onchange={onFile} accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon,image/tiff,image/heic,video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo,audio/mpeg,audio/mp4,audio/aac,audio/ogg,audio/wav,audio/flac,application/pdf" />

@@ -765,6 +765,7 @@ async function finishContentWrite(
 ): Promise<{ build: { triggered?: boolean; viaCommit?: boolean; error?: string } | null; buildHealth: Awaited<ReturnType<typeof runLocalBuildCheck>> }> {
   if (!changed) return { build: null, buildHealth: null };
   await kvDelete(env, POSTS_CACHE_KEY);
+  await kvDelete(env, ALL_POSTS_CACHE_KEY);
   /* 提醒信里的标题也缓存过，改了这一篇就得连那一格一起清（见 content-title 的 purgeContentTitleCache） */
   await purgeContentTitleCache(env, paths);
   return finishRepoWrites(env, changed, triggerBuild);
@@ -943,6 +944,7 @@ app.delete('/content/file', async (c) => {
   }
 
   await kvDelete(env, POSTS_CACHE_KEY);
+  await kvDelete(env, ALL_POSTS_CACHE_KEY);
   await purgeContentTitleCache(env, [path]);
   /* 删掉的文件也要把探活结果一起清掉：不然 6 分钟内评论/点赞还会往这张不存在的页面上攒数据 */
   await purgeTargetCache(env);
@@ -1736,9 +1738,12 @@ interface PostOption {
   title: string;
   date: string;
   draft: boolean;
+  /** 只通过链接访问（build.list=never）—— 后台文件列表用它挂「隐藏」徽标 */
+  hidden?: boolean;
 }
 
 const POSTS_CACHE_KEY = 'zero:admin:posts';
+const ALL_POSTS_CACHE_KEY = 'zero:admin:posts:all';
 const POSTS_CACHE_TTL = 300;
 
 
@@ -1754,14 +1759,18 @@ const POSTS_CACHE_TTL = 300;
 app.get('/posts', async (c) => {
   requireAdmin(c);
   const env = c.env;
+  /* 默认只给「能选中发布」的文章（群发、统计那些下拉用）；all=1 是后台文件列表要的：
+     草稿与「只通过链接访问」的页面也得列出来，并带上状态。 */
+  const all = c.req.query('all') === '1';
+  const cacheKey = all ? ALL_POSTS_CACHE_KEY : POSTS_CACHE_KEY;
 
-  const cached = (await kvGet(env, POSTS_CACHE_KEY)) as { data?: PostOption[]; notice?: string } | null;
+  const cached = (await kvGet(env, cacheKey)) as { data?: PostOption[]; notice?: string } | null;
   if (cached && Array.isArray(cached.data)) return Response.json({ data: cached.data, notice: cached.notice ?? null });
 
   const backend = await repoBackend(env);
   if (backend === 'none') {
     const payload = { data: [] as PostOption[], notice: '未配置内容仓库（githubOwner/githubRepo + GITHUB_TOKEN，或本地 GIT_LOCAL_DIR），文章列表为空' };
-    await kvPut(env, POSTS_CACHE_KEY, payload, 60);
+    await kvPut(env, cacheKey, payload, 60);
     return Response.json(payload);
   }
 
@@ -1798,20 +1807,24 @@ app.get('/posts', async (c) => {
     }
     if (!file) continue;
     const { front } = parseFrontMatter(file.content);
-    if (front.draft === true || String(front.draft).toLowerCase() === 'true') continue;
+    const isDraft = front.draft === true || String(front.draft).toLowerCase() === 'true';
+    if (isDraft && !all) continue;
     seenStem.add(stem);
+    const build = front.build as Record<string, unknown> | undefined;
+    const hidden = String(build?.list ?? (front._build as Record<string, unknown> | undefined)?.list ?? '') === 'never';
     items.push({
       id: path,
       path,
       title: frontTitle(front as Record<string, unknown>) || stem,
       date: String(front.date ?? ''),
-      draft: false,
+      draft: isDraft,
+      ...(all ? { hidden } : {}),
     });
   }
 
   items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.path.localeCompare(b.path)));
   const payload = { data: items, notice };
-  await kvPut(env, POSTS_CACHE_KEY, payload, POSTS_CACHE_TTL);
+  await kvPut(env, cacheKey, payload, POSTS_CACHE_TTL);
   return Response.json(payload);
 });
 

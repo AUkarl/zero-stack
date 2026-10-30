@@ -607,11 +607,23 @@
   $effect(() => void load());
 
   const boolValue = (k: string) => (cfg[k] ?? '') === 'true';
+
+  /** 设置项搜索：按键名或标签过滤；有搜索词时各组自动展开、只留命中的字段 */
+  let q = $state('');
+  const matchField = (f: { key: string; label: string }) => {
+    const k = q.trim().toLowerCase();
+    return !k || (f.label + ' ' + f.key).toLowerCase().includes(k);
+  };
+  const groupHasMatch = (g: Group) => {
+    const list = g.sections ? g.sections.flatMap((s) => sectionFields(g, s)) : g.fields;
+    return list.some(matchField);
+  };
 </script>
 
 <div class="row spread head">
   <h2>站点设置</h2>
   <div class="row">
+    <input class="cfgq" type="search" placeholder="搜索设置项" bind:value={q} aria-label="搜索设置项" />
     <span class="muted small">{changed.length ? `${changed.length} 项未保存` : '全部已保存'}</span>
     <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '读取中…' : '重新读取'}</button>
     <button class="primary" onclick={() => void save()} disabled={saving || !changed.length}>
@@ -622,6 +634,12 @@
 
 {#if error}<p class="err">{error}</p>{/if}
 {#if notice}<p class="ok">{notice}</p>{/if}
+{#if changed.length}
+  <div class="savebar" role="status">
+    <span>{changed.length} 项未保存</span>
+    <button class="primary" onclick={() => void save()} disabled={saving}>{saving ? '保存中…' : '保存修改'}</button>
+  </div>
+{/if}
 
 {#snippet fieldList(list: Field[])}
   <div class="fields">
@@ -740,12 +758,13 @@
 {/snippet}
 
 {#each GROUPS as g (g.title)}
+  {#if !q.trim() || groupHasMatch(g)}
   <section class="card group">
     <button class="group-head" onclick={() => (openGroup = openGroup === g.title ? null : g.title)}>
       <span>{g.title}</span>
-      <span class="muted small">{openGroup === g.title ? '收起' : '展开'}</span>
+      <span class="muted small">{openGroup === g.title || q.trim() ? '收起' : '展开'}</span>
     </button>
-    {#if openGroup === g.title}
+    {#if openGroup === g.title || q.trim()}
       {#if g.desc}<p class="muted small desc">{g.desc}</p>{/if}
       {#if g.title === '邮件模板'}
         <div class="presets">
@@ -773,7 +792,7 @@
             {#if s.test}
               {@render testSend()}
             {:else}
-              {@render fieldList(sectionFields(g, s))}
+              {@render fieldList(sectionFields(g, s).filter(matchField))}
               {#if s.presets}
                 <div class="presets">
                   <span class="muted small">常用 SMTP（只填服务器与端口，点一下就行）：</span>
@@ -786,10 +805,11 @@
           </div>
         {/each}
       {:else}
-        {@render fieldList(g.fields)}
+        {@render fieldList(g.fields.filter(matchField))}
       {/if}
     {/if}
   </section>
+  {/if}
 {/each}
 
 <p class="muted small foot">修改后立即生效（配置缓存 30 秒内刷新）；前台需重新构建的项以 Hugo 参数为准。</p>
@@ -797,6 +817,27 @@
 <style>
   .head {
     margin-bottom: 0.7rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .cfgq {
+    width: 12rem;
+  }
+  .savebar {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 1.1rem;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.55rem 0.7rem 0.55rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    font-size: 0.84rem;
   }
   .group {
     margin-bottom: 0.6rem;

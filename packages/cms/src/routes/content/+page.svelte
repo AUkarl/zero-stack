@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { beforeNavigate } from '$app/navigation';
   import { get, post, del, purgeNote, healthBroken, type BuildHealth, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { splitFrontMatter } from '#lib/markdown';
@@ -65,6 +66,28 @@
   });
   $effect(() => {
     if (hydrated) saveDrafts(drafts);
+  });
+
+  async function loadPostMeta() {
+    try {
+      const d = await get<{ data: { path: string; title?: string; draft?: boolean; hidden?: boolean }[] }>('/api/admin/posts?all=1');
+      const map: Record<string, PostMeta> = {};
+      for (const p of d.data ?? []) map[p.path] = { title: p.title ?? '', draft: Boolean(p.draft), hidden: Boolean(p.hidden) };
+      postMeta = map;
+    } catch {
+      postMeta = {};
+    }
+  }
+
+  /** 过滤后的文件列表：只过滤文件，目录一律保留（不然搜着搜着连文件夹都没了） */
+  const shownEntries = $derived.by(() => {
+    const q = fileQuery.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter((e) => {
+      if (e.type === 'dir') return true;
+      const meta = postMeta[e.path];
+      return (e.name + ' ' + e.path + ' ' + (meta?.title ?? '')).toLowerCase().includes(q);
+    });
   });
 
   const queued = $derived(drafts.length);
@@ -162,6 +185,7 @@
       const h = d.data.buildHealth;
       if (healthBroken(h)) buildBroken = { errors: h.errors ?? [], note: h.note ?? '' };
       drafts = drafts.filter((x) => !okPaths.has(x.path));
+      void loadPostMeta();
       // 正在编辑的这篇推上去了：把基准与 sha 对齐，否则会一直显示未保存 / 下次必冲突
       const mine = d.data.results.find((r) => r.ok && r.path === file);
       if (mine) {
@@ -235,6 +259,11 @@
   let showNew = $state(false);
   /** 左栏目录：打开一篇文章后自动收起，把宽度让给编辑区；顶部「目录」可以再展开 */
   let listOpen = $state(true);
+  /** 文件列表的过滤词：文件名、路径、标题都能搜 */
+  let fileQuery = $state('');
+  /** 每篇文章的状态（草稿 / 隐藏），来自 /api/admin/posts；取不到就只有文件名可看 */
+  type PostMeta = { title: string; draft: boolean; hidden: boolean };
+  let postMeta = $state<Record<string, PostMeta>>({});
   let newTitle = $state('');
   let newSlug = $state('');
   let newDir = $state('content/zh/posts');
@@ -287,6 +316,20 @@
   }
 
   /** 当前活着的正文框：优先按 id 取（不依赖「先点过正文」才有的引用），拿不到才退回上一步的位置 */
+  /* 没存进仓库的改动，离开就没了：关标签页 / 刷新时让浏览器拦一下，站内跳转再问一句 */
+  $effect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  });
+  beforeNavigate((nav) => {
+    if (dirty && !confirm('这篇文章还有没保存的改动，确定离开？')) nav.cancel();
+  });
+
   function bodyArea(): HTMLTextAreaElement | null {
     const el = document.getElementById('bodyEditor');
     if (el instanceof HTMLTextAreaElement && el.isConnected) return el;
@@ -532,6 +575,7 @@
     }
     newDir = postsDirCfg || `${contentDir}/zh/posts`;
     await browse(contentDir);
+    void loadPostMeta();
     void loadTranslate();
   }
 
@@ -598,15 +642,17 @@
 </script>
 
 <div class="row spread head">
-  <h2>文章</h2>
+  <div class="row headleft">
+    <h2>文章</h2>
+    <button class="ghost sm" onclick={() => (listOpen = !listOpen)} aria-expanded={listOpen} title="展开 / 收起左侧目录">目录</button>
+    {#if file}<code class="path" title={file}>{file}</code>{/if}
+  </div>
   <div class="row">
-    <button onclick={() => (showNew = !showNew)}>＋ 新文章</button>
-    <button onclick={() => void browse(dir)} disabled={loading}>{loading ? '读取中…' : '刷新目录'}</button>
-    <button class="ghost" onclick={() => (listOpen = !listOpen)} aria-expanded={listOpen} title="展开 / 收起左侧目录">目录</button>
+    <button class="ghost" onclick={() => (showNew = !showNew)}>＋ 新文章</button>
     <button class="ghost" onclick={() => (showDrafts = !showDrafts)} aria-expanded={showDrafts}>
       本地暂存{queued ? ` ${queued}` : ''}
     </button>
-    {#if !queued && dirty}<button class="primary" onclick={saveLocal}>保存本地</button>{/if}
+    <button class="ghost sm" onclick={() => void browse(dir)} disabled={loading} title="刷新目录">{loading ? '…' : '⟳'}</button>
     <button class="primary" onclick={() => void pushToGit()} disabled={pushing || !pushTargets.length} title="把本地暂存的文章一次全部推送到仓库；没有暂存时只推送正在编辑的这一篇">
       {pushing ? '推送中…' : queued ? `保存到 Git（${queued}）` : '保存到 Git'}
     </button>
@@ -668,7 +714,6 @@
     <span>发布后群发订阅</span>
   </label>
   <span class="muted small">勾选后本次保存会推送给已确认的订阅者。</span>
-  {#if file}<code class="path" title={file}>{file}</code>{/if}
 </div>
 
 {#if showNew}
@@ -704,17 +749,20 @@
 
 <div class="split" class:list-collapsed={!listOpen}>
   <div class="card files">
+    <input class="fileq" type="search" placeholder="搜索标题 / 文件名" bind:value={fileQuery} aria-label="搜索文章" />
     <div class="crumbs muted">
       {#each crumbs as c, i}
         {#if i > 0} / {/if}
         <button class="crumb" onclick={() => void browse(crumbs.slice(0, i + 1).join('/'))}>{c}</button>
       {/each}
     </div>
-    {#if !entries.length && !loading}<p class="muted">目录为空</p>{/if}
-    {#each entries as e (e.path)}
+    {#if !shownEntries.length && !loading}<p class="muted">{fileQuery ? '没有匹配的文件' : '目录为空'}</p>{/if}
+    {#each shownEntries as e (e.path)}
       <button class="entry" class:active={file === e.path} onclick={() => void openFile(e)}>
         <span>{e.type === 'dir' ? '📁' : e.name.endsWith('.md') ? '📄' : '🗎'}</span>
         <span class="nm">{e.name}</span>
+        {#if postMeta[e.path]?.draft}<span class="badge">草稿</span>{/if}
+        {#if postMeta[e.path]?.hidden}<span class="badge hid">隐藏</span>{/if}
         {#if e.size}<span class="sz">{(e.size / 1024).toFixed(1)}KB</span>{/if}
       </button>
     {/each}
@@ -724,12 +772,12 @@
     {#if file}
       <div class="card pane">
         <div class="row spread">
-          <span class="muted small">{notice || '结构化编辑：「保存本地」只存这台浏览器，右上角「保存到 Git」才进仓库'}</span>
+          <span class="muted small">「存草稿」只进这台浏览器；右上角「保存到 Git」才会写进仓库</span>
           <div class="row">
             {#if dirty}<span class="warn">未保存</span>{/if}
             {#if draftOf(drafts, file)}<span class="muted small">已在本地暂存</span>{/if}
-            <button class="sm danger" onclick={removeFile}>删除</button>
-            <button class="sm primary" onclick={saveLocal} disabled={!file}>保存本地</button>
+            <button class="sm" onclick={saveLocal} disabled={!file}>存草稿（仅本机）</button>
+            <button class="sm danger del" onclick={removeFile}>删除</button>
           </div>
         </div>
 
@@ -867,6 +915,7 @@
 
 <MediaPicker bind:open={showCover} title="选择封面图" onpick={(url) => (form.image = url)} />
 <MediaPicker bind:open={showInsertMedia} title="插入媒体" kind="any" onpick={insertMedia} />
+{#if notice}<div class="toast" role="status" aria-live="polite">{notice}</div>{/if}
 
 <style>
   .head {
@@ -891,16 +940,6 @@
     margin-bottom: 0.8rem;
     padding: 0.6rem 0.9rem;
   }
-  .topbar .path {
-    margin-left: auto;
-    font-size: 0.78rem;
-    color: var(--muted);
-    min-width: 0;
-    max-width: 55%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .new {
     margin-bottom: 0.8rem;
   }
@@ -913,6 +952,35 @@
     grid-template-columns: 300px 1fr;
     gap: 0.9rem;
     align-items: start;
+  }
+  .headleft { flex: 1 1 auto; min-width: 0; }
+  .headleft .path { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fileq { margin: 0.1rem 0 0.4rem; width: 100%; }
+  .badge {
+    flex: none;
+    margin-left: 0.25rem;
+    padding: 0 0.3rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    font-size: 0.66rem;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .badge.hid { border-color: #d6a35c; color: #a9741f; }
+  .del { margin-left: 0.5rem; }
+  .toast {
+    position: fixed;
+    right: 1.2rem;
+    bottom: 1.2rem;
+    z-index: 60;
+    max-width: min(32rem, 80vw);
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    background: #1f2a24;
+    color: #f2f5f3;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   }
   /* 目录收起：编辑区吃满整行 */
   .split.list-collapsed {
