@@ -68,10 +68,10 @@
     loading = true;
     error = '';
     try {
-      const d = await get<{ data: { total: number; data: Row[] } }>(
+      const d = await get<{ data: { total: number; data: Row[]; items?: Row[] } }>(
         `/api/admin/users${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''}`,
       );
-      rows = d.data.data;
+      rows = d.data.items ?? d.data.data;
       total = d.data.total;
     } catch (e) {
       error = e instanceof Error ? e.message : '读取失败';

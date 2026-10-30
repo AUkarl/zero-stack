@@ -1,6 +1,6 @@
 <script lang="ts">
   import { get, healthWarn, patch, post, put, type BuildHealth } from '#lib/api';
-  import { session } from '#lib/session.svelte';
+  import { assetUrl, session } from '#lib/session.svelte';
   import MediaPicker from '../content/MediaPicker.svelte';
   import { EP, LOGIN_POLICIES, POLICY_LABELS, errText } from './endpoints';
 
@@ -572,7 +572,7 @@
   <h3>身份</h3>
   {#if sec || profile}
     <div class="row idrow">
-      {#if savedImage}<img class="av" src={savedImage} alt="头像" />{/if}
+      {#if savedImage}<img class="av" src={assetUrl(savedImage) || savedImage} alt="头像" />{/if}
       <div>
         <p class="who">{profile?.name || sec?.name || '（未设置昵称）'}</p>
         <p class="muted small nowrap">
@@ -630,7 +630,7 @@
     </div>
     <div class="row">
       <button class="sm" onclick={() => (showAvatar = true)}>从媒体库选头像</button>
-      {#if image}<img class="av" src={image} alt="头像预览" />{/if}
+      {#if image}<img class="av" src={assetUrl(image) || image} alt="头像预览" />{/if}
       {#if savedImage && savedImage !== image.trim()}<span class="muted small">已入库头像：<code>{savedImage}</code></span>{/if}
       <button class="primary" onclick={() => void saveProfile()} disabled={busy === 'profile'}>
         {busy === 'profile' ? '保存中…' : '保存资料'}
@@ -679,9 +679,9 @@
     </div>
     <div class="row">
       <button class="sm" onclick={() => (authorShowAvatar = true)}>从媒体库选头像</button>
-      {#if authorAvatar}<img class="av" src={authorAvatar} alt="作者头像预览" />{/if}
+      {#if authorAvatar}<img class="av" src={assetUrl(authorAvatar) || authorAvatar} alt="作者头像预览" />{/if}
       {#each authorDonate.filter(Boolean) as url (url)}
-        {#if /\.(png|jpe?g|webp|avif|gif)$/i.test(url)}<img class="av" src={url} alt="赞赏码预览" />{/if}
+        {#if /\.(png|jpe?g|webp|avif|gif)$/i.test(url)}<img class="av" src={assetUrl(url) || url} alt="赞赏码预览" />{/if}
       {/each}
       <button class="primary" onclick={() => void saveAuthor()} disabled={authorSaving}>
         {authorSaving ? '保存中…' : '保存作者资料'}

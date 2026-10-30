@@ -29,6 +29,14 @@ export function ok<T>(data: T): Response {
  * `inside` 给「本来就是个对象」的旧形状（`{total,data}` / `{objects}`）里也补上 `items`，
  * 两种取法都指向同一份数组。
  */
+/**
+ * 列表口的唯一出口。读侧口径（新代码一律照这条，别再各挑一份）：
+ *   · 管理列表页 → 读顶层 `items` 与 `total`；
+ *   · `data.data`（用户列表）与 `data.objects`（媒体列表）只是历史别名，
+ *     现有页面还依赖它们，所以不能删 —— 删了就是后台白屏，新代码不要读这两个键。
+ * 选择器类的口（`/api/admin/posts`、`/api/admin/invites`、群发任务列表）走 `ok` 回裸数组，
+ * 它们没有分页也没有总数，不套这一层。
+ */
 export function okRows<T>(rows: T[], inside?: Record<string, unknown> | null): Response {
   /* 顶层 total：调用点自己给了总数（比如媒体列表按 cap 截过）就以它为准，否则等于本次行数 */
   const total = typeof inside?.total === 'number' ? inside.total : rows.length;

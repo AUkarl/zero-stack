@@ -1,4 +1,4 @@
-import { get, siteOf } from './api';
+import { assetSrc, get, siteOf } from './api';
 
 export interface AdminUser {
   id: string;
@@ -46,4 +46,9 @@ export const session = new CmsSession();
 /** 前台页面的完整地址；siteUrl 没配时返回空串，调用方要降级成纯文本。时刻的挂载键在 siteOf 里换成锚点 */
 export function frontUrl(path: string): string {
   return siteOf(session.site, path);
+}
+
+/** 后台预览图片的地址（站内相对路径拼上站点域名）；见 api.ts 里 assetSrc 的说明 */
+export function assetUrl(value: string | null | undefined): string {
+  return assetSrc(session.site, value);
 }

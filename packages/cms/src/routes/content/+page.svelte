@@ -2,7 +2,7 @@
   import { get, post, del, purgeNote, healthBroken, type BuildHealth, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { splitFrontMatter } from '#lib/markdown';
-  import { frontUrl } from '#lib/session.svelte';
+  import { assetUrl, frontUrl } from '#lib/session.svelte';
   import MediaPicker from './MediaPicker.svelte';
   import ShortcodeBar from './ShortcodeBar.svelte';
   import type { Shortcode } from './_shortcodes';
@@ -766,7 +766,7 @@
             <button class="sm" onclick={() => (showCover = true)}>从媒体库选</button>
             {#if form.image}<button class="sm ghost" onclick={() => (form.image = '')}>清除</button>{/if}
           </div>
-          {#if form.image}<img class="cover" src={form.image} alt="封面预览" loading="lazy" />{/if}
+          {#if form.image}<img class="cover" src={assetUrl(form.image) || form.image} alt="封面预览" loading="lazy" />{/if}
         </div>
 
         <div class="row toggles">

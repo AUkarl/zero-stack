@@ -336,6 +336,61 @@ function chunkUrl(chunk: string[]): string {
 }
 
 /**
+ * 按给定顺序重排两段里的条目块（后台「友链 → 保存顺序」用）。
+ *
+ * 为什么需要这一手：前台那两页是 hugo 构建期按 `data/links.yaml` 的**段落顺序**渲染的，
+ * 而排序这条路以前只改 D1 的 sortOrder、不碰文件 —— 后台列表自己按 sortOrder 排，
+ * 于是界面上看着挪好了，站点上一个字没动（实测：两次相反的排序，文件与 HTML 完全一致）。
+ *
+ * 做法是「整块搬、不重排字段」：条目块连着它后面的空行与注释一起走，段头之前的说明、
+ * 段尾剩下的内容都留在原位，所以手写在文件里的注释与条目不会被改写或丢掉。
+ * 没在 order 里的条目（比如手写的、或本次没动的）排到最后，彼此保持原顺序。
+ */
+export function sortFriendBlocks(text: string, order: Map<string, number>): { text: string; moved: number } {
+  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  /** 调用方给的是库里存的原始网址，文件里的写法可能多个斜杠 / www / 大写 —— 两边都规范化之后再比 */
+  const wanted = new Map<string, number>();
+  for (const [u, n] of order) wanted.set(normalizeFriendUrl(u), n);
+  const itemStart = (l: string) => /^\s*-\s+[A-Za-z_][\w-]*\s*:/.test(l);
+  let moved = 0;
+  /* 从后往前搬，前面那些段的行号才不会因为这里 splice 而错位 */
+  for (const key of [...SECTION_KEYS].reverse()) {
+    const block = blockOf(lines, key);
+    if (!block) continue;
+    const bounds: number[] = [];
+    for (let i = block.start + 1; i < block.end; i++) if (itemStart(lines[i]!)) bounds.push(i);
+    if (bounds.length < 2) continue;
+    /* 条目上方紧挨着的注释 / 空行算这一条自己的头（这份文件是允许手写的，
+       把「这条是后加的」这种说明甩到别的条目下面，比丢注释更难查） */
+    const starts = bounds.map((b) => {
+      let s = b;
+      while (s - 1 > block.start && /^\s*(#|$)/.test(lines[s - 1]!)) s--;
+      return s;
+    });
+    for (let i = 0; i < starts.length - 1; i++) if (starts[i]! >= starts[i + 1]!) starts[i] = bounds[i]!;
+    const chunks: { url: string; from: number; to: number }[] = [];
+    for (let i = 0; i < starts.length; i++) {
+      const from = starts[i]!;
+      /** 最后一块要把它后面的空行 / 注释留给段尾，别一并搬走 */
+      const to = i + 1 < starts.length ? starts[i + 1]! : trimChunkEnd(lines, bounds[i]!, block.end);
+      chunks.push({ url: chunkUrl(lines.slice(from, to)), from, to });
+    }
+    const rank = (c: (typeof chunks)[number], i: number) => (wanted.has(c.url) ? wanted.get(c.url)! : Number.MAX_SAFE_INTEGER - (chunks.length - i));
+    const sorted = chunks.map((c, i) => ({ c, i, r: rank(c, i) })).sort((a, b) => a.r - b.r || a.i - b.i);
+    if (sorted.every((s, i) => s.i === i)) continue;
+    const flat = sorted.map((s) => lines.slice(s.c.from, s.c.to)).flat();
+    const spanFrom = chunks[0]!.from;
+    const spanTo = chunks[chunks.length - 1]!.to;
+    /** 只做置换：行数变了就说明切块切错了，宁可不搬也不能把数据文件写坏 */
+    if (flat.length !== spanTo - spanFrom) continue;
+    lines.splice(spanFrom, spanTo - spanFrom, ...flat);
+    moved += flat.length;
+  }
+  return { text: lines.join(eol), moved };
+}
+
+/**
  * 语法体检：只认「Hugo（go-yaml）一定会拒绝」的那几种写法，宁可放过也不要误拒。
  *
  * 为什么要有这一份：后台「前端管理 → 主题配置文件」能把 data/links.yaml 整份覆盖成任意文本，

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { del, fmtDate, get, healthWarn, mailNote, patch, post, timeAgo, type BuildHealth } from '#lib/api';
+  import { assetUrl } from '#lib/session.svelte';
 
   type Kind = 'friend' | 'alliance';
   const KIND_LABEL: Record<Kind, string> = { friend: '友链', alliance: '站点联盟' };
@@ -509,7 +510,7 @@
       {#each items as f, i (f.id)}
         <div class="frow">
           <div class="fmain">
-            {#if f.avatar}<img class="av" src={f.avatar} alt="" loading="lazy" />{/if}
+            {#if f.avatar}<img class="av" src={assetUrl(f.avatar) || f.avatar} alt="" loading="lazy" />{/if}
             <div class="ftext">
               <a class="flink" href={f.url} target="_blank" rel="noreferrer noopener" title={f.url}>{f.name}</a>
               {#if f.description}<p class="muted small desc" title={f.description}>{f.description}</p>{/if}

@@ -92,6 +92,26 @@ export function siteOf(site: string | null | undefined, path: string): string {
 }
 
 /**
+ * 后台预览「可能是站内路径」的图片（头像、封面、logo、赞赏码）一律走这一个函数。
+ *
+ * 这些字段本来就允许写成 `img/avatar.webp` 这种站内相对路径 —— 出厂的 `data/site.json`
+ * 就这么写（`landingImage: "img/bj2.png"`），输入框的提示也是这么教的。直接把原值塞进
+ * `<img src>` 会拿**后台自己的域名**去要这张图，结果是 404 裂图：站点上明明是好的。
+ * 拼不出绝对地址（没配站点地址）时回空串，调用方不渲染 `<img>`，别留一个破图占位。
+ *
+ * 注意不复用 `siteOf`：那个函数会把 `/moments/<名>/` 换成时间线锚点，那是给人点的链接口径，
+ * 图片路径套上去就变成 `/moments/#moment-xxx.png`。
+ */
+export function assetSrc(site: string | null | undefined, value: string | null | undefined): string {
+  const v = (value ?? '').trim();
+  if (!v) return '';
+  if (/^(https?:)?\/\//i.test(v) || /^(data|blob):/i.test(v)) return v;
+  const base = (site ?? '').replace(/\/+$/, '');
+  if (!base) return '';
+  return base + (v.startsWith('/') ? v : '/' + v);
+}
+
+/**
  * 时刻没有详情页了：接口里的 `/moments/<文件名>/` 只是评论/点赞的挂载键，
  * 展示成链接时要指向时刻时间线上那一条的锚点。其它路径原样返回。
  * 已经是锚点形式的路径匹配不上，重复调用不会套两层。

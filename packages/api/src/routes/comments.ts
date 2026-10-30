@@ -613,6 +613,19 @@ app.post('/', async (c) => {
   if (!parsed.success) fail(400, `参数有误，正文长度需在 ${MAX_CONTENT} 字以内`);
   const body = parsed.data;
 
+  /* 评论区换成别的服务商（waline / twikoo / giscus / artalk）之后，这套写入口要关掉。
+     以前只看 commentEnabled：切走之后接口照样收、照样进 D1、照样给站长发提醒，
+     而前台 loader.html 已经换成另一套组件 —— 攒下来的是一批谁都看不见的幽灵评论，
+     后台的待审角标与评论数还一直涨。只挡「新建」这一条，改 / 删 / 读都留着，
+     免得站主只是临时切走看看，结果旧评论连自己都删不掉。
+     时刻的评论由 momentCommentProvider 单独管，所以按这一页是哪一种去判。 */
+  const gateSlug = canonSlug(body.postSlug);
+  const providerKey = /^moments\//.test(gateSlug.replace(/^\/+/, '')) ? 'momentCommentProvider' : 'commentProvider';
+  const provider = (((await getConfig(c.env, providerKey)) ?? 'zero') + '').trim().toLowerCase();
+  if (provider && provider !== 'zero') {
+    fail(409, `本站${gateSlug.startsWith('moments') ? '时刻' : '文章'}评论区当前由「${provider}」托管，这套接口不再接收新评论；要换回自带评论，在后台「设置 → 评论」把「评论服务商」选回 zero。已有的评论仍然可以查看、修改与删除。`);
+  }
+
   const db = createDb(env);
   const user = c.get('user') ?? null;
 

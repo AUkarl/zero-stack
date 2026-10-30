@@ -15,7 +15,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { createDb } from '../db/client';
 import { friendPosts, friends } from '../db/schema';
 import { writeAudit } from './audit';
-import { addFriendToLinksFile, linksFileHas, removeFriendFromLinksFile, updateFriendInLinksFile, type LinksFileResult } from './friends-file';
+import { addFriendToLinksFile, linksFileHas, removeFriendFromLinksFile, sortFriendsInLinksFile, updateFriendInLinksFile, type LinksFileResult } from './friends-file';
 import { normalizeFriendUrl, type NewFriend } from './links-yaml';
 import { finishRepoWrites } from './git';
 import { newId } from '../lib/crypto';
@@ -322,14 +322,21 @@ export async function reorderFriends(env: Env, admin: FriendActor, body: unknown
   /* 本函数的注释写着「一次提交同时完成换组与改位置」，可以前只改库：
      D1 里这条变成联盟了，data/links.yaml 里它还在 friends 段 —— 前台「站点联盟」是构建期从那份文件
      并进来的，于是界面上动完了、站点上没动，又是一次「两份各管一半」。
-     新增 / 修改 / 删除三条都同步文件，唯独排序这条路漏了，现在补上（同一段落里的顺序变化
-     前台不读文件，不必动它，所以只有真换组才写）。 */
+     以前这里只处理「真换了组」的那几条，同一段落里的顺序变化被当成「前台不读文件」而跳过了 ——
+     那个前提是错的：主题就是按 links.yaml 的段落顺序渲染（layouts/links/list.html 里 range $friends），
+     而后台列表按 sortOrder 排。于是「↑↓ 调同组顺序 + 保存顺序」在界面上生效、站点上一个字没动。
+     现在换组与排序都落进同一次文件写入的收尾（applyLinksFile 里带构建体检）。 */
   let linksFile: LinksFileResult | null = null;
   for (const m of moved) {
-    linksFile = await applyLinksFile(
-      env,
-      await updateFriendInLinksFile(env, m.row.url, toFileEntry({ ...m.row, kind: m.kind })),
-    );
+    linksFile = await applyLinksFile(env, await updateFriendInLinksFile(env, m.row.url, toFileEntry({ ...m.row, kind: m.kind })));
+  }
+  if (updated.length) {
+    const order = new Map<string, number>();
+    for (const u of updated) {
+      const url = known.get(u.id)?.url;
+      if (url) order.set(normalizeFriendUrl(url), u.sortOrder);
+    }
+    linksFile = await applyLinksFile(env, await sortFriendsInLinksFile(env, order));
   }
 
   await writeAudit(env, {

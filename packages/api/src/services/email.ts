@@ -75,6 +75,16 @@ export async function mailQuotaCheck(env: Env, count: number): Promise<{ ok: boo
 }
 
 /**
+ * 记进 email_logs 的主题要过一道脱敏：主题是后台「发信日志」页一眼就能看到的东西，
+ * 而验证码这类一次性口令以前会被原样写进去（连 SMTP 主题一起），任何能看到后台日志的人
+ * 就拿到了那 10 分钟内有效的码。发送用的主题不动（那是收件人该看的），只脱敏入库这一份。
+ * 规则放宽到 6~8 位纯数字：验证码位数以后要改也不用记得回来动这里。
+ */
+export function maskSecretInSubject(subject: string): string {
+  return String(subject ?? '').replace(/\b\d{6,8}\b/g, '******');
+}
+
+/**
  * 发一封邮件，并在 email_logs 里留一行。
  *
  * 记账放在这层而不是队列消费者里，是因为「库里没记录」和「通知根本没触发」以前完全分不开：
@@ -183,7 +193,7 @@ async function openEmailLog(env: Env, input: SendInput): Promise<string | null> 
       .values({
         id,
         to: input.to,
-        subject: input.subject,
+        subject: maskSecretInSubject(input.subject),
         status: 'queued',
         postId: input.postId ?? null,
         createdAt: Math.floor(Date.now() / 1000),

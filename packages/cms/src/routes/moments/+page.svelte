@@ -2,7 +2,7 @@
   import { get, put, del, purgeNote, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { renderMarkdown, splitFrontMatter } from '#lib/markdown';
-  import { frontUrl } from '#lib/session.svelte';
+  import { assetUrl, frontUrl } from '#lib/session.svelte';
   import MediaPicker from '../content/MediaPicker.svelte';
   import { composeFile, fromDateInput, nowInput, parseFront, toInputDateTime, yq, type FrontDoc } from '../content/_frontmatter';
 
@@ -442,7 +442,7 @@
     <div class="nine">
       {#each images as u, i (u + i)}
         <div class="cell9">
-          <img src={u} alt="" loading="lazy" title={u} />
+          <img src={assetUrl(u) || u} alt="" loading="lazy" title={u} />
           <button class="rm" title="移除这张" onclick={() => removeImage(i)}>✕</button>
         </div>
       {/each}
@@ -556,7 +556,7 @@
     <div class="text">{@html renderMarkdown(m.body, { shortBase: frontUrl('/posts/') || '/posts/' })}</div>
     {#if m.images.length || m.video || m.music || m.link.url}
       <div class="thumbs">
-        {#each m.images as u (u)}<img src={u} alt="" loading="lazy" />{/each}
+        {#each m.images as u (u)}<img src={assetUrl(u) || u} alt="" loading="lazy" />{/each}
         {#if m.video}<span class="badge">▶ 视频</span>{/if}
         {#if m.music}<span class="badge">♪ 音频</span>{/if}
         {#if m.link.url}<span class="badge" title={m.link.url}>◇ {m.link.title || m.link.url}</span>{/if}

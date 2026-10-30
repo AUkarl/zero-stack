@@ -12,7 +12,7 @@
 import { getConfig } from './config';
 import { readFile, repoTarget, writeFile } from './git';
 import type { BuildHealth, RepoTarget } from './repo';
-import { appendFriends, normalizeFriendUrl, parseLinksYaml, removeFriend, replaceFriend, type NewFriend } from './links-yaml';
+import { appendFriends, normalizeFriendUrl, parseLinksYaml, removeFriend, replaceFriend, sortFriendBlocks, type NewFriend } from './links-yaml';
 
 export interface LinksFileResult {
   /** 是否真的提交了一次改动 */
@@ -141,6 +141,18 @@ export async function updateFriendInLinksFile(env: Env, oldUrl: string, entry: N
       return { text: appended.text, note: appended.message ?? '该站点已在数据文件里' };
     }
     return { text: replaced.text, note: null };
+  });
+}
+
+/**
+ * 按 sortOrder 重排数据文件里各段的条目（后台「友链 → 保存顺序」用）。
+ * 前台是 hugo 构建期按文件顺序渲染的，只改库里的 sortOrder 等于什么都没改。
+ */
+export async function sortFriendsInLinksFile(env: Env, order: Map<string, number>): Promise<LinksFileResult> {
+  return patch(env, 'zero-cms: 友链排序', (text) => {
+    if (text === null) return null;
+    const out = sortFriendBlocks(text, order);
+    return out.moved ? { text: out.text, note: null } : null;
   });
 }
 

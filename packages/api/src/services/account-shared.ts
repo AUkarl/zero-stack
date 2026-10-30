@@ -66,9 +66,11 @@ export async function sendEmailOtp(
   });
 
   const siteName = await resolveSiteName(env);
+  /* 主题里不带码：主题会被邮件客户端的列表预览、系统通知栏、中转服务商的日志原样带出来，
+     而正文里本来就有码 —— 以前写「验证码 123456」等于把 10 分钟内有效的口令摊在不打开信的地方。 */
   const sent = await mailer.sendEmail(env, {
     to: email,
-    subject: `【${siteName}】验证码 ${code}`,
+    subject: `【${siteName}】验证码已发送`,
     html: await codeEmailHtml(env, code, EMAIL_OTP_TTL / 60, opts.nickname),
     kind: 'notice',
   });

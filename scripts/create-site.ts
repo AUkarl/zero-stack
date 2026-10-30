@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -1088,7 +1088,7 @@ push 本身就是构建触发器，\`deploy.yml\` 检测不到 secret 时只做�
 ## 本地预览
 
 \`\`\`bash
-git submodule update --init --recursive
+git submodule update --init --recursive   # 主题是直接复制进 themes/zero 的（这座站没有子模块）就跳过这一行
 hugo server -D
 \`\`\`
 
@@ -1105,11 +1105,30 @@ hugo server -D
 
   step('引入 zero-theme 子模块');
   const submodule = `git submodule add ${a.themeRepo} themes/zero`;
+  /**
+   * `--theme-repo` 给的是**本地已有的主题目录**时，直接把它复制进 themes/zero。
+   *
+   * 为什么必须有条复制路：这座站一旦没有 themes/zero，hugo 就是
+   * `ERROR failed to load modules: module "zero" not found`，整站建不出来；
+   * 而以前 `--git=n` 这条组合只打一句「待执行：git submodule add ../zero-theme themes/zero」就继续往下走，
+   * 收尾清单还让人 `git submodule update --init --recursive`（这座站连 .git 都没有），
+   * 补的那条 `git submodule add <本地路径>` 又会被 git 自己的 `transport 'file' is not allowed` 拒掉
+   * —— 三条路都不通，生成完就是个空壳。复制目录是 DEPLOYMENT 里本来就在用的办法，这里只是把它自动化。
+   */
+  const localTheme = resolve(process.cwd(), a.themeRepo);
+  const themeIsLocal = existsSync(localTheme) && statSync(localTheme).isDirectory() && existsSync(resolve(localTheme, 'theme.toml'));
+  if (themeIsLocal) {
+    const themeTarget = resolve(siteDir, 'themes', 'zero');
+    mkdirSync(themeTarget, { recursive: true });
+    const copied = copyTree(localTheme, themeTarget);
+    good(`主题是本地目录，已直接复制进 themes/zero（${copied} 个文件）`);
+    info('注：主题是复制进来的 —— 之后改主题要重新复制一次；想让 CI 也拉得到，就把主题推到自己的 GitHub 仓库，再把 --theme-repo 换成那个 URL');
+  }
   try {
-    if (a.initGit) {
+    if (a.initGit && !themeIsLocal) {
       git(siteDir, 'submodule', 'add', a.themeRepo, 'themes/zero');
       good('子模块已加入 themes/zero');
-    } else {
+    } else if (!themeIsLocal) {
       info(`待执行：${submodule}`);
       submodulePending = true;
     }
@@ -1263,7 +1282,7 @@ hugo server -D
     note(`（子模块还没加成，补：${submodule}，再 git submodule update --init --recursive）`);
   }
   if (!submodulePending && imported === 0) {
-    note('（示例内容这次没进来：先 git submodule update --init --recursive，再重跑一次 pnpm create:site 覆盖生成）');
+    note(themeIsLocal ? '（示例内容这次没进来：主题是复制来的，请重新把主题目录复制一次到 themes/zero，再重跑 create:site 覆盖生成）' : '（示例内容这次没进来：先 git submodule update --init --recursive，再重跑一次 pnpm create:site 覆盖生成）');
   }
   todo('（只有走 Actions 部署才需要）给 Actions 两个 secret：仓库 Settings → Secrets and variables → Actions → New repository secret');
   note('CF_API_TOKEN（要有 Pages 编辑权限的 API Token）、CF_ACCOUNT_ID（Cloudflare 控制台首页右侧那串）');
@@ -1272,8 +1291,15 @@ hugo server -D
   todo(`推 main 会触发首次构建；Pages 项目 ${a.repoName} 由 workflow 自动创建，自定义域名到 Cloudflare Pages → 该项目 → Custom domains 里绑`);
   note('⚠ Pages 若是「直连 Git 构建」，一定要把 Build command 换成下面这条 —— Pages 不拉子模块，照默认 hugo 构建出来的页面没有样式：');
   note(pagesBuildCommand(a));
+  if (themeIsLocal) {
+    note('   ↑ 这条命令在 CI 上用不了：它 clone 的是本机路径 ' + a.themeRepo + '，Actions 的工作目录里没有这个目录。');
+    note('     二选一：① 把主题推到自己的 GitHub 仓库，用那个 URL 重跑 create:site（--theme-repo=https://github.com/你/zero-theme.git）；');
+    note('     ② 或者走生成的 deploy.yml（Actions 构建 + 发布 Pages），那条路不需要这个 Build command。');
+  }
   note(`⚠ 同一页的 Environment variables 里再加一条 HUGO_VERSION = ${HUGO_PIN}（生成的两个 workflow 钉的就是这个版本；不设就用 Pages 平台默认那个，三处版本不一致时线上产物会和你本地看到的对不上）`);
-  note(`本机先看一眼效果：cd ${siteDir} && git submodule update --init --recursive && hugo server -D`);
+  note(themeIsLocal
+    ? `本机先看一眼效果：cd ${siteDir} && hugo server -D（主题已经复制在 themes/zero，这一步不用再拉子模块）`
+    : `本机先看一眼效果：cd ${siteDir} && git submodule update --init --recursive && hugo server -D`);
   todo('让后台写得进这座仓库');
   note(`· zero-stack 的 packages/api/wrangler.jsonc 里 ALLOWED_ORIGINS 加上 ${a.siteUrl}，然后 pnpm deploy:api（不加就是后台一请求就被 CORS 拒掉）`);
   note(`· 后台「设置 → 内容仓库」填 owner=${a.githubUser} / repo=${a.repoName}，并存一个有 contents:write 的 token（密钥只进 worker secret，不进仓库）`);

@@ -55,7 +55,44 @@ req() {
   fi
 }
 
-field() { printf '%s' "$BODY_TEXT" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" | head -1; }
+# json_get <key> — 整包 JSON 从 stdin 喂进来，出来的是那个 key 的字符串/数字值（取不到就给空，由调用方判「跳过」）。
+#
+# 为什么不用 sed：以前这里抠的是 sed -n 's/.*"key":"\([^"]*\)".*/\1/p'，开头那个 .* 是贪婪的，
+# 会把「这个 key 后面的整包内容」一起吞进来 —— 回包里只要有带转义引号的值（出厂的 commentEmojiPacks
+# 就是一串 emoji，值里带双引号），抠出来就是脏的；更怪的是脏不脏还取决于 locale：Git Bash 默认 locale 下
+# 吞一大串，同一行前面加 LC_ALL=C 就正好。站长按 README 跑冒烟看到的那条「头像图床没生效」的红就是这么
+# 来的，不是产品坏。仓库本来就要求 node ≥ 20，所以这里直接让 node 解析。
+json_get() {
+  local key="$1"
+  node -e '
+    let raw = "";
+    process.stdin.on("data", (d) => (raw += d));
+    process.stdin.on("end", () => {
+      let v;
+      try {
+        v = pick(JSON.parse(raw), process.argv[1]);
+      } catch {
+        v = undefined;
+      }
+      if (typeof v === "string" || typeof v === "number") process.stdout.write(String(v));
+    });
+    function pick(o, want) {
+      if (!o || typeof o !== "object") return undefined;
+      for (const k of Object.keys(o)) {
+        const val = o[k];
+        if (k === want && (typeof val === "string" || typeof val === "number")) return val;
+      }
+      for (const k of Object.keys(o)) {
+        const hit = pick(o[k], want);
+        if (hit !== undefined) return hit;
+      }
+      return undefined;
+    }
+  ' "$key"
+}
+
+# 老的 field() 走的是同一条贪婪 sed，一起接到 json_get 上（调用点不变）。
+field() { printf '%s' "$BODY_TEXT" | json_get "$1"; }
 section() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 # 跳过：这条需要脚本拿不到的条件（没后台 Cookie、没配图床），既不算通过也不算失败。
 # 冒烟脚本的目的是「真问题报红」，把没法判定的情形硬算成失败会让人直接忽略整个输出。
@@ -102,9 +139,9 @@ printf '%s' "$SUBMIT_BODY" | grep -qE '"browser":"(Chrome|Firefox|Safari|Edge|Op
 # 后台「头像与媒体」填了 avatarTemplate 才会把模板顶到第一级。
 # 所以匿名模式能验的不变量是「这两档是同一个 hash 的逐级退化」；
 # 拿不到模板就没法判「按站点自己配的图床走」这种情况 —— 那种跳过，不判成失败。
-AVATAR_URL=$(printf '%s' "$SUBMIT_BODY" | sed -n 's/.*"avatar":"\([^"]*\)".*/\1/p' | head -1)
+AVATAR_URL=$(printf '%s' "$SUBMIT_BODY" | json_get avatar)
 AVATAR_MD5=$(printf '%s' "$AVATAR_URL" | sed -n 's|.*/avatar/\([0-9a-f]\{32\}\).*|\1|p')
-GRAVATAR_URL=$(printf '%s' "$SUBMIT_BODY" | sed -n 's/.*"gravatar":"\([^"]*\)".*/\1/p' | head -1)
+GRAVATAR_URL=$(printf '%s' "$SUBMIT_BODY" | json_get gravatar)
 if printf '%s' "$AVATAR_URL" | grep -qE '^https://www\.gravatar\.com/avatar/[0-9a-f]{32}\?' \
   && printf '%s' "$GRAVATAR_URL" | grep -qF "avatar/$AVATAR_MD5" \
   && printf '%s' "$GRAVATAR_URL" | grep -qE '^https://cravatar\.cn/'; then
@@ -112,7 +149,7 @@ if printf '%s' "$AVATAR_URL" | grep -qE '^https://www\.gravatar\.com/avatar/[0-9
 elif [ -n "$ADMIN_COOKIE" ]; then
   # 有后台就读 avatarTemplate：填了就必须以它为准（等于整条链换图床）
   TPL=$(curl -sS --max-time 20 -H "cookie: $ADMIN_COOKIE" -H 'accept: application/json' "$API/api/admin/config" \
-    | sed -n 's/.*"avatarTemplate":"\([^"]*\)".*/\1/p' | head -1)
+    | json_get avatarTemplate)
   TPL_HEAD=$(printf '%s' "$TPL" | sed 's/{.*$//')
   if [ -z "$TPL" ]; then
     skip '邮箱头像走后台配置的图床' "后台没配 avatarTemplate，而这条拿到的不是内置链（avatar=${AVATAR_URL:-空}）"
