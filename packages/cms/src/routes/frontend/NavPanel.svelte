@@ -335,7 +335,7 @@
   .legend .chip.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .item {
     margin-bottom: 0.7rem;
@@ -344,7 +344,7 @@
     gap: 0.55rem;
   }
   .item.orphan {
-    border-color: #fecaca;
+    border-color: var(--bad-border);
   }
   .ih {
     align-items: center;
@@ -440,7 +440,7 @@
     max-width: 320px;
   }
   .badge.bad {
-    background: #fee2e2;
+    background: var(--bad-soft);
     color: var(--bad);
   }
 </style>

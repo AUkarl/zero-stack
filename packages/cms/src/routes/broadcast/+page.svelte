@@ -427,13 +427,13 @@
     margin-top: 0.9rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: #fff;
+    background: var(--panel);
     overflow: hidden;
   }
   .mail-head {
     padding: 0.6rem 0.9rem;
     border-bottom: 1px solid var(--border);
-    background: #fafafa;
+    background: var(--panel-2);
     font-weight: 600;
   }
   .mail-body {

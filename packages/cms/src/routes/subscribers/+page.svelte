@@ -242,7 +242,7 @@
     border: 1px solid var(--accent);
     border-radius: 8px;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   table {
     table-layout: fixed;

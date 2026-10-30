@@ -675,7 +675,7 @@
   .tab.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .tab .n {
     opacity: 0.75;
@@ -779,7 +779,7 @@
     margin-left: 0.3rem;
   }
   .detail td {
-    background: #fafafa;
+    background: var(--panel-2);
   }
   .apply {
     padding: 0.2rem 0 0.4rem;

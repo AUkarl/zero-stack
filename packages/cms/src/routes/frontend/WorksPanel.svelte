@@ -116,7 +116,7 @@
     gap: 0.45rem;
   }
   .wid.noname {
-    border-color: #fcd34d;
+    border-color: var(--bad-border);
   }
   .wh {
     align-items: center;

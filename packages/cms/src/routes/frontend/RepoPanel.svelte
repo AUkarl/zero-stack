@@ -275,7 +275,7 @@
     line-height: 1.75;
   }
   .intro code {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.22rem;
   }
@@ -309,7 +309,7 @@
     gap: 0.5rem;
   }
   .meta code {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.25rem;
   }

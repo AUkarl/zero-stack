@@ -687,8 +687,8 @@
     padding: 0.1rem 0.55rem;
     font-size: 0.78rem;
     border-radius: 999px;
-    background: #fef2f2;
-    border-color: #fecaca;
+    background: var(--bad-soft);
+    border-color: var(--bad-border);
     color: var(--bad);
   }
   .kw input {
@@ -714,12 +714,12 @@
     border: 1px solid var(--border);
   }
   .verdict.bad {
-    background: #fef2f2;
-    border-color: #fecaca;
+    background: var(--bad-soft);
+    border-color: var(--bad-border);
   }
   .verdict.good {
-    background: #f0fdf4;
-    border-color: #bbf7d0;
+    background: var(--good-soft);
+    border-color: var(--good-border);
   }
   .verdict .big {
     font-size: 1.7rem;
@@ -750,7 +750,7 @@
     padding: 0.02rem 0.42rem;
     font-size: 0.7rem;
     border-radius: 999px;
-    background: #eef2ff;
+    background: var(--accent-soft);
     border: 1px solid #c7d2fe;
     color: #3730a3;
     white-space: nowrap;
@@ -758,7 +758,7 @@
   .pat {
     font-size: 0.72rem;
     color: var(--muted);
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.25rem;
     word-break: break-all;
@@ -786,13 +786,13 @@
     white-space: nowrap;
   }
   .pill.good {
-    background: #f0fdf4;
-    border-color: #bbf7d0;
+    background: var(--good-soft);
+    border-color: var(--good-border);
     color: var(--good);
   }
   .pill.bad {
-    background: #fef2f2;
-    border-color: #fecaca;
+    background: var(--bad-soft);
+    border-color: var(--bad-border);
     color: var(--bad);
   }
   .raw {
@@ -801,7 +801,7 @@
   .raw pre {
     margin: 0.3rem 0 0;
     padding: 0.4rem 0.5rem;
-    background: #f8fafc;
+    background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 0.72rem;
@@ -816,7 +816,7 @@
   .queue .on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .clip {
     max-width: 240px;

@@ -19,7 +19,19 @@
     type FrontDoc,
     type PostForm,
   } from './_frontmatter';
-  import { draftOf, formatSavedAt, loadDrafts, removeDraft, saveDrafts, upsertDraft, type Draft } from './_drafts';
+  import {
+    clearLegacyDrafts,
+    deleteDraft,
+    draftOf,
+    fetchDraft,
+    formatSavedAt,
+    legacyDrafts,
+    loadDrafts,
+    saveDraft,
+    upsertDraft,
+    type Draft,
+    type DraftMeta,
+  } from './_drafts';
 
   interface Entry {
     name: string;
@@ -45,10 +57,12 @@
 
   /* ---------------- 本地暂存队列：「保存本地」→ 右上角「保存到 Git」 ---------------- */
 
-  let drafts = $state<Draft[]>([]);
+  /** 草稿箱：服务端（私有 R2）只回元数据，正文在推送 / 打开时按需取 */
+  let drafts = $state<DraftMeta[]>([]);
   let showDrafts = $state(false);
   let pushing = $state(false);
-  let hydrated = false;
+  /** 旧版本存在浏览器里的草稿，提示导入一次 */
+  let legacy = $state<Draft[]>([]);
   /** 推送结果里没成功的部分（冲突 / 失败），列在暂存面板里，改完可以再推 */
   let pushProblems = $state<{ path: string; error: string }[]>([]);
   /**
@@ -58,15 +72,6 @@
    * 线上部署跑不到体检（Worker 起不了子进程），这个状态就一直是 null，界面不会多出一行噪音。
    */
   let buildBroken = $state<{ errors: string[]; note: string } | null>(null);
-
-  // 挂载后才读 localStorage（SSR 阶段没有 window）；之后队列有变动就同步写回
-  $effect(() => {
-    drafts = loadDrafts();
-    hydrated = true;
-  });
-  $effect(() => {
-    if (hydrated) saveDrafts(drafts);
-  });
 
   async function loadPostMeta() {
     try {
@@ -92,8 +97,8 @@
 
   const queued = $derived(drafts.length);
   /** 有队列就推队列；没队列就只推正在编辑的这一篇（含未「保存本地」的当前改动） */
-  const pushTargets = $derived.by(() => {
-    const list = drafts.slice();
+  const pushTargets = $derived.by((): (DraftMeta | Draft)[] => {
+    const list: (DraftMeta | Draft)[] = drafts.slice();
     if (file && dirty) {
       const mine = localDraft();
       if (mine) {
@@ -124,11 +129,35 @@
       sha,
       notifySubscribers,
       savedAt: Date.now(),
+      bytes: body.length,
     };
   }
 
-  /** 保存本地：只写浏览器队列，不发任何请求 */
-  function saveLocal() {
+  /** 把旧版本留在浏览器里的草稿一次性搬进草稿箱，成功后清掉 localStorage 那份 */
+  async function importLegacy() {
+    if (!legacy.length) return;
+    let ok = 0;
+    for (const d of legacy) {
+      try {
+        await saveDraft(d);
+        ok++;
+      } catch {
+        /* 单篇失败就留着，下次再导 */
+      }
+    }
+    try {
+      drafts = await loadDrafts();
+    } catch {
+      /* 列表没刷出来也不影响已导入的 */
+    }
+    legacy = legacy.filter((d) => !drafts.some((x) => x.path === d.path));
+    if (!legacy.length) clearLegacyDrafts();
+    notice = `已导入 ${ok} 篇到草稿箱${legacy.length ? `，还有 ${legacy.length} 篇没导上` : ''}`;
+    setTimeout(() => (notice = ''), 5000);
+  }
+
+  /** 存草稿：写进私有 R2 的草稿箱（同一篇覆盖同一个对象），不碰仓库 */
+  async function saveLocal() {
     if (!file) {
       error = '还没有可暂存的文件：左列点开一篇，或先「新建文章」；若刚才读取报错，见下方错误信息';
       return;
@@ -139,12 +168,19 @@
       return;
     }
     error = '';
-    drafts = upsertDraft(drafts, d);
-    // 本地快照成为新的基准：「未保存」指的是没落盘，落进队列就不算丢改动
+    try {
+      const meta = await saveDraft(d);
+      drafts = upsertDraft(drafts, meta);
+      legacy = legacy.filter((x) => x.path !== d.path);
+    } catch (e) {
+      error = `草稿没存上：${e instanceof Error ? e.message : '网络错误'}`;
+      return;
+    }
+    // 当前内容成为新的基准：「未保存」指的是没进仓库，存进草稿箱就不算丢改动
     baseForm = { ...form };
     baseBody = body;
     doc = parseFront(frontFromForm(form, doc));
-    notice = '已保存到浏览器暂存，点右上角「保存到 Git」才会进仓库';
+    notice = '已存进草稿箱（私有 R2），点右上角「保存到 Git」才会进仓库';
     setTimeout(() => (notice = ''), 4000);
   }
 
@@ -152,7 +188,7 @@
   async function pushToGit() {
     const targets = pushTargets;
     if (!targets.length) {
-      error = '没有待推送的内容：先编辑一篇，或点「保存本地」暂存';
+      error = '没有待推送的内容：先编辑一篇，或点「存草稿」';
       return;
     }
     pushing = true;
@@ -160,6 +196,9 @@
     pushProblems = [];
     buildBroken = null;
     try {
+      /* 草稿箱里只有元数据：推之前把正文取回来（当前正在编辑的那篇就是完整对象，直接用） */
+      const full: Draft[] = [];
+      for (const t of targets) full.push('content' in t ? (t as Draft) : await fetchDraft(t.path));
       const d = await post<{
         data: {
           total: number;
@@ -169,7 +208,7 @@
           buildHealth?: BuildHealth | null;
         };
       }>('/api/admin/content/batch', {
-        files: targets.map((t) => ({
+        files: full.map((t) => ({
           path: t.path,
           front: t.front,
           body: t.body,
@@ -184,6 +223,13 @@
       pushProblems = failed.map((r) => ({ path: r.path, error: r.error ?? '未知原因' }));
       const h = d.data.buildHealth;
       if (healthBroken(h)) buildBroken = { errors: h.errors ?? [], note: h.note ?? '' };
+      for (const p of okPaths) {
+        try {
+          await deleteDraft(p);
+        } catch {
+          /* 推成功了但没删掉：下次还会在草稿箱里，再推一次是幂等的 */
+        }
+      }
       drafts = drafts.filter((x) => !okPaths.has(x.path));
       void loadPostMeta();
       // 正在编辑的这篇推上去了：把基准与 sha 对齐，否则会一直显示未保存 / 下次必冲突
@@ -203,13 +249,18 @@
     }
   }
 
-  function dropDraft(path: string) {
-    drafts = removeDraft(drafts, path);
-    pushProblems = pushProblems.filter((p) => p.path !== path);
+  async function dropDraft(path: string) {
+    try {
+      await deleteDraft(path);
+      drafts = drafts.filter((x) => x.path !== path);
+      pushProblems = pushProblems.filter((p) => p.path !== path);
+    } catch (e) {
+      error = `草稿没删掉：${e instanceof Error ? e.message : '网络错误'}`;
+    }
   }
 
   /** 从队列里打开某一篇：先落好当前这篇的暂存，别把正在编辑的内容丢了 */
-  async function openDraft(d: Draft) {
+  async function openDraft(d: DraftMeta) {
     if (file && dirty) saveLocal();
     try {
       const res = await get<{ data: { exists: boolean; content: string; sha: string } }>(
@@ -225,7 +276,8 @@
       sha = res.data.sha;
       const queuedDraft = draftOf(drafts, d.path);
       if (queuedDraft) {
-        const qp = splitFrontMatter(queuedDraft.content);
+        const full = await fetchDraft(d.path);
+        const qp = splitFrontMatter(full.content);
         doc = parseFront(qp.front);
         form = formFromDoc(doc);
         body = qp.body;
@@ -477,13 +529,16 @@
 
   async function removeFile() {
     const queuedHere = draftOf(drafts, file);
-    const extra = queuedHere ? '\n这篇还在本地暂存里，删除会一并从暂存移除（否则下次「保存到 Git」会把它又推回仓库）。' : '';
+    const extra = queuedHere ? '\n这篇还在草稿箱里，删除会一并移除（否则下次「保存到 Git」会把它又推回仓库）。' : '';
     if (!file || !confirm(`确定删除 ${file}？${extra}`)) return;
     try {
       const res = await del<{ data: { purge: PurgeOut | null } }>(
         `/api/admin/content/file?path=${encodeURIComponent(file)}`,
       );
-      if (queuedHere) drafts = removeDraft(drafts, queuedHere.path);
+      if (queuedHere) {
+        drafts = drafts.filter((x) => x.path !== queuedHere.path);
+        void deleteDraft(queuedHere.path).catch(() => undefined);
+      }
       notice = `文件已删除${purgeNote(res?.data?.purge)}`;
       file = '';
       body = '';
@@ -576,6 +631,12 @@
     newDir = postsDirCfg || `${contentDir}/zh/posts`;
     await browse(contentDir);
     void loadPostMeta();
+    try {
+      drafts = await loadDrafts();
+    } catch {
+      drafts = [];
+    }
+    legacy = legacyDrafts();
     void loadTranslate();
   }
 
@@ -650,7 +711,7 @@
   <div class="row">
     <button class="ghost" onclick={() => (showNew = !showNew)}>＋ 新文章</button>
     <button class="ghost" onclick={() => (showDrafts = !showDrafts)} aria-expanded={showDrafts}>
-      本地暂存{queued ? ` ${queued}` : ''}
+      草稿箱{queued ? ` ${queued}` : ''}
     </button>
     <button class="ghost sm" onclick={() => void browse(dir)} disabled={loading} title="刷新目录">{loading ? '…' : '⟳'}</button>
     <button class="primary" onclick={() => void pushToGit()} disabled={pushing || !pushTargets.length} title="把本地暂存的文章一次全部推送到仓库；没有暂存时只推送正在编辑的这一篇">
@@ -662,11 +723,17 @@
 {#if showDrafts}
   <div class="card drafts">
     <div class="row spread">
-      <h3>本地暂存（{queued} 篇）</h3>
-      <span class="muted small">存在这台浏览器的 localStorage 里，没有进仓库；换浏览器 / 清缓存会丢，攒着不如早点推。</span>
+      <h3>草稿箱（{queued} 篇）</h3>
+      <span class="muted small">存在私有 R2 桶里（登录同一账号在哪台设备都能看到），没有进内容仓库；推送成功即从这里删除。</span>
     </div>
+    {#if legacy.length}
+      <p class="warn">
+        检测到这台浏览器里还有 {legacy.length} 篇旧版本地暂存（以前只存在浏览器里）。
+        <button class="sm" onclick={() => void importLegacy()}>导入草稿箱</button>
+      </p>
+    {/if}
     {#if !queued}
-      <p class="muted">还没有暂存。编辑文章后点编辑器里的「保存本地」，可以一篇一篇改，最后一起推。</p>
+      <p class="muted">还没有草稿。编辑文章后点编辑器里的「存草稿」，可以一篇一篇改，最后一起推。</p>
     {:else}
       <div class="table-wrap">
         <table>
@@ -772,11 +839,11 @@
     {#if file}
       <div class="card pane">
         <div class="row spread">
-          <span class="muted small">「存草稿」只进这台浏览器；右上角「保存到 Git」才会写进仓库</span>
+          <span class="muted small">「存草稿」进私有 R2 草稿箱；右上角「保存到 Git」才会写进仓库</span>
           <div class="row">
             {#if dirty}<span class="warn">未保存</span>{/if}
             {#if draftOf(drafts, file)}<span class="muted small">已在本地暂存</span>{/if}
-            <button class="sm" onclick={saveLocal} disabled={!file}>存草稿（仅本机）</button>
+            <button class="sm" onclick={() => void saveLocal()} disabled={!file}>存草稿</button>
             <button class="sm danger del" onclick={removeFile}>删除</button>
           </div>
         </div>
@@ -1078,7 +1145,7 @@
   .chip.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .addrow input {
     flex: 1;
@@ -1136,7 +1203,7 @@
     gap: 0.4rem;
     margin-top: 0.7rem;
     padding-top: 0.7rem;
-    border-top: 1px solid var(--border, #e5e7eb);
+    border-top: 1px solid var(--border, var(--border));
   }
   .tr textarea {
     font-family: ui-monospace, Consolas, monospace;

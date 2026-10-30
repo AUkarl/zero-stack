@@ -507,7 +507,7 @@
     margin: -0.2rem 0 0.8rem;
   }
   .ipnote code {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.25rem;
   }
@@ -545,14 +545,14 @@
   }
   .list-scroll:hover {
     scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-color: var(--border-strong) transparent;
   }
   .list-scroll:hover::-webkit-scrollbar {
     display: block;
     width: 6px;
   }
   .list-scroll:hover::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--border-strong);
     border-radius: 3px;
   }
   .table-scroll table {

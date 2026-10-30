@@ -41,7 +41,7 @@
     line-height: 1.65;
   }
   .gate code {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.25rem;
   }

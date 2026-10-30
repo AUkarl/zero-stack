@@ -272,7 +272,7 @@
   .tab.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .small {
     font-size: 0.76rem;
@@ -290,7 +290,7 @@
     margin-left: 0.3rem;
   }
   .detail td {
-    background: #fafafa;
+    background: var(--panel-2);
   }
   .reason {
     margin: 0.1rem 0 0.4rem;

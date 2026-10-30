@@ -387,14 +387,14 @@
   }
   .rows-scroll:hover {
     scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-color: var(--border-strong) transparent;
   }
   .rows-scroll:hover::-webkit-scrollbar {
     display: block;
     width: 6px;
   }
   .rows-scroll:hover::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--border-strong);
     border-radius: 3px;
   }
   .region .bar-row {
@@ -412,14 +412,14 @@
   }
   .cron-scroll:hover {
     scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-color: var(--border-strong) transparent;
   }
   .cron-scroll:hover::-webkit-scrollbar {
     display: block;
     width: 6px;
   }
   .cron-scroll:hover::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--border-strong);
     border-radius: 3px;
   }
   .cron-scroll thead th {
@@ -488,13 +488,13 @@
     color: var(--muted);
   }
   .pill.good {
-    border-color: #bbf7d0;
-    background: #f0fdf4;
+    border-color: var(--good-border);
+    background: var(--good-soft);
     color: var(--good);
   }
   .pill.bad {
-    border-color: #fecaca;
-    background: #fef2f2;
+    border-color: var(--bad-border);
+    background: var(--bad-soft);
     color: var(--bad);
   }
   .jobs td {

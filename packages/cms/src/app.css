@@ -1,39 +1,112 @@
+/* ============================================================
+   app.css — 后台的全局令牌与基础组件
+   ------------------------------------------------------------
+   风格：柔和卡片（浅灰画布 + 白卡片 + 12px 圆角 + 极浅阴影 + 靛蓝主色）。
+   所有颜色只在这里定义；页面自己的 <style> 一律引用变量，深浅色才切得干净。
+
+   深色有两份：`data-theme="dark"`（手动选深色）与系统深色 + `data-theme="system"`。
+   两份值必须一致 —— 这里刻意重复一遍，而不是用 CSS 变量继承绕开，
+   否则系统深色那一支要额外维护一层映射，改一处忘一处。
+   ============================================================ */
 :root {
-  --bg: #f6f7f9;
+  --bg: #f6f7fb;
   --panel: #ffffff;
-  --border: #e5e7eb;
-  --fg: #1f2328;
-  /* #6b7280 在白底 4.83、在浅灰面板/代码芯片上只剩 4.39（低于 WCAG AA 的 4.5），
-     而这套后台里最多的次要说明文字用的就是它 —— 往下压一档到 5.4~6.0。 */
-  --muted: #5b6472;
-  --accent: #2563eb;
-  --accent-soft: #eff6ff;
-  /* 徽章是「浅底 + 同色系深字」，四对都得各自 ≥4.5：绿 #16a34a on #dcfce7 只有 3.00、
-     黄 #d97706 on #fef3c7 只有 2.86、红 #dc2626 on #fee2e2 只有 3.95，全部换成同色系更深一档。 */
-  --good: #15803d;
-  --warn: #92400e;
-  --bad: #b91c1c;
-  --radius: 10px;
+  --panel-2: #f2f4f8;
+  --border: #e6e8ef;
+  --border-strong: #d5d9e2;
+  --fg: #141a23;
+  /* #667085 在 #ffffff 上 4.54、在 #f2f4f8 上 4.2 —— 次要文字只在白底用，卡片里的说明用 --fg 降一档 */
+  --muted: #667085;
+  --accent: #4f46e5;
+  --accent-2: #4338ca;
+  --accent-soft: #eef2ff;
+  --accent-fg: #ffffff;
+  --good: #067647;
+  --good-soft: #ecfdf3;
+  --good-border: #abefc6;
+  --warn: #b54708;
+  --warn-soft: #fffaeb;
+  --warn-border: #fedf89;
+  --bad: #b42318;
+  --bad-soft: #fef3f2;
+  --bad-border: #fecdca;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.16);
   /* 全站统一的间距，窄屏在下面的媒体查询里一次性收小 */
-  --pad: 1.1rem;
-  --gap: 0.6rem;
-  --card-pad: 1rem 1.1rem;
+  --pad: 1.25rem;
+  --gap: 0.75rem;
+  --card-pad: 1.1rem 1.2rem;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0b0f16;
+  --panel: #121826;
+  --panel-2: #182031;
+  --border: #243044;
+  --border-strong: #33415a;
+  --fg: #e6ebf2;
+  --muted: #95a2b8;
+  --accent: #8b93ff;
+  --accent-2: #a5abff;
+  --accent-soft: #1b2340;
+  --accent-fg: #0b0f16;
+  --good: #4ade80;
+  --good-soft: #10261a;
+  --good-border: #1f5134;
+  --warn: #fbbf24;
+  --warn-soft: #2a210f;
+  --warn-border: #5b4415;
+  --bad: #f87171;
+  --bad-soft: #2a1417;
+  --bad-border: #5c2227;
+  --shadow: none;
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    --bg: #0b0f16;
+    --panel: #121826;
+    --panel-2: #182031;
+    --border: #243044;
+    --border-strong: #33415a;
+    --fg: #e6ebf2;
+    --muted: #95a2b8;
+    --accent: #8b93ff;
+    --accent-2: #a5abff;
+    --accent-soft: #1b2340;
+    --accent-fg: #0b0f16;
+    --good: #4ade80;
+    --good-soft: #10261a;
+    --good-border: #1f5134;
+    --warn: #fbbf24;
+    --warn-soft: #2a210f;
+    --warn-border: #5b4415;
+    --bad: #f87171;
+    --bad-soft: #2a1417;
+    --bad-border: #5c2227;
+    --shadow: none;
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
 }
 
 /* 平板：卡片内边距与栅格间隙收一点，避免两列被挤到换行 */
 @media (max-width: 900px) {
   :root {
-    --pad: 0.85rem;
-    --card-pad: 0.8rem 0.85rem;
+    --pad: 0.95rem;
+    --gap: 0.6rem;
+    --card-pad: 0.9rem 0.95rem;
   }
 }
 
 /* 手机：控件最小高度抬到 36px 以上，方便触摸 */
 @media (max-width: 640px) {
   :root {
-    --pad: 0.7rem;
+    --pad: 0.8rem;
     --gap: 0.5rem;
-    --card-pad: 0.75rem 0.8rem;
+    --card-pad: 0.8rem 0.85rem;
   }
   button,
   input,
@@ -103,28 +176,45 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 h1,
 h2,
 h3 {
   margin: 0 0 0.6rem;
-  font-weight: 650;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+h2 {
+  font-size: 1.14rem;
+}
+h3 {
+  font-size: 0.98rem;
 }
 
 a {
   color: var(--accent);
   text-decoration: none;
 }
+a:hover {
+  color: var(--accent-2);
+}
 
 button {
   font: inherit;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--panel);
   color: var(--fg);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 0.42rem 0.95rem;
   cursor: pointer;
+  box-shadow: 0 1px 1px rgba(16, 24, 40, 0.03);
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
 }
 button:hover {
   border-color: var(--accent);
@@ -137,15 +227,17 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
+  box-shadow: 0 1px 2px rgba(79, 70, 229, 0.25);
 }
 button.primary:hover {
-  filter: brightness(1.08);
-  color: #fff;
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: var(--accent-fg);
 }
 button.danger {
   color: var(--bad);
-  border-color: #fecaca;
+  border-color: var(--bad-border);
 }
 button.sm {
   padding: 0.18rem 0.6rem;
@@ -155,9 +247,12 @@ button.ghost {
   background: transparent;
   border-color: transparent;
   color: var(--muted);
+  box-shadow: none;
 }
 button.ghost:hover {
-  border-color: var(--accent);
+  background: var(--panel-2);
+  border-color: transparent;
+  color: var(--fg);
 }
 
 input,
@@ -165,15 +260,20 @@ textarea,
 select {
   font: inherit;
   color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   padding: 0.46rem 0.65rem;
   background: var(--panel);
+  transition: border-color 0.15s ease;
+}
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent);
 }
 input:focus,
 textarea:focus,
 select:focus {
-  outline: 2px solid var(--accent-soft);
+  outline: 3px solid var(--accent-soft);
   border-color: var(--accent);
 }
 textarea {
@@ -192,6 +292,7 @@ label {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow);
   padding: var(--card-pad);
 }
 
@@ -254,15 +355,15 @@ td {
   color: var(--accent);
 }
 .badge.pending {
-  background: #fef3c7;
+  background: var(--warn-soft);
   color: var(--warn);
 }
 .badge.bad {
-  background: #fee2e2;
+  background: var(--bad-soft);
   color: var(--bad);
 }
 .badge.good {
-  background: #dcfce7;
+  background: var(--good-soft);
   color: var(--good);
 }
 

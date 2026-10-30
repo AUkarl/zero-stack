@@ -116,7 +116,7 @@
   }
   .tabs .on {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
     border-color: var(--accent);
   }
   .list {

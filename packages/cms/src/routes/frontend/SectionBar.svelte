@@ -67,7 +67,7 @@
     white-space: nowrap;
   }
   .badge.bad {
-    background: #fee2e2;
+    background: var(--bad-soft);
     color: var(--bad);
   }
 </style>

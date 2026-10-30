@@ -203,7 +203,7 @@
   .ro .roval {
     margin: 0;
     font-size: 0.9rem;
-    background: #f3f4f6;
+    background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 0.4rem 0.6rem;

@@ -79,9 +79,9 @@
   type ChipKind = 'none' | 'good' | 'warn' | 'bad';
   const CHIP_STYLE: Record<ChipKind, string> = {
     none: 'background:var(--accent-soft);color:var(--accent)',
-    good: 'background:#dcfce7;color:#15803d',
-    warn: 'background:#fef3c7;color:#b45309',
-    bad: 'background:#fee2e2;color:#b91c1c',
+    good: 'background:var(--good-soft);color:var(--good)',
+    warn: 'background:var(--warn-soft);color:var(--warn)',
+    bad: 'background:var(--bad-soft);color:var(--bad)',
   };
 
   const TABS: TabKey[] = [...SECTION_KEYS, 'repo'];
@@ -553,7 +553,7 @@ async function save() {
     line-height: 1.75;
   }
   .intro code {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.22rem;
   }
@@ -586,7 +586,7 @@ async function save() {
   .tab.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .n {
     font-size: 0.7rem;
@@ -597,11 +597,11 @@ async function save() {
   }
   .tab.on .n {
     background: rgba(255, 255, 255, 0.22);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .issues {
     margin-bottom: 0.7rem;
-    border-color: #fecaca;
+    border-color: var(--bad-border);
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
@@ -662,7 +662,7 @@ async function save() {
     color: var(--fg);
   }
   .badge.bad {
-    background: #fee2e2;
+    background: var(--bad-soft);
     color: var(--bad);
   }
 </style>

@@ -1078,7 +1078,7 @@
   }
   .srow {
     padding: 0.55rem 0;
-    border-top: 1px solid var(--line, #eee);
+    border-top: 1px solid var(--line, var(--border));
   }
   .srow:first-child {
     border-top: 0;
@@ -1104,7 +1104,7 @@
     padding: 0.08rem 0.55rem;
   }
   .pill.bad {
-    background: #fdecec;
+    background: var(--bad-soft);
     color: #b3261e;
   }
   .mono {
@@ -1122,7 +1122,7 @@
   }
   .inner {
     margin-top: 0.8rem;
-    background: #fafafa;
+    background: var(--panel-2);
   }
   .inner h4 {
     margin: 0 0 0.5rem;

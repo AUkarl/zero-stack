@@ -175,6 +175,6 @@
     vertical-align: middle;
     margin-left: 0.3rem;
     border-radius: 4px;
-    background: #f3f4f6;
+    background: var(--panel-2);
   }
 </style>

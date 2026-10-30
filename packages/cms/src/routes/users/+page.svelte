@@ -981,7 +981,7 @@
   .tab.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   .tab .n {
     font-style: normal;
@@ -1102,7 +1102,7 @@
     flex-direction: column;
     gap: 0.5rem;
     padding: 0.55rem 0.7rem;
-    background: #fafbfc;
+    background: var(--panel-2);
     border: 1px dashed var(--border);
     border-radius: 8px;
   }
@@ -1144,8 +1144,8 @@
     flex-direction: column;
     gap: 0.4rem;
     padding: 0.5rem 0.7rem;
-    background: #fef7f7;
-    border: 1px solid #fecaca;
+    background: var(--bad-soft);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
   }
   .delbox input {
@@ -1181,7 +1181,7 @@
     margin-left: 0.35rem;
   }
   .detail td {
-    background: #fafafa;
+    background: var(--panel-2);
   }
   .line {
     display: flex;
@@ -1214,7 +1214,7 @@
   }
   .code {
     font-family: ui-monospace, Consolas, monospace;
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0.1rem 0.35rem;
     letter-spacing: 0.06em;
@@ -1222,8 +1222,8 @@
   /* ---------------- 一次性新密码面板：只显示一次，故意做得显眼 ---------------- */
   .once {
     margin-bottom: 0.9rem;
-    border-color: #fcd34d;
-    background: #fffbeb;
+    border-color: var(--warn-border);
+    background: var(--warn-soft);
     display: flex;
     flex-direction: column;
     gap: 0.45rem;
@@ -1237,7 +1237,7 @@
     font-size: 1.12rem;
     font-weight: 700;
     letter-spacing: 0.05em;
-    background: #fff;
+    background: var(--panel);
     border: 1px dashed #f59e0b;
     border-radius: 6px;
     padding: 0.3rem 0.6rem;

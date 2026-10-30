@@ -14,6 +14,28 @@
   const isAdmin = $derived(session.user?.role === 'admin');
   const denied = $derived(!isLogin && ready && !!session.user && !isAdmin);
 
+  /* 深浅色：system（跟随系统）→ light → dark 三态循环；首选值记在 localStorage，
+     首屏由 app.html 里的内联脚本先套上 data-theme，避免亮一下再变深。 */
+  type ThemeMode = 'system' | 'light' | 'dark';
+  const THEME_ORDER: ThemeMode[] = ['system', 'light', 'dark'];
+  const THEME_ICON: Record<ThemeMode, string> = { system: '◐', light: '☀', dark: '☾' };
+  const THEME_NAME: Record<ThemeMode, string> = { system: '跟随系统', light: '浅色', dark: '深色' };
+  let themeMode = $state<ThemeMode>('system');
+  if (typeof localStorage !== 'undefined') {
+    const saved = localStorage.getItem('zero-cms-theme') as ThemeMode | null;
+    if (saved && THEME_ORDER.includes(saved)) themeMode = saved;
+  }
+  function cycleTheme() {
+    const next = THEME_ORDER[(THEME_ORDER.indexOf(themeMode) + 1) % THEME_ORDER.length];
+    themeMode = next;
+    document.documentElement.dataset.theme = next;
+    try {
+      localStorage.setItem('zero-cms-theme', next);
+    } catch {
+      /* 隐私模式下写不了，本次生效即可 */
+    }
+  }
+
   const year = new Date().getFullYear();
   const copyright = `©2026${year > 2026 ? `—${year}` : ''} designed by 知止`;
 
@@ -223,6 +245,14 @@
       <div class="foot">
         <span class="who">{session.user?.name || session.user?.email}</span>
         <button class="sm" onclick={logout}>退出</button>
+        <button
+          class="sm theme"
+          onclick={cycleTheme}
+          title={`主题：${THEME_NAME[themeMode]}（点击切换）`}
+          aria-label={`切换后台主题，当前：${THEME_NAME[themeMode]}`}
+          data-mode={themeMode}>
+          <span aria-hidden="true">{THEME_ICON[themeMode]}</span>
+        </button>
       </div>
     </aside>
     <div class="body">
@@ -241,6 +271,14 @@
               y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
         </button>
         <span class="cur">{currentLabel}</span>
+        <button
+          class="sm theme"
+          onclick={cycleTheme}
+          title={`主题：${THEME_NAME[themeMode]}（点击切换）`}
+          aria-label={`切换后台主题，当前：${THEME_NAME[themeMode]}`}
+          data-mode={themeMode}>
+          <span aria-hidden="true">{THEME_ICON[themeMode]}</span>
+        </button>
         <button class="sm out" onclick={logout}>退出</button>
       </header>
       <main>
@@ -266,7 +304,7 @@
   .nf .code {
     margin: 0;
     font-size: 3.2rem;
-    font-weight: 700;
+    font-weight: 650;
     color: var(--muted);
   }
   .nf .msg {
@@ -303,11 +341,11 @@
     min-width: 0;
   }
   aside {
-    width: 208px;
+    width: 216px;
     flex-shrink: 0;
-    background: #eef2e6;
-    color: #3f5138;
-    border-right: 1px solid #dbe4cd;
+    background: var(--panel);
+    color: var(--fg);
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     position: sticky;
@@ -319,7 +357,7 @@
   .brand {
     font-weight: 700;
     font-size: 1.02rem;
-    color: #2f4a2a;
+    color: var(--fg);
     padding: 1.1rem 1.2rem 0.9rem;
   }
   nav {
@@ -338,8 +376,8 @@
     display: none;
   }
   nav .grp {
-    font-size: 0.7rem;
-    color: #5a6b4f;
+    font-size: 0.68rem;
+    color: var(--muted);
     letter-spacing: 0.08em;
     padding: 0.7rem 0.7rem 0.2rem;
   }
@@ -349,17 +387,18 @@
     gap: 0.6rem;
     padding: 0.55rem 0.7rem;
     border-radius: 8px;
-    color: #55684c;
+    color: var(--muted);
     font-size: 0.9rem;
     position: relative;
   }
   nav a:hover {
-    background: #e2ead5;
-    color: #2f4a2a;
+    background: var(--panel-2);
+    color: var(--fg);
   }
   nav a.active {
-    background: #4f7040;
-    color: #fff;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
   }
   nav a .txt {
     min-width: 0;
@@ -380,29 +419,35 @@
     font-style: normal;
     margin-left: auto;
     background: var(--bad);
-    color: #fff;
+    color: var(--accent-fg);
     font-size: 0.7rem;
     border-radius: 999px;
     padding: 0 6px;
   }
   .foot {
-    padding: 0.9rem 1.2rem;
+    padding: 0.8rem 1rem;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    border-top: 1px solid #dbe4cd;
+    gap: 0.45rem;
+    border-top: 1px solid var(--border);
     font-size: 0.82rem;
   }
   .who {
+    flex: 1 1 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--muted);
+  }
+  .foot .theme {
+    margin-left: auto;
+    min-width: 2rem;
   }
   .foot button {
     background: transparent;
-    color: #55684c;
-    border-color: #c7d4b6;
+    color: var(--muted);
+    border-color: var(--border);
   }
   main {
     flex: 1;
@@ -427,15 +472,15 @@
     align-items: center;
     gap: 0.6rem;
     padding: 0.5rem 0.8rem;
-    background: #eef2e6;
-    border-bottom: 1px solid #dbe4cd;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     z-index: 30;
   }
   .bar .cur {
     font-weight: 650;
-    color: #2f4a2a;
+    color: var(--fg);
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -450,7 +495,7 @@
     height: 34px;
     padding: 0;
     background: transparent;
-    border-color: #c7d4b6;
+    border-color: var(--border);
     color: #3f5138;
   }
   .burger svg {
@@ -460,7 +505,7 @@
   .bar .out {
     background: transparent;
     color: #55684c;
-    border-color: #c7d4b6;
+    border-color: var(--border);
   }
   .scrim {
     position: fixed;

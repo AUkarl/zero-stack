@@ -974,6 +974,83 @@ app.delete('/content/file', async (c) => {
   });
 });
 
+/* ---------------- 文章草稿：私有 R2 桶，一篇一个对象（覆盖写） ---------------- */
+
+/**
+ * 后台「存草稿」的存放处。以前在浏览器 localStorage 里，换台设备就没了；
+ * 现在按登录账号存进私有 R2 桶（只有 Worker 读得到，不经任何公开域名）。
+ *
+ * 键：article-drafts/<userId>/<encodeURIComponent(文章路径)>.json —— 路径直接进键，
+ * 同一篇再存就是覆盖同一个对象，不会「改一次多一个文件」。
+ * 列表只读 customMetadata（标题 / 保存时间 / 字节数），正文按需再取。
+ */
+const ARTICLE_DRAFT_PREFIX = 'article-drafts';
+const ARTICLE_DRAFT_MAX = 2 * 1024 * 1024;
+
+const draftKey = (uid: string, path: string) => `${ARTICLE_DRAFT_PREFIX}/${uid}/${encodeURIComponent(path)}.json`;
+
+function draftPath(input: string): string {
+  const path = String(input ?? '').trim();
+  if (!/^content\/.+\.md$/i.test(path) || path.includes('..')) fail(400, '草稿路径不合法');
+  return path;
+}
+
+app.get('/article-drafts', async (c) => {
+  const admin = requireAdmin(c);
+  const want = c.req.query('path');
+  if (want) {
+    const obj = await c.env.R2.get(draftKey(admin.id, draftPath(want)));
+    if (!obj) fail(404, '这份草稿不在了');
+    const data = (await obj.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!data) fail(500, '草稿内容解析失败');
+    return ok(data);
+  }
+  const listed = await c.env.R2.list({
+    prefix: `${ARTICLE_DRAFT_PREFIX}/${admin.id}/`,
+    limit: 200,
+    include: ['customMetadata'],
+  });
+  const items = listed.objects
+    .map((o) => ({
+      path: String(o.customMetadata?.path ?? ''),
+      title: String(o.customMetadata?.title ?? ''),
+      savedAt: Number(o.customMetadata?.savedAt ?? 0),
+      bytes: o.size,
+      notifySubscribers: o.customMetadata?.notify === '1',
+    }))
+    .filter((x) => x.path)
+    .sort((a, b) => a.savedAt - b.savedAt);
+  return ok({ items });
+});
+
+app.put('/article-drafts', async (c) => {
+  const admin = requireAdmin(c);
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body) fail(400, '缺少请求体');
+  const path = draftPath(String(body.path ?? ''));
+  const content = typeof body.content === 'string' ? body.content : '';
+  if (!content.trim()) fail(400, '草稿正文为空');
+  if (content.length > ARTICLE_DRAFT_MAX) fail(413, '这篇草稿超过 2MB，存不进暂存箱；请直接推送到仓库');
+  const now = Date.now();
+  const title = String(body.title ?? '').slice(0, 120);
+  await c.env.R2.put(
+    draftKey(admin.id, path),
+    JSON.stringify({ ...body, path, title, savedAt: now }),
+    {
+      httpMetadata: { contentType: 'application/json; charset=utf-8' },
+      customMetadata: { path, title, savedAt: String(now), notify: body.notifySubscribers ? '1' : '0' },
+    },
+  );
+  return ok({ path, savedAt: now });
+});
+
+app.delete('/article-drafts', async (c) => {
+  const admin = requireAdmin(c);
+  const path = draftPath(c.req.query('path') ?? '');
+  await c.env.R2.delete(draftKey(admin.id, path));
+  return ok({ path, deleted: true });
+});
+
 /* ---------------- 仓库配置文件：白名单内的整份读写 ---------------- */
 
 /**

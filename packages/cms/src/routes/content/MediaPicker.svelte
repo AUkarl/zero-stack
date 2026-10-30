@@ -371,7 +371,7 @@
     height: 82px;
     object-fit: cover;
     border-radius: 6px;
-    background: #f3f4f6;
+    background: var(--panel-2);
   }
   .cell .ico {
     width: 100%;
@@ -381,7 +381,7 @@
     justify-content: center;
     font-size: 1.5rem;
     border-radius: 6px;
-    background: #f3f4f6;
+    background: var(--panel-2);
   }
   .nm {
     font-size: 0.7rem;

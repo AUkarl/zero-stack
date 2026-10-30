@@ -8,7 +8,7 @@ import { HTTPException } from 'hono/http-exception';
  * 「服务器坏了」与「站长还没开」；内容仓 CI 每次构建都调回报口，没开通时那一步就该是明确跳过而不是红。
  * 真正服务内部出错仍然用 500，别混用。
  */
-export function fail(status: 400 | 401 | 403 | 404 | 409 | 429 | 500 | 502 | 503, message: string, headers?: Record<string, string>): never {
+export function fail(status: 400 | 401 | 403 | 404 | 409 | 413 | 429 | 500 | 502 | 503, message: string, headers?: Record<string, string>): never {
   throw new HTTPException(status, { res: Response.json({ error: status, message }, { status, headers }) });
 }
 

@@ -5,6 +5,19 @@
     <link rel="icon" href="data:," />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Zero 管理后台</title>
+    <!-- 首屏先套一次深浅色：放在 SvelteKit 之前，避免浅色闪一下再变深。
+         取值与 +layout.svelte 的切换逻辑一致（system / light / dark）。 -->
+    <script>
+      (function () {
+        try {
+          var m = localStorage.getItem('zero-cms-theme');
+          if (m !== 'light' && m !== 'dark') m = 'system';
+          document.documentElement.dataset.theme = m;
+        } catch (e) {
+          document.documentElement.dataset.theme = 'system';
+        }
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

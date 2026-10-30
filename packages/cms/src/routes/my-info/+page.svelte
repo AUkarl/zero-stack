@@ -891,7 +891,7 @@
     margin: 0.15rem 0;
   }
   .gaps code {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.3rem;
   }
@@ -967,18 +967,18 @@
   }
   .secret {
     font-family: ui-monospace, Consolas, monospace;
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0.15rem 0.4rem;
     letter-spacing: 0.08em;
   }
   code {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0 0.3rem;
   }
   input[readonly] {
-    background: #f9fafb;
+    background: var(--panel-2);
     color: var(--muted);
   }
 </style>

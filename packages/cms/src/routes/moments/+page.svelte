@@ -638,7 +638,7 @@
   .chip.on {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
   }
   /* 九宫格：列数按可用宽度排，320px 的屏上不会顶破卡片 */
   .nine {
@@ -680,7 +680,7 @@
     align-items: center;
     justify-content: center;
     border: 1px dashed var(--border);
-    background: #f9fafb;
+    background: var(--panel-2);
     color: var(--muted);
     font-size: 1.5rem;
     cursor: pointer;
@@ -726,14 +726,14 @@
     line-height: 1.75;
   }
   .text :global(pre) {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 8px;
     padding: 0.6rem 0.7rem;
     overflow: auto;
     font-size: 0.82rem;
   }
   .text :global(code) {
-    background: #f3f4f6;
+    background: var(--panel-2);
     border-radius: 4px;
     padding: 0.04rem 0.3rem;
     font-size: 0.86em;
