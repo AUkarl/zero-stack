@@ -66,6 +66,19 @@
     { value: 'moderatejs', label: 'moderate.js 自建服务' },
   ];
 
+  /** 与后端 services/ai.ts 的 AI_PROVIDERS 对齐：切服务商时把默认端点/模型填进下面两格 */
+  const AI_PROVIDERS = [
+    { value: 'deepseek', label: 'DeepSeek', endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+    { value: 'qianwen', label: '通义千问（阿里云）', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+    { value: 'moonshot', label: 'Moonshot Kimi', endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+    { value: 'doubao', label: '豆包（火山方舟）', endpoint: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k' },
+    { value: 'zhipu', label: '智谱 GLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+    { value: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    { value: 'grok', label: 'Grok（xAI）', endpoint: 'https://api.x.ai/v1', model: 'grok-2-latest' },
+    { value: 'custom', label: '自定义 / 自建（OpenAI 兼容）', endpoint: '', model: '' },
+  ];
+  const AI_DEFAULTS = new Map(AI_PROVIDERS.map((p) => [p.value, { endpoint: p.endpoint, model: p.model }]));
+
   const GROUPS: Group[] = [
     {
       title: '注册与邀请码',
@@ -141,35 +154,35 @@
       ],
     },
     {
-      title: 'AI 审核与自动回复',
+      title: 'AI 服务与密钥',
       desc:
-        '走 OpenAI 兼容接口（/chat/completions）。两项可以只开一件：审核在评论入库前复核本地规则放行的内容，' +
-        '模型判不过就压到待审核或垃圾，调用失败维持本地结论；自动回复在入库后以站长身份插一条已通过的回复，只回顶层评论。' +
-        '开启后评论正文、昵称与邮箱会发送到你填的服务商，介意隐私或服务商在境外时建议保持关闭。',
+        '这里只配「用哪家大模型」，供「评论审核 → AI 审核」与「评论 → AI 回复」共用。' +
+        '已内置 DeepSeek、通义千问、Moonshot Kimi、豆包、智谱、OpenAI、Grok；端点与模型留空就用该服务商的默认值，' +
+        '自建 Ollama / vLLM 或代理网关选「自定义」并填端点与模型。两个功能开关分别在评论审核页与「AI 回复」页。' +
+        '开启后评论正文、昵称与邮箱会发送到你选的服务商，介意隐私或服务商在境外时建议保持关闭。',
       fields: [
         {
-          key: 'aiEndpoint',
-          label: '接口地址',
-          hint: '填基础地址（如 https://api.deepseek.com/v1）或完整 …/chat/completions 都认；本地 Ollama 填 http://127.0.0.1:11434/v1 这类地址',
+          key: 'aiProvider',
+          label: '服务商',
+          kind: 'select',
+          options: AI_PROVIDERS,
+          hint: '选中后会把该服务商的默认端点与模型填到下面两格，可按需改；清空下面两格则运行时继续跟随预设',
         },
-        { key: 'aiModel', label: '模型', hint: '如 deepseek-chat / qwen-plus / gpt-4o-mini / glm-4-flash；必填' },
+        {
+          key: 'aiEndpoint',
+          label: '接口地址（选填）',
+          hint: '留空用所选服务商的默认地址；也可以填完整 …/chat/completions。自建服务（custom）必填',
+        },
+        {
+          key: 'aiModel',
+          label: '模型（选填）',
+          hint: '留空用预设模型；豆包通常填控制台里的接入点 ID（ep-…）而不是产品名。自建服务（custom）必填',
+        },
         {
           key: 'aiKey',
           label: 'API Key',
           kind: 'secret',
           hint: '云端服务商必填；本地自建端点不需要密钥，留空即可。读取只显示「已设置」，留空表示不修改',
-        },
-        {
-          key: 'aiModerationEnabled',
-          label: 'AI 复核评论',
-          kind: 'bool',
-          hint: '开着时每条外来评论多一次模型调用（有延迟与费用）。只在本地规则已放行时调用；模型故障不会拦住评论',
-        },
-        {
-          key: 'aiReplyEnabled',
-          label: 'AI 自动回复',
-          kind: 'bool',
-          hint: '只对顶层评论生效，不回复回复，避免无限对话；回复以站长账号名义发布并走正常的回复提醒邮件',
         },
       ],
     },
@@ -637,8 +650,17 @@
    * 既不报错也不发请求，SMTP 授权码之类的内容根本没写进库（后台健康检查就一直说没配）。
    */
   function setVal(key: string, raw: unknown): void {
-    cfg[key] =
+    const value =
       typeof raw === 'number' ? String(raw) : typeof raw === 'boolean' ? String(raw) : String(raw ?? '');
+    cfg[key] = value;
+    /* 切 AI 服务商时把默认端点/模型带出来：否则下面两格一直是空的，站主不知道到底会用哪个模型 */
+    if (key === 'aiProvider') {
+      const preset = AI_DEFAULTS.get(value);
+      if (preset) {
+        cfg.aiEndpoint = preset.endpoint;
+        cfg.aiModel = preset.model;
+      }
+    }
   }
 
   /**

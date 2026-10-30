@@ -28,7 +28,7 @@ import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor, writeSwitchSnapshot, syncCommentCsp } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
-import { aiModerate } from '../services/ai';
+import { aiModerate, aiPing, aiStatus } from '../services/ai';
 import { clientIp, ipFallbackCount } from '../lib/http';
 import { datedSlug } from '../lib/postName';
 import { errorMessage, fail, ok, okRows } from '../lib/errors';
@@ -316,6 +316,60 @@ app.post('/comments/:id/ai-review', async (c) => {
     ip: clientIp(c),
   });
   return ok({ id, verdict: ai.verdict, reason: ai.reason, status: next });
+});
+
+/* ---------------- AI 助手：连接状态 / 测试 / 最近回复 ---------------- */
+
+app.get('/ai/status', async (c) => {
+  requireAdmin(c);
+  return ok(await aiStatus(c.env));
+});
+
+/** 「测试连接」：用当前配置真发一次最短的 chat 请求 */
+app.post('/ai/probe', async (c) => {
+  requireAdmin(c);
+  const reply = await aiPing(c.env).catch((e: unknown) => {
+    fail(502, e instanceof Error ? e.message : 'AI 连接失败');
+  });
+  return ok({ ok: true, reply });
+});
+
+/** 审核页「AI 判一下」：只返回模型结论，不改任何评论状态 */
+app.post('/ai/moderate', async (c) => {
+  requireAdmin(c);
+  const parsed = z
+    .object({
+      content: z.string().min(1).max(5000),
+      authorName: z.string().max(64).optional(),
+      authorEmail: z.string().max(200).optional(),
+      authorLink: z.string().max(300).optional(),
+    })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) fail(400, '请填写要试判的评论');
+  const ai = await aiModerate(c.env, parsed.data).catch((e: unknown) => {
+    fail(502, e instanceof Error ? e.message : 'AI 审核失败');
+  });
+  return ok(ai);
+});
+
+/** 最近由 AI 自动发出的回复：回复设置页用来核对它到底说了什么 */
+app.get('/ai/replies', async (c) => {
+  requireAdmin(c);
+  const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 50);
+  const rows = await createDb(c.env)
+    .select({
+      id: comments.id,
+      postSlug: comments.postSlug,
+      parentId: comments.parentId,
+      content: comments.content,
+      createdAt: comments.createdAt,
+    })
+    .from(comments)
+    .where(eq(comments.spamReason, 'AI 自动回复'))
+    .orderBy(desc(comments.createdAt))
+    .limit(limit);
+  const titles = await contentTitles(c.env, rows.map((r) => r.postSlug));
+  return okRows(rows.map((r) => ({ ...r, postTitle: titles.get(r.postSlug) ?? '' })));
 });
 
 /** 批量处理审核队列，一次点击清掉一天的垃圾评论 */

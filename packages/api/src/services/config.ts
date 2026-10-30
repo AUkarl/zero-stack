@@ -115,11 +115,14 @@ export type ConfigKey =
   | 'translateYoudaoAppKey'
   | 'translateYoudaoAppSecret'
   // AI：评论审核与自动回复
+  | 'aiProvider'
   | 'aiEndpoint'
   | 'aiModel'
   | 'aiKey'
   | 'aiModerationEnabled'
   | 'aiReplyEnabled'
+  | 'aiReplyScope'
+  | 'aiReplyPrompt'
   // 用户中心：投稿与作者认证的全站总闸（具体某人能不能用，看后台勾的权限位）
   | 'draftsEnabled'
   | 'authorVerifyEnabled'
@@ -253,11 +256,14 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'translateBaiduKey',
   'translateYoudaoAppKey',
   'translateYoudaoAppSecret',
+  'aiProvider',
   'aiEndpoint',
   'aiModel',
   'aiKey',
   'aiModerationEnabled',
   'aiReplyEnabled',
+  'aiReplyScope',
+  'aiReplyPrompt',
   'draftsEnabled',
   'authorVerifyEnabled',
   'newUserCanPublish',
@@ -408,11 +414,14 @@ export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   translateBaiduKey: '',
   translateYoudaoAppKey: '',
   translateYoudaoAppSecret: '',
+  aiProvider: 'deepseek',
   aiEndpoint: '',
   aiModel: '',
   aiKey: '',
   aiModerationEnabled: 'false',
   aiReplyEnabled: 'false',
+  aiReplyScope: 'all',
+  aiReplyPrompt: '',
   draftsEnabled: 'true',
   authorVerifyEnabled: 'true',
   /* 默认关：与「用户页按账号勾选」的既有口径一致，站主要批量放开时才亲手打开这一项 */
@@ -599,6 +608,8 @@ export const ENUM_CONFIG_KEYS: Record<string, string[]> = {
   commentProvider: ['zero', 'waline', 'twikoo', 'giscus', 'artalk'],
   momentCommentProvider: ['zero', 'waline', 'twikoo', 'giscus', 'artalk'],
   emailProvider: ['smtp', 'resend', 'cloudflare'],
+  aiProvider: ['openai', 'deepseek', 'qianwen', 'moonshot', 'doubao', 'zhipu', 'grok', 'custom'],
+  aiReplyScope: ['all', 'questions'],
 };
 
 /** 返回一句能直接给人看的文案；null 表示这个值可用（留空 = 用默认，也算可用） */
@@ -719,10 +730,12 @@ export function lengthKeyBadValue(key: string, value: string): string | null {
  * `siteName` / `siteDescription` 原样进 `data/site.json` 与 `<title>`，`siteUrl` 原样替换
  * `hugo.toml` 的 `baseURL` 那一行，`emailFrom` / `smtpHost` 进的是邮件信头。
  * 值里带一个换行，等于往配置文件或信头里多插一行 —— `baseURL = "x/"` 后面跟一行
- * `[params]` 就能把整站的参数改写。多行只允许出现在两处：邮件模板正文，和序列化成 JSON 的名单。
+ * `[params]` 就能把整站的参数改写。多行只允许出现在三处：邮件模板正文、AI 回复人设
+ * （只进提示词，不写文件/信头），以及序列化成 JSON 的名单。
  */
 export function lineShapeBadValue(key: string, value: string): string | null {
   if (key.startsWith('emailTemplate')) return null;
+  if (key === 'aiReplyPrompt') return null;
   if (JSON_CONFIG_KEYS[key]) return null;
   const m = /[\r\n\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.exec(value);
   if (!m) return null;

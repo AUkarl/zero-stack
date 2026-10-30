@@ -98,6 +98,23 @@
   let probe = $state({ content: '', name: '', email: '', link: '' });
   let verdict = $state<Verdict | null>(null);
   let probing = $state(false);
+  let aiProbe = $state<{ verdict: string; reason: string } | null>(null);
+  let aiProbing = $state(false);
+
+  // AI 审核：连接配置在「设置 → AI 服务与密钥」，这里只管开关与试判
+  interface AiStatusLite {
+    provider: string;
+    label: string;
+    endpoint: string;
+    model: string;
+    keySet: boolean;
+    moderation: boolean;
+    reply: boolean;
+    ready: boolean;
+    hint: string;
+  }
+  let ai = $state<AiStatusLite | null>(null);
+  let aiToggleBusy = $state(false);
 
   // 队列
   let queue = $state<Cmt[]>([]);
@@ -132,6 +149,36 @@
     }
     await loadQueue();
     await loadPatternFile();
+    await loadAi();
+  }
+
+  async function loadAi() {
+    try {
+      const d = await get<{ data: AiStatusLite }>('/api/admin/ai/status');
+      ai = d.data;
+    } catch {
+      // AI 状态读不到不影响规则编辑：卡片自己显示失败，别的照常
+      ai = null;
+    }
+  }
+
+  /** AI 审核开关即时生效：不跟规则表单一起等「保存规则」 */
+  async function toggleAiModeration() {
+    if (!ai || aiToggleBusy) return;
+    aiToggleBusy = true;
+    error = '';
+    try {
+      const next = !ai.moderation;
+      await patch('/api/admin/config', { aiModerationEnabled: next });
+      ai = { ...ai, moderation: next };
+      aiProbe = null;
+      notice = next ? '已开启 AI 审核（本地规则放行后才交给模型）' : '已关闭 AI 审核';
+      setTimeout(() => (notice = ''), 3500);
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      aiToggleBusy = false;
+    }
   }
 
   async function loadQueue() {
@@ -252,6 +299,26 @@
       error = msg(e);
     } finally {
       probing = false;
+    }
+  }
+
+  /** 只让 AI 判这段文字，不入库、不改任何评论状态 */
+  async function runAiProbe() {
+    if (!probe.content.trim() || aiProbing) return;
+    aiProbing = true;
+    aiProbe = null;
+    error = '';
+    try {
+      const body: Record<string, string> = { content: probe.content };
+      if (probe.name.trim()) body.authorName = probe.name.trim();
+      if (probe.email.trim()) body.authorEmail = probe.email.trim();
+      if (probe.link.trim()) body.authorLink = probe.link.trim();
+      const d = await post<{ data: { verdict: string; reason: string } }>('/api/admin/ai/moderate', body);
+      aiProbe = d.data;
+    } catch (e) {
+      error = msg(e);
+    } finally {
+      aiProbing = false;
     }
   }
 
@@ -454,6 +521,41 @@
 
   <div class="stack">
     <section class="card">
+      <h4>AI 审核</h4>
+      <p class="muted small">
+        本地规则放行后再交给大模型复核：正常就通过，拿不准转待审核，判垃圾直接拒收。
+        模型超时、报错或额度用完时维持本地判定，不会把评论区卡死。
+      </p>
+      {#if ai}
+        <label class="switch">
+          <input
+            type="checkbox"
+            checked={ai.moderation}
+            onchange={() => void toggleAiModeration()}
+            disabled={aiToggleBusy || (!ai.ready && !ai.moderation)}
+          />
+          <span>开启 AI 审核{aiToggleBusy ? '（保存中…）' : ''}</span>
+        </label>
+        <p class="small">
+          服务商 <b>{ai.label}</b> · 模型 <b>{ai.model || '—'}</b>
+          <span class="badge {ai.ready ? 'good' : 'pending'}">{ai.ready ? '已就绪' : '未配置'}</span>
+        </p>
+        {#if !ai.ready}
+          <p class="warn small">
+            还没配好{ai.hint ? `：${ai.hint}` : ''}。去
+            <a href="/settings">「设置 → AI 服务与密钥」</a>
+            补齐。
+          </p>
+        {/if}
+        <p class="muted small">
+          逐条复核用下面队列里的「AI 复核」；自动回复的开关与人设在 <a href="/ai">AI 回复</a> 页。
+        </p>
+      {:else}
+        <p class="muted small">AI 状态读取失败，点右上角「重新读取」再试。</p>
+      {/if}
+    </section>
+
+    <section class="card">
       <h4>外部审核服务商</h4>
       <p class="muted small">
         服务商只做加法：它说垃圾才算加到分上，异常或超时 fail-open。这里只选服务商；
@@ -506,7 +608,25 @@
     <label>邮箱<input bind:value={probe.email} /></label>
     <label>作者链接<input bind:value={probe.link} /></label>
   </div>
-  <div class="row"><button class="primary" onclick={() => void runProbe()} disabled={probing || !probe.content.trim()}>{probing ? '打分中…' : '试跑'}</button></div>
+  <div class="row">
+    <button class="primary" onclick={() => void runProbe()} disabled={probing || !probe.content.trim()}>{probing ? '打分中…' : '试跑'}</button>
+    <button class="sm" onclick={() => void runAiProbe()} disabled={aiProbing || !probe.content.trim() || !ai?.ready}>
+      {aiProbing ? 'AI 判断中…' : 'AI 判一下'}
+    </button>
+    {#if !ai?.ready}<span class="muted small">AI 未配置，去设置里选服务商并填密钥</span>{/if}
+  </div>
+
+  {#if aiProbe}
+    <div class="verdict {aiProbe.verdict === 'approve' ? 'good' : 'bad'}">
+      <div class="grow1">
+        <p class="strong">
+          AI 判定：{aiProbe.verdict === 'approve' ? '正常' : aiProbe.verdict === 'spam' ? '垃圾' : '转人工待审'}
+        </p>
+        <p class="muted small">{aiProbe.reason || '模型没有给出理由'}</p>
+        <p class="muted small">这里只试判、不改任何评论；正式拦截看上面的「开启 AI 审核」。</p>
+      </div>
+    </div>
+  {/if}
 
   {#if verdict}
     <div class="verdict {verdict.spam ? 'bad' : 'good'}">

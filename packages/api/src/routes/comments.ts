@@ -35,6 +35,11 @@ import type { AppEnv } from '../lib/app';
 const MAX_CONTENT = 5000;
 const DEFAULT_PAGE = 20;
 const MAX_PAGE = 100;
+
+/** aiReplyScope=questions 时只回带提问意图的评论，免得把「谢谢」「路过」也各回一句 */
+function looksLikeQuestion(text: string): boolean {
+  return /[?？]|怎么|如何|为什么|为啥|能不能|可不可以|吗|呢|请问|请教|求解|有没有/.test(text);
+}
 /** 单篇文章一次最多读多少条进内存建树；配合 offset/limit 分页，正常站点够用 */
 const SCAN_LIMIT = 2000;
 
@@ -847,8 +852,12 @@ app.post('/', async (c) => {
   }
 
   /* AI 自动回复：只回顶层评论，以站长身份插入一条已通过的回复。
-     放后台任务里跑，生成或入库失败只记日志，不影响这条评论本身已经成功。 */
-  if (!trusted && status === 'approved' && !body.parentId && (await getConfigBool(env, 'aiReplyEnabled', false))) {
+     aiReplyScope=questions 时只处理带提问意图的留言；放后台任务里跑，
+     生成或入库失败只记日志，不影响这条评论本身已经成功。 */
+  const aiReplyOn =
+    !trusted && status === 'approved' && !body.parentId && (await getConfigBool(env, 'aiReplyEnabled', false));
+  const aiReplyScope = aiReplyOn ? (((await getConfig(env, 'aiReplyScope')) ?? 'all') || 'all').trim() : 'all';
+  if (aiReplyOn && (aiReplyScope !== 'questions' || looksLikeQuestion(content))) {
     const task = (async () => {
       const boss = (
         await db

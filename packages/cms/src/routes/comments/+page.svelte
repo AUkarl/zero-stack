@@ -58,7 +58,10 @@
 
 <div class="row spread head">
   <h2>评论管理</h2>
-  <button onclick={() => void load()} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button>
+  <div class="row">
+    <a class="sm linkbtn" href="/ai">AI 回复设置</a>
+    <button onclick={() => void load()} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button>
+  </div>
 </div>
 
 <div class="tabs">

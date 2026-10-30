@@ -53,7 +53,7 @@ test('links.yaml：名称与说明里的换行不会折成跨行标量', () => {
   assert.equal(validateLinksYaml(text), null, text);
 });
 
-/* ---------------- ③ 配置：除邮件模板与 JSON 名单，每一项都必须是一行 ---------------- */
+/* ---------------- ③ 配置：除邮件模板、AI 回复人设与 JSON 名单，每一项都必须是一行 ---------------- */
 
 test('配置：siteName / siteUrl 带换行被拒（会多插一行 hugo.toml）', () => {
   assert.ok(lineShapeBadValue('siteName', '我的站\n[params]\nbad = 1'));
@@ -63,10 +63,10 @@ test('配置：siteName / siteUrl 带换行被拒（会多插一行 hugo.toml）
   assert.equal(lineShapeBadValue('siteName', '我的站'), null);
 });
 
-test('配置：只有邮件模板与 JSON 名单允许多行', () => {
+test('配置：只有邮件模板、AI 回复人设与 JSON 名单允许多行', () => {
   for (const key of ALL_CONFIG_KEYS) {
     const multiline = lineShapeBadValue(key, '第一行\n第二行');
-    const allowed = key.startsWith('emailTemplate') || Boolean(JSON_CONFIG_KEYS[key]);
+    const allowed = key.startsWith('emailTemplate') || key === 'aiReplyPrompt' || Boolean(JSON_CONFIG_KEYS[key]);
     assert.equal(multiline === null, allowed, `${key}：允许多行=${allowed}，实际${multiline === null ? '放行' : '拦截'}`);
   }
 });
