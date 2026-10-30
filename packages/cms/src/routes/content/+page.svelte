@@ -652,12 +652,17 @@
     model: string;
     ready: boolean;
     hint: string;
+    targets?: { code: string; label: string }[];
   }
 
   let tr = $state<TrStatus | null>(null);
   let trBusy = $state(false);
   let trDraft = $state('');
   let trNote = $state('');
+  /** 编辑器里的机器翻译目标语言（默认中文），选项来自 /translate/status */
+  let trTarget = $state('zh');
+  const trTargets = $derived(tr?.targets ?? [{ code: 'zh', label: '简体中文' }]);
+  const trTargetName = $derived(trTargets.find((t) => t.code === trTarget)?.label ?? '简体中文');
 
   async function loadTranslate() {
     try {
@@ -679,7 +684,7 @@
     try {
       const d = await post<{ data: { results: { ok: boolean; text: string; error?: string }[] } }>(
         '/api/admin/translate',
-        { text: body },
+        { text: body, target: trTarget },
       );
       const r = d.data.results[0];
       if (!r?.ok) trNote = r?.error || '翻译服务没返回内容';
@@ -953,9 +958,12 @@
         {#if tr?.ready}
           <div class="tr">
             <div class="row">
-              <span class="muted small">机器翻译 · {tr.provider} {tr.model} · 译为简体中文</span>
+              <span class="muted small">机器翻译 · {tr.provider} {tr.model}</span>
+              <select bind:value={trTarget} aria-label="翻译目标语言">
+                {#each trTargets as t (t.code)}<option value={t.code}>译成{t.label}</option>{/each}
+              </select>
               <button class="sm" onclick={() => void runTranslate()} disabled={trBusy}>
-                {trBusy ? '翻译中…' : '译成草稿'}
+                {trBusy ? '翻译中…' : `译成${trTargetName}草稿`}
               </button>
               {#if trDraft}
                 <button class="sm ghost" onclick={appendDraft}>追加到正文</button>

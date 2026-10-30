@@ -1,7 +1,7 @@
 /**
- * 机器辅助翻译（写作工具）：站点是纯中文站，这里只负责「把一段任意语言的原文译成简体中文」，
+ * 机器辅助翻译（写作工具）：把一段任意语言的原文译成**选定的目标语言**，
  * 结果一律作为草稿返回给后台，由人工确认后才会进仓库。
- * 没有「目标语言」概念：所有 provider 内部固定目标为简体中文。
+ * 目标语言由调用方传 target（默认 zh = 简体中文），支持中/英/俄/法/德/西/阿/日/韩。
  *
  * provider 分四类（config 里 translateProvider 写的就是这个 kind 字符串，
  * 必须与 cms 的「设置 - 机器翻译」下拉、翻译页预设表完全对齐）：
@@ -93,7 +93,45 @@ export interface TranslateOutcome {
 const CHUNK_LIMIT = 1200;
 
 /** 站点是纯中文站：唯一译文目标，内部固定，不再作为参数暴露 */
-const ZH_TARGET = 'zh-CN';
+/** 可选目标语言：code 是接口参数与目录名，locale 给 provider 用 */
+export type TranslateTarget = 'zh' | 'en' | 'ru' | 'fr' | 'de' | 'es' | 'ar' | 'ja' | 'ko';
+
+export const TRANSLATE_TARGETS: { code: TranslateTarget; label: string; locale: string }[] = [
+  { code: 'zh', label: '简体中文', locale: 'zh-CN' },
+  { code: 'en', label: '英语', locale: 'en-US' },
+  { code: 'ru', label: '俄语', locale: 'ru-RU' },
+  { code: 'fr', label: '法语', locale: 'fr-FR' },
+  { code: 'de', label: '德语', locale: 'de-DE' },
+  { code: 'es', label: '西班牙语', locale: 'es-ES' },
+  { code: 'ar', label: '阿拉伯语', locale: 'ar-SA' },
+  { code: 'ja', label: '日语', locale: 'ja-JP' },
+  { code: 'ko', label: '韩语', locale: 'ko-KR' },
+];
+
+export function isTranslateTarget(v: unknown): v is TranslateTarget {
+  return TRANSLATE_TARGETS.some((t) => t.code === v);
+}
+
+export function targetLocale(target?: string): string {
+  return (TRANSLATE_TARGETS.find((t) => t.code === target) ?? TRANSLATE_TARGETS[0]).locale;
+}
+
+export function targetLabel(target?: string): string {
+  return (TRANSLATE_TARGETS.find((t) => t.code === target) ?? TRANSLATE_TARGETS[0]).label;
+}
+
+/** 给大模型的系统提示：目标语言随参数变，其他规则不变 */
+function systemPrompt(target?: string): string {
+  const name = targetLabel(target);
+  return (
+    `你是网站内容翻译助手。把原文翻译为${name}，只输出译文本身，不要解释、不要加引号或代码块围栏。原文可能是任意语言，也可能已经是${name}（已经是的保持通顺即可，不要硬译）。` +
+    '务必保留：Markdown 结构（标题 #、列表、表格、加粗、行内代码、引用块）不变；' +
+    'Hugo 短代码 {{< ... >}} 与 {{% ... %}} 原样保留、内部参数不翻译；' +
+    '所有 URL、图片地址、锚点、邮箱原样不动；' +
+    'front matter 字段名（title、date 等）即使出现在文本里也不翻译；front matter 不在输入里，不要凭空生成。' +
+    '译文要自然通顺，术语一致。'
+  );
+}
 
 const LANG_CODES: Record<string, string> = {
   'zh-CN': 'zh',
@@ -138,7 +176,7 @@ export async function translateStatus(env: Env): Promise<TranslateStatus> {
       ...base,
       model: '',
       ready: false,
-      hint: '未配置翻译服务：请到「设置 - 机器翻译」或翻译页选择 provider（所有译文固定为简体中文）。免费无密钥可选 mymemory / libretranslate / google（配额低）；大模型（deepseek / qianwen / moonshot / doubao / grok / zhipu / openai）需填密钥。',
+      hint: '未配置翻译服务：请到「设置 - 机器翻译」或翻译页选择 provider（译文语言在翻译前选）。免费无密钥可选 mymemory / libretranslate / google（配额低）；大模型（deepseek / qianwen / moonshot / doubao / grok / zhipu / openai）需填密钥。',
     };
   }
 
@@ -160,8 +198,8 @@ export async function translateStatus(env: Env): Promise<TranslateStatus> {
   return { ...base, model: cfgModel || '', ready: true, hint: '' };
 }
 
-/** 单段翻译（固定译为简体中文）；失败不抛异常，把原因带回去给后台显示；网络类错误自动重试一次 */
-export async function translateText(env: Env, input: { text: string; source?: string }): Promise<TranslateOutcome> {
+/** 单段翻译（目标语言由调用方给，默认简体中文）；失败不抛异常，把原因带回去给后台显示；网络类错误自动重试一次 */
+export async function translateText(env: Env, input: { text: string; source?: string; target?: string }): Promise<TranslateOutcome> {
   const text = input.text.replace(/\r\n/g, '\n').trim();
   const status = await translateStatus(env);
   const { provider, model } = status;
@@ -169,6 +207,7 @@ export async function translateText(env: Env, input: { text: string; source?: st
   if (!status.ready) return { ok: false, text: '', provider, model, error: status.hint || '未配置翻译服务' };
 
   const source = input.source;
+  const target = isTranslateTarget(input.target) ? input.target : 'zh';
 
   const parts = text.length <= CHUNK_LIMIT ? [text] : chunk(text);
   const out: string[] = [];
@@ -176,10 +215,10 @@ export async function translateText(env: Env, input: { text: string; source?: st
   let usage = '';
 
   for (const part of parts) {
-    let res = await runOnce(env, provider, model, part, source);
+    let res = await runOnce(env, provider, model, part, source, target);
     if (!res.ok && isTransient(res.error)) {
       retries++;
-      res = await runOnce(env, provider, model, part, source);
+      res = await runOnce(env, provider, model, part, source, target);
     }
     if (!res.ok) return { ...res, retries, segments: parts.length };
     out.push(res.text);
@@ -200,26 +239,27 @@ async function runOnce(
   model: string,
   text: string,
   source?: string,
+  target?: string,
 ): Promise<TranslateOutcome> {
   const preset = PRESET_MAP.get(provider);
   const family = preset?.family ?? 'none';
 
-  if (family === 'workers') return workersAiRun(env, model, text, source);
-  if (family === 'chat') return chatCompletions(env, preset!, model, text, source);
-  if (family === 'free') return freeTranslate(env, preset!, text, source);
+  if (family === 'workers') return workersAiRun(env, model, text, source, target);
+  if (family === 'chat') return chatCompletions(env, preset!, model, text, source, target);
+  if (family === 'free') return freeTranslate(env, preset!, text, source, target);
 
   return { ok: false, text: '', provider, model, error: '未配置翻译服务' };
 }
 
 /* ------------------------------------------------------------------ Workers AI */
 
-async function workersAiRun(env: Env, model: string, text: string, source?: string): Promise<TranslateOutcome> {
+async function workersAiRun(env: Env, model: string, text: string, source?: string, target?: string): Promise<TranslateOutcome> {
   const provider: TranslateProvider = 'workers-ai';
   try {
     const res = (await env.AI!.run(model || '@cf/meta/m2m100-1.2b', {
       text,
       source_lang: source ? langCode(source) : langCode(detectSourceLocale(text)),
-      target_lang: langCode(ZH_TARGET),
+      target_lang: langCode(targetLocale(target)),
     })) as { translated_text?: string };
     const translated = String(res.translated_text ?? '');
     if (!translated) return { ok: false, text: '', provider, model, error: '翻译服务返回空' };
@@ -231,27 +271,20 @@ async function workersAiRun(env: Env, model: string, text: string, source?: stri
 
 /* ------------------------------------------------------------------ OpenAI 兼容大模型 */
 
-const SYSTEM_PROMPT =
-  '你是网站内容翻译助手。把原文翻译为简体中文，只输出译文本身，不要解释、不要加引号或代码块围栏。原文可能是任意语言，也可能已经是中文（中文部分保持通顺即可，不要硬译）。' +
-  '务必保留：Markdown 结构（标题 #、列表、表格、加粗、行内代码、引用块）不变；' +
-  'Hugo 短代码 {{< ... >}} 与 {{% ... %}} 原样保留、内部参数不翻译；' +
-  '所有 URL、图片地址、锚点、邮箱原样不动；' +
-  'front matter 字段名（title、date 等）即使出现在文本里也不翻译；front matter 不在输入里，不要凭空生成。' +
-  '译文要自然通顺，术语一致。';
-
 async function chatCompletions(
   env: Env,
   preset: Preset,
   model: string,
   text: string,
   source?: string,
+  target?: string,
 ): Promise<TranslateOutcome> {
   const provider = preset.kind;
   const cfgEndpoint = ((await getConfig(env, 'translateEndpoint')) ?? '').trim();
   const url = chatUrl(cfgEndpoint || preset.endpoint);
   const key = (await getConfig(env, 'translateKey')) ?? env.TRANSLATE_API_KEY ?? '';
 
-  const langHint = `源语言：${source ? langCode(source) : '自动判断（可为任意语言）'}；目标语言：zh-CN（简体中文），固定不变。`;
+  const langHint = `源语言：${source ? langCode(source) : '自动判断（可为任意语言）'}；目标语言：${langCode(targetLocale(target))}（${targetLabel(target)}）。`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   try {
@@ -261,7 +294,7 @@ async function chatCompletions(
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: `${SYSTEM_PROMPT}${langHint}` },
+          { role: 'system', content: `${systemPrompt(target)}${langHint}` },
           { role: 'user', content: text },
         ],
         temperature: 0.2,
@@ -292,13 +325,12 @@ function chatUrl(endpoint: string): string {
 
 /* ------------------------------------------------------------------ 免费公共接口 */
 
-async function freeTranslate(env: Env, preset: Preset, text: string, source?: string): Promise<TranslateOutcome> {
+async function freeTranslate(env: Env, preset: Preset, text: string, source?: string, target?: string): Promise<TranslateOutcome> {
   const provider = preset.kind;
   const model = '';
   const cfgEndpoint = ((await getConfig(env, 'translateEndpoint')) ?? '').trim();
   const endpoint = cfgEndpoint || preset.endpoint;
-  // 站点纯中文：目标语言永远是简体中文
-  const tgt = freeCode(provider, ZH_TARGET);
+  const tgt = freeCode(provider, targetLocale(target));
   // 原文可为任意语言：google / libretranslate 支持服务端自动识别就用 auto；mymemory 只认显式语种，靠启发式猜源语言
   const src = source
     ? freeCode(provider, source)
@@ -306,11 +338,11 @@ async function freeTranslate(env: Env, preset: Preset, text: string, source?: st
       ? freeCode(provider, detectSourceLocale(text))
       : 'auto';
 
-  // 纯中文站的边角情形：源语言已明确判定为简体中文（如 mymemory 启发式 zh-CN→zh-CN），
+  // 边角情形：源语言已明确判定为目标语言本身（如 mymemory 启发式 zh-CN→zh-CN），
   // 免费接口拒绝同语种对（MyMemory 直接回 PLEASE SELECT TWO DISTINCT LANGUAGES）。
   // 此时「译成中文」的诚实结果就是原文本身，显式说明后原样返回，不冒充翻译失败。
   if (src !== 'auto' && src === tgt) {
-    return { ok: true, text, provider, model, usage: `chars=${text.length}; 原文已是简体中文，原样保留（免费接口不做同语种对译）` };
+    return { ok: true, text, provider, model, usage: `chars=${text.length}; 原文已是${targetLabel(target)}，原样保留（免费接口不做同语种对译）` };
   }
 
   const controller = new AbortController();

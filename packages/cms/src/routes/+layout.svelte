@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { session } from '#lib/session.svelte';
   import { get, post } from '#lib/api';
+  import { assetUrl } from '#lib/session.svelte';
   import { pendingCounts } from '#lib/pending.svelte';
 
   let { children } = $props();
@@ -12,6 +13,13 @@
   const ready = $derived(session.checked);
   /** 站点账号系统里 role 只有 admin / reader：后台只属于 admin，其他人进来一律当作不存在这个页面 */
   const isAdmin = $derived(session.user?.role === 'admin');
+  $effect(() => {
+    if (!ready || !isAdmin || avatarTried) return;
+    avatarTried = true;
+    get<{ data: { profile?: { avatar?: string | null } | null } }>('/api/admin/authors/me')
+      .then((d) => (avatar = assetUrl(d.data?.profile?.avatar) || ''))
+      .catch(() => (avatar = ''));
+  });
   const denied = $derived(!isLogin && ready && !!session.user && !isAdmin);
 
   /* 深浅色：system（跟随系统）→ light → dark 三态循环；首选值记在 localStorage，
@@ -20,6 +28,20 @@
   const THEME_ORDER: ThemeMode[] = ['system', 'light', 'dark'];
   const THEME_ICON: Record<ThemeMode, string> = { system: '◐', light: '☀', dark: '☾' };
   const THEME_NAME: Record<ThemeMode, string> = { system: '跟随系统', light: '浅色', dark: '深色' };
+  /** 侧栏折叠：记在 localStorage，刷新后保持 */
+  let navCollapsed = $state(false);
+  if (typeof localStorage !== 'undefined') navCollapsed = localStorage.getItem('zero-cms-nav') === '1';
+  function toggleNav() {
+    navCollapsed = !navCollapsed;
+    try {
+      localStorage.setItem('zero-cms-nav', navCollapsed ? '1' : '0');
+    } catch {
+      /* 隐私模式写不了，本次生效即可 */
+    }
+  }
+  /** 管理员头像：读用户资料里的 image（站内相对路径也能用） */
+  let avatar = $state('');
+  let avatarTried = false;
   let themeMode = $state<ThemeMode>('system');
   if (typeof localStorage !== 'undefined') {
     const saved = localStorage.getItem('zero-cms-theme') as ThemeMode | null;
@@ -217,8 +239,27 @@
       onclick={() => (navOpen = false)}
       aria-label="关闭菜单"
       tabindex={navOpen ? 0 : -1}></button>
-    <aside class:open={navOpen}>
-      <div class="brand">Zero 后台</div>
+    <aside class:open={navOpen} class:collapsed={navCollapsed}>
+      <div class="brandrow">
+        <span class="brand">Zero 后台</span>
+        <button
+          class="fold"
+          onclick={toggleNav}
+          aria-label={navCollapsed ? '展开侧栏' : '折叠侧栏'}
+          title={navCollapsed ? '展开侧栏' : '折叠侧栏'}
+          aria-expanded={!navCollapsed}>
+          <span aria-hidden="true">{navCollapsed ? '»' : '«'}</span>
+        </button>
+      </div>
+      <div class="me" title={session.user?.name || session.user?.email || ''}>
+        <span class="ava">
+          {#if avatar}<img src={avatar} alt="" />{:else}{(session.user?.name || session.user?.email || '?').slice(0, 1).toUpperCase()}{/if}
+        </span>
+        <div class="meta">
+          <span class="who">{session.user?.name || session.user?.email}</span>
+          <button class="out" onclick={logout}>退出登录</button>
+        </div>
+      </div>
       <nav>
         {#each NAV as g (g.title)}
           <div class="grp">{g.title}</div>
@@ -243,8 +284,6 @@
         {/each}
       </nav>
       <div class="foot">
-        <span class="who">{session.user?.name || session.user?.email}</span>
-        <button class="sm" onclick={logout}>退出</button>
         <button
           class="sm theme"
           onclick={cycleTheme}
@@ -354,11 +393,112 @@
     /* 手机浏览器的地址栏会改变可视高度，用 dvh 才不会让侧栏比屏幕还长 */
     height: 100dvh;
   }
+  .brandrow {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 1.05rem 0.85rem 0.55rem 1.15rem;
+  }
   .brand {
-    font-weight: 700;
+    font-weight: 650;
     font-size: 1.02rem;
+    letter-spacing: -0.01em;
     color: var(--fg);
-    padding: 1.1rem 1.2rem 0.9rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fold {
+    margin-left: auto;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    line-height: 1;
+    color: var(--muted);
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+  .fold:hover {
+    color: var(--fg);
+    background: var(--panel-2);
+  }
+  .me {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.15rem 0.95rem 0.75rem 1.15rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0.35rem;
+  }
+  .ava {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .ava img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .me .meta {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .me .who {
+    font-size: 0.84rem;
+    color: var(--fg);
+  }
+  .me .out {
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+    color: var(--muted);
+    font-size: 0.74rem;
+  }
+  .me .out:hover {
+    color: var(--danger, var(--bad));
+  }
+  /* 折叠：只留图标与头像 */
+  aside.collapsed {
+    width: 68px;
+  }
+  aside.collapsed .brand,
+  aside.collapsed .me .meta,
+  aside.collapsed nav .grp,
+  aside.collapsed nav .txt,
+  aside.collapsed nav .cnt {
+    display: none;
+  }
+  aside.collapsed .brandrow {
+    justify-content: center;
+    padding: 1.05rem 0 0.55rem;
+  }
+  aside.collapsed .fold {
+    margin-left: 0;
+  }
+  aside.collapsed .me {
+    justify-content: center;
+    padding: 0.15rem 0 0.75rem;
+  }
+  aside.collapsed nav a {
+    justify-content: center;
+    padding: 0.55rem 0;
   }
   nav {
     flex: 1;
@@ -425,24 +565,10 @@
     padding: 0 6px;
   }
   .foot {
-    padding: 0.8rem 1rem;
+    padding: 0.55rem 0.95rem 0.85rem;
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.45rem;
+    justify-content: center;
     border-top: 1px solid var(--border);
-    font-size: 0.82rem;
-  }
-  .who {
-    flex: 1 1 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--muted);
-  }
-  .foot .theme {
-    margin-left: auto;
-    min-width: 2rem;
   }
   .foot button {
     background: transparent;
@@ -566,9 +692,6 @@
       padding: 0.7rem 0.5rem;
       justify-content: center;
     }
-    .foot .who {
-      display: none;
-    }
   }
 
   /* 手机：侧栏移出画面，由顶部条的汉堡拉出来 */
@@ -622,10 +745,7 @@
     }
     .foot {
       padding: 0.9rem 1.2rem;
-      justify-content: space-between;
-    }
-    .foot .who {
-      display: block;
+      justify-content: center;
     }
     .bar {
       display: flex;

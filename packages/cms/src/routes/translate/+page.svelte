@@ -2,8 +2,8 @@
   import { get, patch, post } from '#lib/api';
 
   /**
-   * 中文翻译工作台（纯中文站）：选文章（原文可为任意语言）→ 选翻译服务 → 一键译成中文
-   * → 可编辑预览 → 发布中文稿（固定写入 content/zh/posts）。没有「目标语言」概念。
+ * 翻译工作台：选文章（原文可为任意语言）→ 选目标语言与翻译服务 → 一键译成
+ * → 可编辑预览 → 发布译文（写入 content/<目标语言>/posts）。
    *
    * 后端口子（都在 /api/admin/translate 下）：
    *   GET  /status      provider / 是否就绪 / 可选 provider 清单（含是否需要 key）
@@ -29,6 +29,8 @@
     family: string;
     needsKey: boolean;
     providers: ProviderInfo[];
+    targets?: { code: string; label: string }[];
+    defaultTarget?: string;
   }
   interface Doc {
     id: string;
@@ -84,6 +86,8 @@
 
   /* -------- 发布中文稿 -------- */
   let publishMsg = $state('');
+  /** 目标语言：zh/en/ru/fr/de/es/ar/ja/ko，选项来自后端 */
+  let target = $state('zh');
   let overwrite = $state(false);
   let publishing = $state(false);
   let published: { path: string; backend: string; build: { triggered: boolean; error?: string } } | null | undefined = $state(undefined);
@@ -91,6 +95,8 @@
   const selectedDoc = $derived(docs.find((d) => d.path === docPath) ?? null);
   const currentProviders = $derived(status?.providers ?? []);
   const activeProviderInfo = $derived(currentProviders.find((p) => p.kind === provider) ?? null);
+  const targetOptions = $derived(status?.targets ?? [{ code: 'zh', label: '简体中文' }]);
+  const targetName = $derived(targetOptions.find((t) => t.code === target)?.label ?? '简体中文');
 
   function flash(msg: string) {
     notice = msg;
@@ -182,19 +188,19 @@
       const d = await post<{
         data: {
           source: { path: string; title: string };
-          zh: { front: Record<string, unknown>; body: string; translatedWith: { provider: string; segments: number; retries: number } };
+          result: { front: Record<string, unknown>; body: string; translatedWith: { provider: string; segments: number; retries: number } };
         };
-      }>('/api/admin/translate/document', { path: docPath });
+      }>('/api/admin/translate/document', { path: docPath, target });
       const r = d.data;
-      zhFront = r.zh.front ?? {};
-      trTitle = String(r.zh.front?.title ?? '');
-      trDescription = String(r.zh.front?.description ?? '');
-      trSummary = String(r.zh.front?.summary ?? '');
-      trBody = r.zh.body ?? '';
+      zhFront = r.result.front ?? {};
+      trTitle = String(r.result.front?.title ?? '');
+      trDescription = String(r.result.front?.description ?? '');
+      trSummary = String(r.result.front?.summary ?? '');
+      trBody = r.result.body ?? '';
       srcTitle = r.source?.title ?? '';
-      withInfo = r.zh.translatedWith ?? null;
-      publishMsg = `发布中文稿：${srcTitle}`.slice(0, 180);
-      flash(`已译成中文（${withInfo?.provider ?? '?'} · ${withInfo?.segments ?? 0} 段${withInfo?.retries ? ` · 重试 ${withInfo.retries}` : ''}）`);
+      withInfo = r.result.translatedWith ?? null;
+      publishMsg = `发布${targetName}稿：${srcTitle}`.slice(0, 180);
+      flash(`已译成${targetName}（${withInfo?.provider ?? '?'} · ${withInfo?.segments ?? 0} 段${withInfo?.retries ? ` · 重试 ${withInfo.retries}` : ''}）`);
     } catch (e) {
       error = e instanceof Error ? e.message : '翻译失败';
     } finally {
@@ -205,7 +211,7 @@
   async function doPublish() {
     error = '';
     if (!docPath || (!trBody && !trTitle)) {
-      flash('没有可发布的中文稿，请先翻译');
+      flash(`没有可发布的${targetName}稿，请先翻译`);
       return;
     }
     publishing = true;
@@ -219,6 +225,7 @@
         front,
         body: trBody,
         message: publishMsg || undefined,
+        target,
         overwrite,
       });
       published = d.data;
@@ -260,7 +267,7 @@
 </script>
 
 <div class="row spread head">
-  <h2>中文翻译工作台</h2>
+  <h2>翻译工作台</h2>
   <div class="row">
     <span class="muted small">
       当前：{status ? `${status.provider}${status.model ? ` · ${status.model}` : ''}` : '—'}
@@ -279,18 +286,18 @@
     <p class="muted small">{status.hint || '未配置翻译服务。'}</p>
     <p class="small">
       最快上手（免密钥）：在下方「服务」里选 <strong>mymemory</strong> / <strong>libretranslate</strong> / <strong>google</strong>，
-      然后点「一键译成中文」即可自动保存并试译。质量与配额较低，适合先跑通。
+然后点「一键译成…」即可自动保存并试译。质量与配额较低，适合先跑通。
     </p>
     <p class="small">
       要更好的效果：选 <strong>deepseek / qianwen / moonshot / doubao / grok / zhipu / openai</strong> 之一，
       在「密钥」里填对应 API Key（端点与模型已按预设填好），保存后即可用。也可到
-      <a href="/settings">「设置 - 机器翻译」</a> 调更多项。所有译文固定为简体中文。
+      <a href="/settings">「设置 - 机器翻译」</a> 调更多项。译文语言在开始翻译前选。
     </p>
   </section>
 {/if}
 
 <section class="card blk">
-  <h3>工作台：原文（可为外文）→ 中文</h3>
+  <h3>工作台：原文 → {targetName}</h3>
   <div class="work">
     <div class="col">
       <span class="lbl">1 · 原文（可为任意语言）</span>
@@ -306,11 +313,17 @@
       </label>
       <button class="sm" onclick={() => void loadDocs()} disabled={docLoading}>{docLoading ? '读取中…' : '刷新文章列表'}</button>
       {#if selectedDoc}<p class="muted small path">{selectedDoc.path}</p>{/if}
-      <p class="muted small">原文可能仍是外文，也可能已是中文；译文一律是简体中文。</p>
+原文可以是任意语言，译文写进上面选的目标语言。
     </div>
 
     <div class="col">
-      <span class="lbl">2 · 翻译服务（固定译为简体中文）</span>
+      <span class="lbl">2 · 目标语言与翻译服务</span>
+      <label>
+        译成
+        <select bind:value={target}>
+          {#each targetOptions as t (t.code)}<option value={t.code}>{t.label}</option>{/each}
+        </select>
+      </label>
       <label>
         服务
         <select bind:value={provider} onchange={onProviderChange}>
@@ -329,7 +342,7 @@
         <p class="muted small">免费公共接口，无需密钥，配额低，失败会原样报错。</p>
       {/if}
       <button class="primary" onclick={() => void doTranslate()} disabled={translating || !docPath}>
-        {translating ? '翻译中…' : '一键译成中文'}
+        {translating ? '翻译中…' : `一键译成${targetName}`}
       </button>
     </div>
   </div>
@@ -337,11 +350,11 @@
 
 {#if hasResult}
   <section class="card blk edit">
-    <h3>3 · 编辑中文稿</h3>
+    <h3>3 · 编辑{targetName}稿</h3>
     {#if withInfo}
       <p class="muted small">
-        由 {withInfo.provider} 译成中文 · {withInfo.segments} 段{withInfo.retries ? ` · 重试 ${withInfo.retries} 次` : ''} ·
-        date/author/comments 等字段保持不变，仅标题/摘要/描述与正文为中文。
+        由 {withInfo.provider} 译成{targetName} · {withInfo.segments} 段
+date/author/comments 等字段保持不变，仅标题/摘要/描述与正文翻译。
       </p>
     {/if}
     <div class="fields">
@@ -356,9 +369,9 @@
     <div class="pubrow">
       <label class="tight grow">提交说明（可选）<input bind:value={publishMsg} placeholder="写进仓库的说明" /></label>
       <label class="chk"><input type="checkbox" bind:checked={overwrite} /> 覆盖已存在文件</label>
-      <button class="primary" onclick={() => void doPublish()} disabled={publishing}>{publishing ? '发布中…' : '发布中文稿'}</button>
+      <button class="primary" onclick={() => void doPublish()} disabled={publishing}>{publishing ? '发布中…' : `发布${targetName}稿`}</button>
     </div>
-    <p class="muted small">中文稿固定写入 content/zh/posts/&lt;源文件名&gt;.md；源文件本身已在中文目录时后端会拒绝（避免译自己覆盖自己）。</p>
+    <p class="muted small">写进 content/&lt;目标语言&gt;/posts/&lt;源文件名&gt;.md。目标语言不是站点默认语言时，要先在 hugo.toml 配好那门语言，否则后端会拒绝（写进去也不会出现在前台）。</p>
 
     {#if published}
       <p class="ok">
