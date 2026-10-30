@@ -80,7 +80,7 @@ Hugo 主题之外的**全套动态后端**：评论、点赞 / 收藏、邮件�
 | pnpm | ≥ 11（workspace 协议必需，npm / yarn 装不上；`pnpm-workspace.yaml` 里的 `allowBuilds` 按这一版写） | `pnpm -v` |
 | Hugo | extended，本地已验证 0.165.0；主题 `min_version = 0.128.0`。Pages 上要在环境变量里钉 `HUGO_VERSION`，否则用平台默认那个 | `hugo version` 必须带 `+extended` |
 | wrangler | 由依赖提供（`pnpm dlx wrangler` 也可） | `pnpm exec wrangler -v` |
-| Cloudflare 账号 | 免费档即可：D1 / R2 / KV / Queues / Pages / Cron | — |
+| Cloudflare 账号 | 免费档即可：D1 / R2 / KV / Queues / Pages / Cron。**新账号要先在控制台 R2 页点一次启用**（要绑支付方式，免费额度不变），否则 `pnpm setup` 建桶那一步会回 `10042` |
 
 ---
 
@@ -139,6 +139,10 @@ wrangler 会静默换一个随机端口，只有这一行说真话。
 
 迁移必须在 `packages/api` 目录下由 wrangler 执行（`pnpm db:migrate:local` 已经帮你切好目录，
 在仓库根直接 `npx wrangler d1 execute` 会报 `Couldn't find a D1 DB with the name 'zero-db'`）。
+
+顺序上**先迁移、再起 `dev:api` 更稳**。反过来（dev 正在初始化本地 D1 的那一刻并行跑迁移）偶尔会看到
+`X [ERROR] internal error; reference = …` —— 那是 wrangler 自己的内部错误，重跑一次 `pnpm db:migrate:local`
+就好；持续失败才需要删掉 `packages/api/.wrangler` 重来（先停掉 `dev:api`，否则 SQLite 文件被占用删不掉）。
 
 ### 3. 起后台
 
@@ -570,8 +574,8 @@ pnpm db:migrate:remote     # 线上 D1
 cd packages/api && pnpm db:generate   # 改了 schema.ts 之后生成新迁移
 ```
 
-迁移目录是 `packages/api/migrations`，按文件名顺序应用，已到 `0010`
-（最后一条给 `users` 加了 `totp_at_login`：普通用户绑定验证器后登录是否要动态码，默认要）。
+迁移目录是 `packages/api/migrations`，按文件名顺序应用，已到 `0014`（15 个文件；
+最后两条是 `0013` 去掉 `email_logs.cc`、`0014` 把评论与计数里的文章地址统一成一种写法）。
 线上部署走 `pnpm deploy:api`，它默认先 `migrations apply --remote` 再发布。
 
 Waline / Twikoo 的历史评论可以搬进来：

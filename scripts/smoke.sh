@@ -30,7 +30,12 @@ SMOKE_SLUG="/links/"
 SMOKE_POST_PATH=""
 REACT_SLUG="/posts/nowork/"
 
-CURL=(curl -sS --max-time 20 -H 'accept: application/json' -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36')
+# 每次跑用一个新的合成来源 IP：本机 wrangler dev 里所有请求的 IP 都是 127.0.0.1，而
+# 匿名评论有一条「同 IP 突发 2 条 / 5 分钟」的限流，连跑两遍冒烟第二遍就会成片 429。
+# 线上不用管这一条 —— Cloudflare 边缘会把客户端自带的 cf-connecting-ip 直接覆盖掉。
+SMOKE_IP="198.51.100.$(( (RANDOM % 250) + 1 ))"
+
+CURL=(curl -sS --max-time 20 -H 'accept: application/json' -H "cf-connecting-ip: $SMOKE_IP" -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36')
 
 req() {
   local method="$1" path="$2" expect="$3" data="${4:-}" label="${5:-}" cookie="${6:-}"

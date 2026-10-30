@@ -38,7 +38,7 @@ zero-stack 是「Hono Worker（zero-api）+ SvelteKit 后台（zero-cms）+ 评�
 |---|---|
 | Node.js | >= 22（wrangler 4.x 强制，低于 22 会在 `wrangler deploy` 时报错）|
 | 包管理 | pnpm ≥ 11（根 `package.json` 的 `engines`、CI、`pnpm-workspace.yaml` 里 `allowBuilds` 那份白名单都按这一版口径写；装旧版时那个键不认，esbuild/workerd 的构建脚本不会被放行） |
-| Cloudflare 账户 | 已开通 Workers、Pages、D1、KV、R2、Queues 免费额度即可起步 |
+| Cloudflare 账户 | 已开通 Workers、Pages、D1、KV、R2、Queues 免费额度即可起步。**全新账号要先在控制台「R2 Object Storage」页点一次启用**（要求绑支付方式，免费额度不变）：没启用时 `wrangler r2 bucket create` 回 `code: 10042`，`pnpm setup` 会停在这一步 |
 | wrangler | 仓库已作为 devDependency 安装，无需全局安装 |
 | Hugo | 只有你要自己本地构建前台时才需要：extended 版，本项目按 **0.165.0** 验证（`create:site` 生成的两个 workflow 与 Pages 的 `HUGO_VERSION` 都钉这个版本）。主题 `theme.toml` 的 `min_version` 是 0.128.0 |
 | 一个能收发邮件的邮箱 | SMTP 通道用；也可改用 Resend 或 Cloudflare Email Sending |
