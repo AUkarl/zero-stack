@@ -90,6 +90,7 @@
     <div>
       <h3>友链要求</h3>
       <p class="muted small">引导语一段 + 条目若干，前台排成有序列表（1. 2. 3.）。条目最多 {CAP.requirements} 条，空白条目保存时自动丢掉。</p>
+      <p class="muted small">引导语与条目都支持 Markdown 与站内短链：<code>[文字](https://…)</code>、<code>[[文章标识符]]</code>。</p>
     </div>
     <button class="sm primary" onclick={addReq} disabled={apply.requirements.length >= CAP.requirements}>＋ 添加一条</button>
   </div>

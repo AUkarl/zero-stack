@@ -35,6 +35,7 @@
   <label>
     描述文字
     <textarea rows="2" bind:value={home.desc} maxlength={LIMIT.short} placeholder="这里永远有一摩尔的不确定性"></textarea>
+    <span class="muted small">支持 Markdown 与站内短链：<code>[文字](https://…)</code>、<code>[[文章标识符]]</code></span>
     <span class="muted small cnt">{home.desc.length}/{LIMIT.short} 字{home.desc.length >= LIMIT.short ? '（已到上限）' : ''}</span>
   </label>
   <div class="pv">
