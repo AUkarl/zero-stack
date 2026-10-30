@@ -218,8 +218,11 @@ function backfillExampleData(siteDir: string, a: Answers): number {
   if (existsSync(file('data/authors.yaml'))) {
     const raw = readFileSync(file('data/authors.yaml'), 'utf8');
     const patched = raw
-      .replace(/^(\s*)bio_zh:\s*["']?占位作者[^\n]*$/m, '$1bio_zh: ""')
-      .replace(/https:\/\/github\.com\/your-username/i, handle ? `https://github.com/${handle}` : 'https://github.com');
+      /* 主题演示站署的是作者本人的名字：新站不能背着别人的署名出去 ——
+         名字换成中性的「站长」，简介清空，GitHub 指向向导里填的那个用户名（没填就留空）。 */
+      .replace(/^(\s*)name:\s*["']?知止["']?\s*$/m, '$1name: "站长"')
+      .replace(/^(\s*)bio_zh:\s*["']?(?:占位作者|知止（GitHub: AUkarl）)[^\n]*$/m, '$1bio_zh: ""')
+      .replace(/https:\/\/github\.com\/(?:your-username|AUkarl)/gi, handle ? `https://github.com/${handle}` : 'https://github.com');
     if (patched !== raw) {
       writeFileSync(file('data/authors.yaml'), patched);
       changed++;
@@ -251,6 +254,18 @@ function backfillExampleData(siteDir: string, a: Answers): number {
         if (fixed !== body) writeFileSync(p, fixed);
       }
     }
+  }
+  /* 演示站的作者名还写在这两份里：SEO 的 meta author 与时刻卡片的昵称。
+     清空之后主题会退回站点名 / params.author，不会把演示站主的名字留在新站上。 */
+  const seo = read('data/seo.json');
+  if (seo && text(seo.site_author) === '知止') {
+    seo.site_author = '';
+    save('data/seo.json', seo);
+  }
+  const moments = read('data/moments.json');
+  if (moments && text(moments.nickname) === '知止') {
+    moments.nickname = '';
+    save('data/moments.json', moments);
   }
   return changed;
 }
