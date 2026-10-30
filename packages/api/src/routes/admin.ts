@@ -28,6 +28,7 @@ import { linksFilePath } from '../services/friends-file';
 import { setSiteDefaultAuthor, writeSwitchSnapshot, syncCommentCsp } from './frontend';
 import { purgePageUrls } from '../services/cf-purge';
 import { inspectComment, invalidatePatternFile, DEFAULT_SPAM_PATTERN_TEXT, SPAM_PATTERN_FILE, resetPatternCache } from '../services/moderation';
+import { aiModerate } from '../services/ai';
 import { clientIp, ipFallbackCount } from '../lib/http';
 import { datedSlug } from '../lib/postName';
 import { errorMessage, fail, ok, okRows } from '../lib/errors';
@@ -276,6 +277,45 @@ app.post('/comments/:id/moderate', async (c) => {
     ip: clientIp(c),
   });
   return ok({ id, status: next });
+});
+
+/**
+ * 对单条评论跑一次 AI 复核：模型结论直接落到状态。
+ * 与自动审核同一个服务与提示词，区别只在这里由人点按钮、结果当场回显。
+ * AI 没配或调用失败一律 502 报错，不静默改状态。
+ */
+app.post('/comments/:id/ai-review', async (c) => {
+  const admin = requireAdmin(c);
+  const id = c.req.param('id');
+  const db = createDb(c.env);
+  const rows = await db.select().from(comments).where(eq(comments.id, id)).limit(1);
+  const row = rows[0];
+  if (!row) fail(404, '评论不存在');
+  const ai = await aiModerate(c.env, {
+    content: row.content,
+    authorName: row.authorName,
+    authorEmail: row.authorEmail,
+    authorLink: row.authorLink,
+    postSlug: row.postSlug,
+  }).catch((e: unknown) => {
+    fail(502, e instanceof Error ? e.message : 'AI 复核失败');
+  });
+  const next = ai.verdict === 'approve' ? 'approved' : ai.verdict === 'spam' ? 'spam' : 'pending';
+  await db
+    .update(comments)
+    .set({
+      status: next,
+      spamReason: next === 'approved' ? row.spamReason : ai.reason ? `AI：${ai.reason}` : row.spamReason,
+    })
+    .where(eq(comments.id, id));
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'comment',
+    target: id,
+    detail: { from: row.status, to: next, ai: ai.verdict, reason: ai.reason },
+    ip: clientIp(c),
+  });
+  return ok({ id, verdict: ai.verdict, reason: ai.reason, status: next });
 });
 
 /** 批量处理审核队列，一次点击清掉一天的垃圾评论 */

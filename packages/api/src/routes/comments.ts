@@ -16,6 +16,7 @@ import { rateLimit, rateLimitLocal } from '../lib/rate-limit';
 import { requireAdmin, tokenFromRequest } from '../middleware/auth';
 import { bannedByToken } from '../services/auth';
 import { inspectComment, type Verdict } from '../services/moderation';
+import { aiComposeReply, aiModerate } from '../services/ai';
 import { deleteCommentSubtree } from '../services/comment-tree';
 import { notifyNewComment, type NotifyParent } from '../services/comment-notify';
 import { commentLikeStatsForSlug, targetExists, toggleCommentLike } from './likes';
@@ -737,6 +738,30 @@ app.post('/', async (c) => {
     status = 'pending';
   }
 
+  /*
+   * AI 复核：只在本地规则已放行时跑，模型说不过就不放行。
+   * 调用失败维持本地判定（fail-open）——AI 服务挂了不能把整个评论区一起关掉，
+   * 否则「开了 AI 审核」反而变成「评论区永久待审」。
+   */
+  if (!trusted && status === 'approved' && (await getConfigBool(env, 'aiModerationEnabled', false))) {
+    try {
+      const ai = await aiModerate(env, {
+        content,
+        authorName: name,
+        authorEmail: email,
+        authorLink: link,
+        postSlug: slug,
+        parentContent: parent?.content ?? null,
+      });
+      if (ai.verdict !== 'approve') {
+        status = ai.verdict === 'spam' ? 'spam' : 'pending';
+        spamReason = ai.reason ? `AI：${ai.reason}` : 'AI 审核未通过，转人工';
+      }
+    } catch (err) {
+      console.warn('[zero-api] AI 审核异常，维持本地判定', err);
+    }
+  }
+
   // ownerKey 每次新生成，只有本人浏览器持有
   const ownerKey = user ? null : randomToken(16);
 
@@ -819,6 +844,64 @@ app.post('/', async (c) => {
     const chainNow = avatarChainForEmail(email);
     await refreshAvatarCache(env, email, chainNow, 900).catch(() => false);
     ctx?.waitUntil?.(refreshAvatarCache(env, email, chainNow).catch(() => false));
+  }
+
+  /* AI 自动回复：只回顶层评论，以站长身份插入一条已通过的回复。
+     放后台任务里跑，生成或入库失败只记日志，不影响这条评论本身已经成功。 */
+  if (!trusted && status === 'approved' && !body.parentId && (await getConfigBool(env, 'aiReplyEnabled', false))) {
+    const task = (async () => {
+      const boss = (
+        await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.role, 'admin'))
+          .limit(1)
+      )[0];
+      if (!boss) return;
+      const bossName = (boss.name ?? '').trim() || '站长';
+      const replyText = await aiComposeReply(env, { content, authorName: name, postSlug: slug });
+      const replyNow = Math.floor(Date.now() / 1000);
+      const replyId = newId();
+      await db.insert(comments).values({
+        id: replyId,
+        postSlug: slug,
+        parentId: id,
+        depth: 2,
+        rootId: id,
+        authorType: 'user',
+        authorId: boss.id,
+        authorName: bossName,
+        authorEmail: boss.email,
+        authorLink: null,
+        content: replyText,
+        status: 'approved',
+        spamScore: null,
+        spamReason: 'AI 自动回复',
+        ipHash: null,
+        country: null,
+        city: null,
+        browser: null,
+        os: null,
+        device: null,
+        pinned: false,
+        featured: false,
+        ownerKey: null,
+        userAgent: null,
+        isLegacy: false,
+        legacyId: null,
+        createdAt: replyNow,
+        updatedAt: replyNow,
+        editedAt: null,
+      });
+      await notifyNewComment({
+        env,
+        slug,
+        comment: { id: replyId, content: replyText, authorName: bossName, authorEmail: boss.email ?? null, authorId: boss.id, status: 'approved' },
+        parent: { authorName: name, authorEmail: email || null, authorId: user?.id ?? null, content },
+      });
+    })().catch((err) => console.warn('[zero-api] AI 自动回复失败', err));
+    if (ctx?.waitUntil) ctx.waitUntil(task);
+    else void task;
   }
 
   const shape = makeShaper(

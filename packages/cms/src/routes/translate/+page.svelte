@@ -9,8 +9,8 @@
    *   GET  /status      provider / 是否就绪 / 可选 provider 清单（含是否需要 key）
    *   GET  /documents   列 content/zh/posts 已发布文章（后端缓存 5 分钟），无语言参数
    *   POST /document    {path} 正文按段落译成简体中文，返回可编辑草稿，不写盘
-   *   POST /publish     {path,front,body,message,overwrite} 写入 content/zh/posts/<源文件名>.md 并触发重建
-   *   PATCH /api/admin/config  写 translateProvider / translateEndpoint / translateModel / translateKey
+   *   POST /publish     {path,front,body,message,overwrite} 写入 content/<目标语言>/posts/<源文件名>.md 并触发重建
+   *   PATCH /api/admin/config  只写 translateProvider；端点 / 模型 / 密钥在「设置 → 机器翻译」
    *
    * provider 的 kind 字符串必须与后端 services/translate.ts 的 PRESETS、设置页下拉完全一致。
    */
@@ -19,7 +19,7 @@
     kind: string;
     label: string;
     needsKey: boolean;
-    family: 'none' | 'workers' | 'chat' | 'free';
+    family: 'none' | 'workers' | 'chat' | 'public' | 'keyed' | 'free';
   }
   interface TrStatus {
     provider: string;
@@ -39,36 +39,14 @@
     date: string;
   }
 
-  /** 与后端 PRESETS 对齐的默认端点/模型：切换 provider 时预填，可手动改 */
-  const PRESET_DEFAULTS: Record<string, { endpoint: string; model: string }> = {
-    none: { endpoint: '', model: '' },
-    'workers-ai': { endpoint: '', model: '@cf/meta/m2m100-1.2b' },
-    openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-    deepseek: { endpoint: 'https://api.deepseek.com', model: 'deepseek-chat' },
-    qianwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-    moonshot: { endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-    doubao: { endpoint: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k' },
-    grok: { endpoint: 'https://api.x.ai/v1', model: 'grok-2-latest' },
-    zhipu: { endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
-    mymemory: { endpoint: 'https://api.mymemory.translated.net/get', model: '' },
-    libretranslate: { endpoint: 'https://translate.libretranslate.com/translate', model: '' },
-    google: { endpoint: 'https://translate.googleapis.com/translate_a/single', model: '' },
-  };
-
   let status = $state<TrStatus | null>(null);
   let loading = $state(false);
   let error = $state('');
   let notice = $state('');
 
-  /* -------- 配置区（provider / 端点 / 模型 / 密钥） -------- */
+  /* -------- 服务选择：只选 provider，端点/模型/密钥统一在「设置 → 机器翻译」 -------- */
   let provider = $state('none');
-  let endpoint = $state('');
-  let model = $state('');
-  let apiKey = $state('');
-  let savedProvider = $state('none');
-  let savedEndpoint = $state('');
-  let savedModel = $state('');
-  let dirty = $derived(provider !== savedProvider || endpoint !== savedEndpoint || model !== savedModel);
+  let savingProvider = $state(false);
 
   /* -------- 工作台：原文（可为外文）→ 中文，单向流程 -------- */
   let docs = $state<Doc[]>([]);
@@ -107,17 +85,9 @@
     loading = true;
     error = '';
     try {
-      const [st, cfg] = await Promise.all([
-        get<{ data: TrStatus }>('/api/admin/translate/status'),
-        get<{ data: Record<string, string> }>('/api/admin/config'),
-      ]);
+      const st = await get<{ data: TrStatus }>('/api/admin/translate/status');
       status = st.data;
-      provider = cfg.data.translateProvider || st.data.provider || 'none';
-      endpoint = cfg.data.translateEndpoint || '';
-      model = cfg.data.translateModel || '';
-      savedProvider = provider;
-      savedEndpoint = endpoint;
-      savedModel = model;
+      provider = st.data.provider || 'none';
     } catch (e) {
       error = e instanceof Error ? e.message : '读取翻译状态失败';
       status = null;
@@ -126,37 +96,22 @@
     }
   }
 
-  function onProviderChange() {
-    const def = PRESET_DEFAULTS[provider] ?? { endpoint: '', model: '' };
-    endpoint = def.endpoint;
-    model = def.model;
-  }
-
-  /** 若 provider/端点/模型相对后端有改动，先写回配置，保证 /document 用的是当前选择 */
-  async function ensureConfig() {
-    const body: Record<string, string> = { translateProvider: provider, translateEndpoint: endpoint, translateModel: model };
-    if (apiKey.trim()) body.translateKey = apiKey.trim();
-    await patch('/api/admin/config', body);
-    savedProvider = provider;
-    savedEndpoint = endpoint;
-    savedModel = model;
-    apiKey = '';
-    const st = await get<{ data: TrStatus }>('/api/admin/translate/status');
-    status = st.data;
-  }
-
-  /** 密钥留空提交等于「不改」，填错的那份要卸掉只能显式发 null */
-  async function clearKey() {
-    if (!window.confirm('清除已保存的翻译密钥？之后要重新填才能调用翻译。')) return;
+  /**
+   * 选完服务立刻写回 translateProvider（端点/模型/密钥在设置页维护）。
+   * 写回后再拉一次状态：是否「可用」取决于设置页里那份配置，不能拿旧状态骗自己。
+   */
+  async function onProviderChange() {
+    savingProvider = true;
     error = '';
     try {
-      await patch('/api/admin/config', { translateKey: null });
-      apiKey = '';
+      await patch('/api/admin/config', { translateProvider: provider });
       const st = await get<{ data: TrStatus }>('/api/admin/translate/status');
       status = st.data;
-      flash('已清除翻译密钥');
+      flash(st.data.ready ? `已切换到 ${provider}` : `已切换到 ${provider}，还缺端点/密钥，去「设置 → 机器翻译」补齐`);
     } catch (e) {
-      error = e instanceof Error ? e.message : '清除失败';
+      error = e instanceof Error ? e.message : '保存翻译服务失败';
+    } finally {
+      savingProvider = false;
     }
   }
 
@@ -184,7 +139,6 @@
     }
     translating = true;
     try {
-      if (dirty || apiKey.trim()) await ensureConfig();
       const d = await post<{
         data: {
           source: { path: string; title: string };
@@ -285,13 +239,14 @@
     <h3>还没有可用的翻译服务</h3>
     <p class="muted small">{status.hint || '未配置翻译服务。'}</p>
     <p class="small">
-      最快上手（免密钥）：在下方「服务」里选 <strong>mymemory</strong> / <strong>libretranslate</strong> / <strong>google</strong>，
-然后点「一键译成…」即可自动保存并试译。质量与配额较低，适合先跑通。
+      最快上手（免密钥）：在下方「服务」里选 <strong>MyMemory</strong>，直接点「一键译成…」即可。
+      公共接口配额低，只适合先跑通。
     </p>
     <p class="small">
-      要更好的效果：选 <strong>deepseek / qianwen / moonshot / doubao / grok / zhipu / openai</strong> 之一，
-      在「密钥」里填对应 API Key（端点与模型已按预设填好），保存后即可用。也可到
-      <a href="/settings">「设置 - 机器翻译」</a> 调更多项。译文语言在开始翻译前选。
+      免费额度：选 <strong>百度翻译</strong> 或 <strong>有道翻译</strong>，到
+      <a href="/settings">「设置 → 机器翻译」</a> 填好对应的 App ID / 密钥即可。
+      要更好的效果：选 <strong>deepseek / qianwen / moonshot / doubao / grok / zhipu / openai</strong>，
+      在设置里填 API Key 与模型。译文语言在开始翻译前选。
     </p>
   </section>
 {/if}
@@ -326,22 +281,23 @@
       </label>
       <label>
         服务
-        <select bind:value={provider} onchange={onProviderChange}>
+        <select bind:value={provider} onchange={onProviderChange} disabled={savingProvider}>
           {#each currentProviders as p (p.kind)}
-            <option value={p.kind}>{p.label}{p.needsKey ? '（需密钥）' : '（免密钥）'}</option>
+            <option value={p.kind}>{p.label}{p.kind === 'none' ? '' : p.needsKey ? '（需密钥）' : '（免密钥）'}</option>
           {/each}
         </select>
       </label>
-      <div class="two">
-        <label class="tight">端点<input bind:value={endpoint} placeholder="留空用服务默认" /></label>
-        <label class="tight">模型<input bind:value={model} placeholder="如 gpt-4o-mini" /></label>
-      </div>
-      <label class="tight">密钥（留空不改）<input type="password" bind:value={apiKey} placeholder="deepseek / qianwen 等需填" /></label>
-      <button type="button" class="sm" onclick={() => void clearKey()}>清除已存密钥</button>
-      {#if activeProviderInfo?.family === 'free'}
+      <p class="muted small">
+        端点、模型、密钥和百度/有道凭据都在
+        <a href="/settings">「设置 → 机器翻译」</a>
+        里改，这里只选服务。
+      </p>
+      {#if activeProviderInfo?.family === 'public'}
         <p class="muted small">免费公共接口，无需密钥，配额低，失败会原样报错。</p>
+      {:else if activeProviderInfo?.family === 'keyed'}
+        <p class="muted small">需要在设置里填好该服务商的 App ID / 密钥；免费额度用完会返回服务商原文。</p>
       {/if}
-      <button class="primary" onclick={() => void doTranslate()} disabled={translating || !docPath}>
+      <button class="primary" onclick={() => void doTranslate()} disabled={translating || !docPath || savingProvider}>
         {translating ? '翻译中…' : `一键译成${targetName}`}
       </button>
     </div>
@@ -423,11 +379,6 @@ date/author/comments 等字段保持不变，仅标题/摘要/描述与正文翻
     font-size: 0.78rem;
     color: var(--muted);
     font-weight: 600;
-  }
-  .two {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
-    gap: 0.5rem;
   }
   .tight {
     display: flex;

@@ -47,8 +47,9 @@
     ['none', '不使用'],
     ['generic', '自建 HTTP 服务'],
     ['netease', '网易易盾'],
-    ['aliyun', '阿里云内容安全'],
-    ['tencent', '腾讯云天御'],
+    ['aliyun', '阿里绿网（内容安全）'],
+    ['tencent', '腾讯云天御（内容安全）'],
+    ['moderatejs', 'moderate.js 自建服务'],
   ];
 
   /** RuleHit.source → 人话标签 */
@@ -72,14 +73,10 @@
     'spamKeywords',
     'spamCustomRegex',
     'spamProviderKind',
-    'spamProviderEndpoint',
-    'spamProviderKeyId',
-    'spamProviderSecret',
   ] as const;
 
   let cfg = $state<Record<string, string>>({});
   let saved = $state<Record<string, string>>({});
-  let hasSecret = $state<Record<string, boolean>>({});
   let keywords = $state<string[]>([]);
   let customRegex = $state('');
   let loading = $state(false);
@@ -116,12 +113,11 @@
     loading = true;
     error = '';
     try {
-      const d = await get<{ data: Record<string, string>; hasSecret?: Record<string, boolean> }>('/api/admin/config');
+      const d = await get<{ data: Record<string, string> }>('/api/admin/config');
       const pick: Record<string, string> = {};
       for (const k of RULE_KEYS) pick[k] = d.data[k] ?? '';
       cfg = pick;
       saved = { ...pick };
-      hasSecret = d.hasSecret ?? {};
       try {
         const parsed = JSON.parse(cfg.spamKeywords || '[]');
         keywords = Array.isArray(parsed) ? parsed.map(String) : [];
@@ -190,18 +186,20 @@
     }
   }
 
-  /**
-   * 密钥读取恒回空串，「留空提交」的含义是不改；要真把填错的那份清掉得显式发 null，
-   * 否则服务商用错凭据时就只能改着玩、永远卸不下来。
-   */
-  async function clearSecret(key: 'spamProviderKeyId' | 'spamProviderSecret') {
-    if (!window.confirm(`清除已存的「${key === 'spamProviderKeyId' ? 'KeyId / AccessKey' : 'Secret'}」？服务商立刻取不到凭据。`)) return;
+  /** AI 复核：只处理单条，结论由后端落库，成功后刷新队列 */
+  let aiBusy = $state('');
+  async function aiReview(id: string) {
+    aiBusy = id;
     error = '';
     try {
-      await patch('/api/admin/config', { [key]: null });
-      await load();
+      const d = await post<{ data: { verdict: string; reason: string; status: string } }>(`/api/admin/comments/${id}/ai-review`);
+      notice = `AI 判定：${d.data.verdict}${d.data.reason ? `（${d.data.reason}）` : ''}，状态已更新为 ${d.data.status}`;
+      setTimeout(() => (notice = ''), 6000);
+      await loadQueue();
     } catch (e) {
       error = msg(e);
+    } finally {
+      aiBusy = '';
     }
   }
 
@@ -458,7 +456,10 @@
     <section class="card">
       <h4>外部审核服务商</h4>
       <p class="muted small">
-        服务商只做加法：它说垃圾才算加到分上，异常或超时 fail-open。密钥字段读取时显示「已设置」，留空即保持原值不变。
+        服务商只做加法：它说垃圾才算加到分上，异常或超时 fail-open。这里只选服务商；
+        Endpoint 与密钥在
+        <a href="/settings">「设置 → 评论审核服务商」</a>
+        填。
       </p>
       <div class="fields">
         <label>
@@ -468,26 +469,6 @@
               <option value={v}>{label}</option>
             {/each}
           </select>
-        </label>
-        <label class="full">
-          Endpoint
-          <input bind:value={cfg.spamProviderEndpoint} placeholder="https://…/check" />
-        </label>
-        <label>
-          KeyId / AccessKey
-          <input type="password" bind:value={cfg.spamProviderKeyId} placeholder={hasSecret.spamProviderKeyId ? '已设置，留空不改' : '选填'} />
-          {#if hasSecret.spamProviderKeyId}
-            <span class="ok hint">已设置</span>
-            <button type="button" class="sm" onclick={() => void clearSecret('spamProviderKeyId')}>清除已存</button>
-          {/if}
-        </label>
-        <label>
-          Secret
-          <input type="password" bind:value={cfg.spamProviderSecret} placeholder={hasSecret.spamProviderSecret ? '已设置，留空不改' : '选填'} />
-          {#if hasSecret.spamProviderSecret}
-            <span class="ok hint">已设置</span>
-            <button type="button" class="sm" onclick={() => void clearSecret('spamProviderSecret')}>清除已存</button>
-          {/if}
         </label>
       </div>
     </section>
@@ -622,6 +603,9 @@
               <td>{timeAgo(r.createdAt)}</td>
               <td class="ops">
                 <button class="sm" onclick={() => void moderate(r.id, 'approve')}>放行</button>
+                <button class="sm" onclick={() => void aiReview(r.id)} disabled={aiBusy === r.id}>
+                  {aiBusy === r.id ? '复核中…' : 'AI 复核'}
+                </button>
                 <button class="sm danger" onclick={() => void moderate(r.id, 'reject')}>删除</button>
               </td>
             </tr>
@@ -658,9 +642,6 @@
   }
   .fields.tight {
     margin-top: 0.4rem;
-  }
-  .fields .full {
-    grid-column: 1 / -1;
   }
   .hint {
     font-size: 0.72rem;

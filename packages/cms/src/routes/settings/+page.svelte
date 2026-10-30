@@ -28,6 +28,8 @@
     fields: Field[];
     /** 分了小节的组按节显示，隐藏的通道字段不占位；没写的组一马平川 */
     sections?: Section[];
+    /** 按哪个配置键决定哪些小节可见；缺省是发信通道 emailProvider */
+    providerKey?: string;
   }
 
   const PROVIDERS = [
@@ -36,6 +38,32 @@
     { value: 'twikoo', label: 'Twikoo' },
     { value: 'giscus', label: 'Giscus' },
     { value: 'artalk', label: 'Artalk' },
+  ];
+
+  /** 与后端 services/translate.ts 的 PRESETS kind 一一对应，改一处必须改另一处 */
+  const TRANSLATE_PROVIDERS = [
+    { value: 'none', label: '不使用' },
+    { value: 'mymemory', label: 'MyMemory（免费，无需密钥）' },
+    { value: 'baidu', label: '百度翻译（免费额度）' },
+    { value: 'youdao', label: '有道翻译（免费额度）' },
+    { value: 'workers-ai', label: 'Cloudflare Workers AI' },
+    { value: 'deepseek', label: 'DeepSeek' },
+    { value: 'qianwen', label: '通义千问' },
+    { value: 'moonshot', label: 'Moonshot' },
+    { value: 'doubao', label: '豆包' },
+    { value: 'zhipu', label: '智谱 GLM' },
+    { value: 'grok', label: 'Grok' },
+    { value: 'openai', label: 'OpenAI' },
+  ];
+
+  /** 与后端 moderation.ts 的 SPAM_PROVIDER_PRESETS 对齐 */
+  const SPAM_PROVIDERS = [
+    { value: 'none', label: '不使用' },
+    { value: 'generic', label: '自建 HTTP 服务' },
+    { value: 'netease', label: '网易易盾' },
+    { value: 'aliyun', label: '阿里绿网（内容安全）' },
+    { value: 'tencent', label: '腾讯云天御（内容安全）' },
+    { value: 'moderatejs', label: 'moderate.js 自建服务' },
   ];
 
   const GROUPS: Group[] = [
@@ -83,6 +111,128 @@
           hint: '{"waline":{"serverURL":"…"},"twikoo":{"envId":"…"},"giscus":{…},"artalk":{…}}；切到 zero 时不需要填。'
             + '保存时会自动把 waline/artalk 的接口域补进站点 CSP（含 wss://，改了 static/_headers 与 functions/_middleware.ts 两份，Pages 随之重建）；'
             + 'twikoo 只给 envId 时认不出域，请写 "serviceUrl":"https://你的域名"',
+        },
+      ],
+    },
+    {
+      title: '评论审核服务商',
+      desc:
+        '评论入库前先过本地规则（关键词 / 正则 / 仓库规则文件），这里配的是「再加一道外部服务商」：它说垃圾才算加分，' +
+        '异常或超时一律 fail-open。审核规则本身在「评论审核」页调，这里只放凭据。',
+      fields: [
+        { key: 'spamProviderKind', label: '服务商', kind: 'select', options: SPAM_PROVIDERS },
+        {
+          key: 'spamProviderEndpoint',
+          label: 'Endpoint',
+          hint: '留空用服务商默认地址；自建 HTTP 服务必须填。选「不使用」时这一项不生效',
+        },
+        {
+          key: 'spamProviderKeyId',
+          label: 'KeyId / AccessKey',
+          kind: 'secret',
+          hint: '各服务商控制台签发的 AccessKey / KeyId；读取只显示「已设置」，留空表示不修改',
+        },
+        {
+          key: 'spamProviderSecret',
+          label: 'Secret',
+          kind: 'secret',
+          hint: '与 KeyId 配对的密钥；只有「自建 HTTP 服务」这类只认一个 Bearer 的通道可以不填',
+        },
+      ],
+    },
+    {
+      title: 'AI 审核与自动回复',
+      desc:
+        '走 OpenAI 兼容接口（/chat/completions）。两项可以只开一件：审核在评论入库前复核本地规则放行的内容，' +
+        '模型判不过就压到待审核或垃圾，调用失败维持本地结论；自动回复在入库后以站长身份插一条已通过的回复，只回顶层评论。' +
+        '开启后评论正文、昵称与邮箱会发送到你填的服务商，介意隐私或服务商在境外时建议保持关闭。',
+      fields: [
+        {
+          key: 'aiEndpoint',
+          label: '接口地址',
+          hint: '填基础地址（如 https://api.deepseek.com/v1）或完整 …/chat/completions 都认；本地 Ollama 填 http://127.0.0.1:11434/v1 这类地址',
+        },
+        { key: 'aiModel', label: '模型', hint: '如 deepseek-chat / qwen-plus / gpt-4o-mini / glm-4-flash；必填' },
+        {
+          key: 'aiKey',
+          label: 'API Key',
+          kind: 'secret',
+          hint: '云端服务商必填；本地自建端点不需要密钥，留空即可。读取只显示「已设置」，留空表示不修改',
+        },
+        {
+          key: 'aiModerationEnabled',
+          label: 'AI 复核评论',
+          kind: 'bool',
+          hint: '开着时每条外来评论多一次模型调用（有延迟与费用）。只在本地规则已放行时调用；模型故障不会拦住评论',
+        },
+        {
+          key: 'aiReplyEnabled',
+          label: 'AI 自动回复',
+          kind: 'bool',
+          hint: '只对顶层评论生效，不回复回复，避免无限对话；回复以站长账号名义发布并走正常的回复提醒邮件',
+        },
+      ],
+    },
+    {
+      title: '机器翻译',
+      desc:
+        '翻译工作台只负责选服务；端点、模型与各家凭据都在这里。免密钥的只剩 MyMemory（公共接口，配额低）；' +
+        '百度 / 有道用免费额度需要各自的 App ID 与密钥；大模型一档走 OpenAI 兼容接口。',
+      providerKey: 'translateProvider',
+      fields: [
+        { key: 'translateProvider', label: '服务商', kind: 'select', options: TRANSLATE_PROVIDERS },
+        {
+          key: 'translateEndpoint',
+          label: '接口地址',
+          hint: '大模型 / Workers AI 用：填基础地址（如 https://api.deepseek.com）或完整 …/chat/completions；留空用服务默认',
+        },
+        { key: 'translateModel', label: '模型', hint: '大模型 / Workers AI 用，如 deepseek-chat、qwen-plus、gpt-4o-mini' },
+        {
+          key: 'translateKey',
+          label: 'API Key',
+          kind: 'secret',
+          hint: '大模型 / Workers AI 用；百度、有道不用这一项。读取只显示「已设置」，留空表示不修改',
+        },
+        { key: 'translateBaiduAppId', label: '百度翻译 AppID', hint: '百度翻译开放平台 → 管理控制台 → 开发者信息' },
+        {
+          key: 'translateBaiduKey',
+          label: '百度翻译密钥',
+          kind: 'secret',
+          hint: '与 AppID 配对；签名由后端按官方 MD5 规则算好',
+        },
+        { key: 'translateYoudaoAppKey', label: '有道应用 ID', hint: '有道智云 → 应用管理 → 应用 ID' },
+        {
+          key: 'translateYoudaoAppSecret',
+          label: '有道应用密钥',
+          kind: 'secret',
+          hint: '与有道应用 ID 配对；签名由后端按 v3 SHA-256 规则算好',
+        },
+      ],
+      sections: [
+        { title: '服务商', keys: ['translateProvider'] },
+        {
+          title: '大模型 / Workers AI',
+          desc: '端点、模型与 API Key 三项；换服务商只改这里，翻译工作台不用动。',
+          keys: ['translateEndpoint', 'translateModel', 'translateKey'],
+          onlyFor: ['workers-ai', 'openai', 'deepseek', 'qianwen', 'moonshot', 'doubao', 'grok', 'zhipu'],
+        },
+        {
+          title: '百度翻译',
+          desc: '免费额度按字符计，超出后服务商会回错误码；AppID 与密钥在百度翻译开放平台获取。',
+          keys: ['translateBaiduAppId', 'translateBaiduKey'],
+          onlyFor: ['baidu'],
+        },
+        {
+          title: '有道翻译',
+          desc: '免费体验额度用完后需要到有道智云开通；应用 ID 与应用密钥在控制台获取。',
+          keys: ['translateYoudaoAppKey', 'translateYoudaoAppSecret'],
+          onlyFor: ['youdao'],
+        },
+        {
+          title: 'MyMemory',
+          desc: '无需密钥的公共接口，每天有匿名配额，长文会被截断或限流；适合先跑通或偶尔译一段。',
+          keys: [],
+          onlyFor: ['mymemory'],
         },
       ],
     },
@@ -459,9 +609,14 @@
     return s.keys.flatMap((k) => byKey.get(k) ?? []);
   }
 
-  /** 没选中的通道那一节直接不显示；配置还没读回来时按默认的 smtp 对待 */
-  function visibleSections(g: Group, provider: string): Section[] {
-    const now = (provider || 'smtp').trim();
+  /**
+   * 没选中的通道那一节直接不显示；配置还没读回来时按各自默认值对待
+   * （发信按 smtp，翻译按 none）。用 providerKey 区分是哪一组的选择框，
+   * 不能一律读 emailProvider —— 翻译组会被发信通道的取值误伤。
+   */
+  function visibleSections(g: Group, values: Record<string, string>): Section[] {
+    const key = g.providerKey ?? 'emailProvider';
+    const now = (values[key] || (key === 'emailProvider' ? 'smtp' : 'none')).trim();
     return (g.sections ?? []).filter((s) => !s.onlyFor || s.onlyFor.includes(now));
   }
 
@@ -785,7 +940,7 @@
         </p>
       {/if}
       {#if g.sections}
-        {#each visibleSections(g, cfg.emailProvider) as s (s.title)}
+        {#each visibleSections(g, cfg) as s (s.title)}
           <div class="subgroup">
             <h3 class="subgroup-title">{s.title}</h3>
             {#if s.desc}<p class="muted small subdesc">{s.desc}</p>{/if}

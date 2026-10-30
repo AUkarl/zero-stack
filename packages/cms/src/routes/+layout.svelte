@@ -574,7 +574,7 @@
   .foot {
     padding: 0.55rem 0.95rem 0.85rem;
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     border-top: 1px solid var(--border);
   }
   .foot button {
@@ -697,7 +697,7 @@
     }
     .foot {
       padding: 0.7rem 0.5rem;
-      justify-content: center;
+      justify-content: flex-start;
     }
   }
 
@@ -752,7 +752,7 @@
     }
     .foot {
       padding: 0.9rem 1.2rem;
-      justify-content: center;
+      justify-content: flex-start;
     }
     .bar {
       display: flex;

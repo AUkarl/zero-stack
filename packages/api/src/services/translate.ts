@@ -3,20 +3,24 @@
  * 结果一律作为草稿返回给后台，由人工确认后才会进仓库。
  * 目标语言由调用方传 target（默认 zh = 简体中文），支持中/英/俄/法/德/西/阿/日/韩。
  *
- * provider 分四类（config 里 translateProvider 写的就是这个 kind 字符串，
+ * provider 分五类（config 里 translateProvider 写的就是这个 kind 字符串，
  * 必须与 cms 的「设置 - 机器翻译」下拉、翻译页预设表完全对齐）：
  *   none         未启用（默认）
  *   workers-ai   Cloudflare Workers AI，需要在 wrangler 里绑定 AI
  *   chat         OpenAI 兼容大模型：openai / deepseek / qianwen / moonshot / doubao / grok / zhipu
  *                一个 endpoint + model + key 就能用，端点缺省用 PRESET 里的公共地址
- *   free         免 key 的公共翻译：mymemory / libretranslate / google，配额低，只适合兜底
+ *   public       免 key 的公共翻译：mymemory，配额低，只适合兜底
+ *   keyed        免费额度接口：baidu（appid + 密钥）、youdao（应用 ID + 应用密钥）
  *
- * 键：translateProvider / translateEndpoint / translateModel / translateKey。
- * 提示词要求：把原文翻译为简体中文；保留 Markdown 结构、{{< 短代码 >}}、URL 原样不动；
+ * 键：translateProvider / translateEndpoint / translateModel / translateKey
+ *     / translateBaiduAppId / translateBaiduKey / translateYoudaoAppKey / translateYoudaoAppSecret。
+ * 端点覆盖只对大模型与 Workers AI 生效：免费额度接口固定走官方地址，别把上一家的端点带过去。
+ * 提示词要求：按 target 指定的目标语言翻译；保留 Markdown 结构、{{< 短代码 >}}、URL 原样不动；
  * front matter 字段名不译（front matter 正文由调用方处理，不送进来）。
  */
 
 import { getConfig } from './config';
+import { md5Hex } from '../lib/md5';
 import { fetchWithTimeout } from '../lib/fetch';
 
 /** 后端认识的全部 provider kind（与 cms 下拉字符串一一对应） */
@@ -31,23 +35,35 @@ export type TranslateProvider =
   | 'grok'
   | 'zhipu'
   | 'mymemory'
-  | 'libretranslate'
-  | 'google';
+  | 'baidu'
+  | 'youdao';
 
-type Family = 'none' | 'workers' | 'chat' | 'free';
+type Family = 'none' | 'workers' | 'chat' | 'public' | 'keyed';
 
 interface Preset {
   kind: TranslateProvider;
   family: Family;
   label: string;
-  /** chat：完整 /chat/completions 地址；free：接口地址 */
+  /** chat：完整 /chat/completions 地址；public / keyed：接口地址 */
   endpoint: string;
   model: string;
   needsKey: boolean;
 }
 
+/*
+ * 免费一档只剩「确实能打通」的：
+ *   mymemory  公共接口，无需密钥，配额低（实测本机 200）；
+ *   baidu     百度翻译开放平台通用版，免费额度，需要 appid + 密钥；
+ *   youdao    有道智云，免费体验额度，需要应用 ID + 应用密钥。
+ * 原来的 libretranslate 公共实例（被 Cloudflare 直接 403）与
+ * translate.googleapis.com（未公开接口，本机超时）实测不可用，已删。
+ */
 const PRESETS: Preset[] = [
   { kind: 'none', family: 'none', label: '不使用', endpoint: '', model: '', needsKey: false },
+  /* 免密钥 / 免费额度这三家排在最前：没有云端账号也能先把翻译跑通 */
+  { kind: 'mymemory', family: 'public', label: 'MyMemory', endpoint: 'https://api.mymemory.translated.net/get', model: '', needsKey: false },
+  { kind: 'baidu', family: 'keyed', label: '百度翻译', endpoint: 'https://fanyi-api.baidu.com/api/trans/vip/translate', model: '', needsKey: true },
+  { kind: 'youdao', family: 'keyed', label: '有道翻译', endpoint: 'https://openapi.youdao.com/api', model: '', needsKey: true },
   { kind: 'workers-ai', family: 'workers', label: 'Cloudflare Workers AI', endpoint: '', model: '@cf/meta/m2m100-1.2b', needsKey: false },
   { kind: 'openai', family: 'chat', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', needsKey: true },
   { kind: 'deepseek', family: 'chat', label: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-chat', needsKey: true },
@@ -56,9 +72,6 @@ const PRESETS: Preset[] = [
   { kind: 'doubao', family: 'chat', label: '豆包', endpoint: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model: 'doubao-pro-32k', needsKey: true },
   { kind: 'grok', family: 'chat', label: 'Grok (xAI)', endpoint: 'https://api.x.ai/v1/chat/completions', model: 'grok-2-latest', needsKey: true },
   { kind: 'zhipu', family: 'chat', label: '智谱 GLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4-flash', needsKey: true },
-  { kind: 'mymemory', family: 'free', label: 'MyMemory（免费）', endpoint: 'https://api.mymemory.translated.net/get', model: '', needsKey: false },
-  { kind: 'libretranslate', family: 'free', label: 'LibreTranslate（免费）', endpoint: 'https://translate.libretranslate.com/translate', model: '', needsKey: false },
-  { kind: 'google', family: 'free', label: 'Google 翻译（免费）', endpoint: 'https://translate.googleapis.com/translate_a/single', model: '', needsKey: false },
 ];
 
 const PRESET_MAP = new Map<string, Preset>(PRESETS.map((p) => [p.kind, p]));
@@ -176,7 +189,7 @@ export async function translateStatus(env: Env): Promise<TranslateStatus> {
       ...base,
       model: '',
       ready: false,
-      hint: '未配置翻译服务：请到「设置 - 机器翻译」或翻译页选择 provider（译文语言在翻译前选）。免费无密钥可选 mymemory / libretranslate / google（配额低）；大模型（deepseek / qianwen / moonshot / doubao / grok / zhipu / openai）需填密钥。',
+      hint: '未配置翻译服务：到「设置 → 机器翻译」选一个。免费无密钥只有 MyMemory（配额低）；百度 / 有道有免费额度，要填 appid 与密钥；大模型（deepseek / qianwen / moonshot / doubao / grok / zhipu / openai）需填密钥。',
     };
   }
 
@@ -194,7 +207,15 @@ export async function translateStatus(env: Env): Promise<TranslateStatus> {
     return { ...base, model, ready: true, hint: '' };
   }
 
-  // free：无需密钥，默认配额低
+  if (preset.family === 'keyed') {
+    const ok =
+      preset.kind === 'baidu'
+        ? Boolean((await getConfig(env, 'translateBaiduAppId')) && (await getConfig(env, 'translateBaiduKey')))
+        : Boolean((await getConfig(env, 'translateYoudaoAppKey')) && (await getConfig(env, 'translateYoudaoAppSecret')));
+    return { ...base, model: '', ready: ok, hint: ok ? '' : `还没填${preset.kind === 'baidu' ? ' appid / 密钥' : '应用 ID / 应用密钥'}（设置 → 机器翻译）` };
+  }
+
+  // public：无需密钥，默认配额低
   return { ...base, model: cfgModel || '', ready: true, hint: '' };
 }
 
@@ -246,7 +267,8 @@ async function runOnce(
 
   if (family === 'workers') return workersAiRun(env, model, text, source, target);
   if (family === 'chat') return chatCompletions(env, preset!, model, text, source, target);
-  if (family === 'free') return freeTranslate(env, preset!, text, source, target);
+  if (family === 'public') return mymemoryTranslate(env, preset!, text, source, target);
+  if (family === 'keyed') return preset!.kind === 'baidu' ? baiduTranslate(env, preset!, text, source, target) : youdaoTranslate(env, preset!, text, source, target);
 
   return { ok: false, text: '', provider, model, error: '未配置翻译服务' };
 }
@@ -323,99 +345,147 @@ function chatUrl(endpoint: string): string {
   return /\/chat\/completions$/.test(base) ? base : `${base}/chat/completions`;
 }
 
-/* ------------------------------------------------------------------ 免费公共接口 */
+/* ------------------------------------------------------------------ 免费 / 免费额度接口 */
 
-async function freeTranslate(env: Env, preset: Preset, text: string, source?: string, target?: string): Promise<TranslateOutcome> {
-  const provider = preset.kind;
-  const model = '';
-  const cfgEndpoint = ((await getConfig(env, 'translateEndpoint')) ?? '').trim();
-  const endpoint = cfgEndpoint || preset.endpoint;
-  const tgt = freeCode(provider, targetLocale(target));
-  // 原文可为任意语言：google / libretranslate 支持服务端自动识别就用 auto；mymemory 只认显式语种，靠启发式猜源语言
-  const src = source
-    ? freeCode(provider, source)
-    : provider === 'mymemory'
-      ? freeCode(provider, detectSourceLocale(text))
-      : 'auto';
-
-  // 边角情形：源语言已明确判定为目标语言本身（如 mymemory 启发式 zh-CN→zh-CN），
-  // 免费接口拒绝同语种对（MyMemory 直接回 PLEASE SELECT TWO DISTINCT LANGUAGES）。
-  // 此时「译成中文」的诚实结果就是原文本身，显式说明后原样返回，不冒充翻译失败。
-  if (src !== 'auto' && src === tgt) {
-    return { ok: true, text, provider, model, usage: `chars=${text.length}; 原文已是${targetLabel(target)}，原样保留（免费接口不做同语种对译）` };
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
-  try {
-    if (provider === 'mymemory') {
-      const url = `${endpoint}?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(`${src}|${tgt}`)}&rf=2`;
-      const res = await fetchWithTimeout(url, { signal: controller.signal });
-      if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
-      const body = (await res.json()) as {
-        responseData?: { translatedText?: string };
-        responseStatus?: number | string;
-        responseDetails?: string;
-      };
-      const translated = String(body.responseData?.translatedText ?? '').trim();
-      if (/MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID|NO LENGTH/i.test(translated)) {
-        return { ok: false, text: '', provider, model, error: `MyMemory 免费配额已用尽或段落过长：${translated.slice(0, 120)}` };
-      }
-      if (!translated) return { ok: false, text: '', provider, model, error: 'MyMemory 返回空译文，可能触发每日配额限制' };
-      return { ok: true, text: translated, provider, model, usage: `chars=${text.length}; status=${body.responseStatus ?? 'ok'}` };
-    }
-
-    if (provider === 'libretranslate') {
-      const res = await fetchWithTimeout(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: text, src, tgt, format: 'text' }),
-        signal: controller.signal,
-      });
-      if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
-      const body = (await res.json()) as { translatedText?: string; error?: string };
-      if (body.error) return { ok: false, text: '', provider, model, error: `LibreTranslate 报错：${String(body.error).slice(0, 160)}` };
-      const translated = String(body.translatedText ?? '').trim();
-      if (!translated) return { ok: false, text: '', provider, model, error: 'LibreTranslate 返回空译文（公共实例常限流）' };
-      return { ok: true, text: translated, provider, model, usage: `chars=${text.length}` };
-    }
-
-    // google
-    const url = `${endpoint}?client=gtx&sl=${encodeURIComponent(src)}&st=1&dt=t&tl=${encodeURIComponent(tgt)}&q=${encodeURIComponent(text)}`;
-    const res = await fetchWithTimeout(url, { signal: controller.signal });
-    if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
-    const data = (await res.json()) as unknown;
-    const translated = flattenGoogle(data);
-    if (!translated) return { ok: false, text: '', provider, model, error: 'Google 翻译返回空，接口不稳定或被限流' };
-    return { ok: true, text: translated, provider, model, usage: `chars=${text.length}` };
-  } catch (e) {
-    return { ok: false, text: '', provider, model, error: describeFetchError(e) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function flattenGoogle(data: unknown): string {
-  if (!Array.isArray(data)) return '';
-  const segs = data[0];
-  if (!Array.isArray(segs)) return '';
-  return segs
-    .map((s) => (Array.isArray(s) ? String(s[0] ?? '') : ''))
-    .join('')
-    .trim();
-}
-
-/** 免费接口用带地区的语言码：中文区分 zh-CN / zh-TW，其它走短码 */
-function freeCode(kind: TranslateProvider, locale: string): string {
+/** 免费接口用的语言码：各家的叫法不一样，统一在这里翻译一次 */
+function freeLang(kind: TranslateProvider, locale: string): string {
   const s = String(locale ?? '').trim();
-  if (!s) return 'en';
-  if (kind === 'libretranslate') return /^zh/i.test(s) ? 'zh' : langCode(s);
+  const base = /^zh/i.test(s) ? (kind === 'youdao' ? 'zh-CHS' : 'zh') : langCode(s);
+  if (kind === 'baidu') {
+    const map: Record<string, string> = { zh: 'zh', en: 'en', ru: 'ru', fr: 'fra', de: 'de', es: 'spa', ar: 'ara', ja: 'jp', ko: 'kor' };
+    return map[base] ?? base;
+  }
+  if (kind === 'youdao') {
+    const map: Record<string, string> = { zh: 'zh-CHS', en: 'en', ru: 'ru', fr: 'fr', de: 'de', es: 'es', ar: 'ar', ja: 'ja', ko: 'ko' };
+    return map[base] ?? base;
+  }
+  /* mymemory：中文区分 zh-CN / zh-TW */
   if (/^zh/i.test(s)) return /tw|hk|mo/i.test(s) ? 'zh-TW' : 'zh-CN';
-  return langCode(s);
+  return base;
 }
 
 function detectSourceLocale(text: string): string {
   return /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(text) ? 'zh-CN' : 'en';
+}
+
+/** MyMemory：公共接口，无需密钥；只认显式语种对，源语言靠启发式猜 */
+async function mymemoryTranslate(env: Env, preset: Preset, text: string, source?: string, target?: string): Promise<TranslateOutcome> {
+  const provider = preset.kind;
+  const model = '';
+  /* 免密钥 / 免费额度这几家一律用官方地址：translateEndpoint 是给大模型与 Workers AI 用的，
+     留着上一次的服务地址（比如 Mock 的 /v1/chat/completions）会把免费接口也带错门。 */
+  const endpoint = preset.endpoint;
+  const tgt = freeLang(provider, targetLocale(target));
+  const src = freeLang(provider, source || detectSourceLocale(text));
+  if (src === tgt) {
+    return { ok: true, text, provider, model, usage: `chars=${text.length}; 原文已是${targetLabel(target)}，原样保留（免费接口不做同语种对译）` };
+  }
+  const url = `${endpoint}?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(`${src}|${tgt}`)}&rf=2`;
+  const res = await fetchWithTimeout(url, { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
+  const body = (await res.json()) as { responseData?: { translatedText?: string }; responseStatus?: number | string };
+  const translated = String(body.responseData?.translatedText ?? '').trim();
+  if (/MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID|NO LENGTH/i.test(translated)) {
+    return { ok: false, text: '', provider, model, error: `MyMemory 免费配额已用尽或段落过长：${translated.slice(0, 120)}` };
+  }
+  if (!translated) return { ok: false, text: '', provider, model, error: 'MyMemory 返回空译文，可能触发每日配额限制' };
+  return { ok: true, text: translated, provider, model, usage: `chars=${text.length}; status=${body.responseStatus ?? 'ok'}` };
+}
+
+/** 百度翻译开放平台：md5(appid + q + salt + 密钥) 签名；错误码翻成人话 */
+async function baiduTranslate(env: Env, preset: Preset, text: string, source?: string, target?: string): Promise<TranslateOutcome> {
+  const provider = preset.kind;
+  const model = '';
+  /* 百度固定走官方接口；translateEndpoint 属于大模型那一档，不能串到免费额度接口上 */
+  const endpoint = preset.endpoint;
+  const appid = ((await getConfig(env, 'translateBaiduAppId')) ?? '').trim();
+  const key = ((await getConfig(env, 'translateBaiduKey')) ?? '').trim();
+  if (!appid || !key) return { ok: false, text: '', provider, model, error: '百度翻译还没填 appid / 密钥（设置 → 机器翻译）' };
+  const from = source ? freeLang(provider, source) : 'auto';
+  const to = freeLang(provider, targetLocale(target));
+  const salt = String(Date.now());
+  const sign = md5Hex(`${appid}${text}${salt}${key}`);
+  const url = `${endpoint}?q=${encodeURIComponent(text)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&appid=${encodeURIComponent(appid)}&salt=${salt}&sign=${sign}`;
+  const res = await fetchWithTimeout(url, { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
+  const body = (await res.json()) as { trans_result?: { dst?: string }[]; error_code?: string | number; error_msg?: string };
+  const code = String(body.error_code ?? '0');
+  if (code !== '0') {
+    const why: Record<string, string> = {
+      '52001': '请求超时',
+      '52002': '系统错误',
+      '52003': '未授权用户：appid 不对或没开通通用翻译',
+      '54000': '必填参数为空',
+      '54001': '签名错误：appid 与密钥不匹配',
+      '54003': '访问频率受限',
+      '54004': '账户余额不足（免费额度用完）',
+      '54005': '长文本请求频繁',
+      '58000': '客户端 IP 非法（百度后台没放行当前出口 IP）',
+      '58001': '译文语言方向不支持',
+      '58002': '服务当前已关闭（百度后台）',
+      '90107': '认证未通过或未生效',
+    };
+    return { ok: false, text: '', provider, model, error: `百度翻译 ${code}：${why[code] ?? body.error_msg ?? '未知错误'}` };
+  }
+  const translated = (body.trans_result ?? []).map((r) => String(r.dst ?? '')).join('').trim();
+  if (!translated) return { ok: false, text: '', provider, model, error: '百度翻译返回空译文' };
+  return { ok: true, text: translated, provider, model, usage: `chars=${text.length}` };
+}
+
+/** 有道智云：v3 签名 sha256(appKey + input + salt + curtime + appSecret) */
+async function youdaoTranslate(env: Env, preset: Preset, text: string, source?: string, target?: string): Promise<TranslateOutcome> {
+  const provider = preset.kind;
+  const model = '';
+  /* 有道固定走官方接口；translateEndpoint 属于大模型那一档，不能串到免费额度接口上 */
+  const endpoint = preset.endpoint;
+  const appKey = ((await getConfig(env, 'translateYoudaoAppKey')) ?? '').trim();
+  const appSecret = ((await getConfig(env, 'translateYoudaoAppSecret')) ?? '').trim();
+  if (!appKey || !appSecret) return { ok: false, text: '', provider, model, error: '有道翻译还没填应用 ID / 应用密钥（设置 → 机器翻译）' };
+  const from = source ? freeLang(provider, source) : 'auto';
+  const to = freeLang(provider, targetLocale(target));
+  const salt = crypto.randomUUID();
+  const curtime = String(Math.floor(Date.now() / 1000));
+  /* 有道规定：输入超过 20 字时按「前10 + 长度 + 后10」参与签名 */
+  const input = text.length <= 20 ? text : `${text.slice(0, 10)}${text.length}${text.slice(-10)}`;
+  const sign = await sha256Hex(`${appKey}${input}${salt}${curtime}${appSecret}`);
+  const form = new URLSearchParams({ q: text, from, to, appKey, salt, sign, signType: 'v3', curtime });
+  const res = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) return { ok: false, text: '', provider, model, error: await describeHttpError(res, provider) };
+  const body = (await res.json()) as { errorCode?: string | number; translation?: string[] };
+  const code = String(body.errorCode ?? '0');
+  if (code !== '0') {
+    const why: Record<string, string> = {
+      '101': '缺少必填参数',
+      '102': '不支持的语言',
+      '103': '翻译文本过长',
+      '108': '应用 ID 无效',
+      '110': '无相关服务的有效实例（有道后台没开通）',
+      '111': '开发者账号无效',
+      '112': '请求服务无效',
+      '113': 'q 不能为空',
+      '202': '签名检验失败',
+      '203': '访问 IP 不在可访问的 IP 列表中',
+      '206': '时间戳无效（检查系统时间）',
+      '301': '辞典翻译不可用',
+      '302': '翻译查询失败',
+      '303': '服务出错',
+      '411': '访问频率受限',
+    };
+    return { ok: false, text: '', provider, model, error: `有道翻译 ${code}：${why[code] ?? '未知错误'}` };
+  }
+  const translated = (body.translation ?? []).join('').trim();
+  if (!translated) return { ok: false, text: '', provider, model, error: '有道翻译返回空译文' };
+  return { ok: true, text: translated, provider, model, usage: `chars=${text.length}` };
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /* ------------------------------------------------------------------ 错误文案（明确中文，绝不静默返回原文） */

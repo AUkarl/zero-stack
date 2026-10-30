@@ -110,6 +110,16 @@ export type ConfigKey =
   | 'translateEndpoint'
   | 'translateModel'
   | 'translateKey'
+  | 'translateBaiduAppId'
+  | 'translateBaiduKey'
+  | 'translateYoudaoAppKey'
+  | 'translateYoudaoAppSecret'
+  // AI：评论审核与自动回复
+  | 'aiEndpoint'
+  | 'aiModel'
+  | 'aiKey'
+  | 'aiModerationEnabled'
+  | 'aiReplyEnabled'
   // 用户中心：投稿与作者认证的全站总闸（具体某人能不能用，看后台勾的权限位）
   | 'draftsEnabled'
   | 'authorVerifyEnabled'
@@ -239,6 +249,15 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'translateEndpoint',
   'translateModel',
   'translateKey',
+  'translateBaiduAppId',
+  'translateBaiduKey',
+  'translateYoudaoAppKey',
+  'translateYoudaoAppSecret',
+  'aiEndpoint',
+  'aiModel',
+  'aiKey',
+  'aiModerationEnabled',
+  'aiReplyEnabled',
   'draftsEnabled',
   'authorVerifyEnabled',
   'newUserCanPublish',
@@ -385,6 +404,15 @@ export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   translateEndpoint: '',
   translateModel: '',
   translateKey: '',
+  translateBaiduAppId: '',
+  translateBaiduKey: '',
+  translateYoudaoAppKey: '',
+  translateYoudaoAppSecret: '',
+  aiEndpoint: '',
+  aiModel: '',
+  aiKey: '',
+  aiModerationEnabled: 'false',
+  aiReplyEnabled: 'false',
   draftsEnabled: 'true',
   authorVerifyEnabled: 'true',
   /* 默认关：与「用户页按账号勾选」的既有口径一致，站主要批量放开时才亲手打开这一项 */
@@ -518,6 +546,9 @@ export const SECRET_KEYS: ConfigKey[] = [
   'spamProviderKeyId',
   'spamProviderSecret',
   'translateKey',
+  'translateBaiduKey',
+  'translateYoudaoAppSecret',
+  'aiKey',
 ];
 
 export function isSecretKey(key: string): boolean {
