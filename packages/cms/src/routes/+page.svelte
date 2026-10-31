@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { get } from '#lib/api';
   import LineChart from '#lib/LineChart.svelte';
   import PieChart from '#lib/PieChart.svelte';
@@ -29,6 +30,8 @@
   let buildReport = $state<{ status: string; sha: string; branch: string; error: string; at: number } | null>(null);
   let buildReportNotice = $state<string | null>(null);
   let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
   let loading = $state(true);
 
   async function loadAll() {
@@ -159,7 +162,6 @@
   </div>
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
 
 <div class="cards">
   {#each [
@@ -194,10 +196,12 @@
       <h3>近 30 天访问趋势</h3>
       {#if trend.length}
         <LineChart
+          height={264}
+          label="近 30 天访问趋势：浏览量与访客两条折线"
           labels={trend.map((t) => t.day)}
           series={[
-            { name: '浏览量', color: '#2563eb', values: trend.map((t) => t.views) },
-            { name: '访客', color: '#f59e0b', values: trend.map((t) => t.visitors) },
+            { name: '浏览量', color: 'var(--accent)', values: trend.map((t) => t.views) },
+            { name: '访客', color: 'var(--warn)', values: trend.map((t) => t.visitors) },
           ]}
         />
       {:else}<p class="muted">暂无数据</p>{/if}
@@ -331,11 +335,13 @@
   }
   .cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    /* 固定 5 列：侧栏折叠让内容区变宽时也不许换排法（auto-fit 会变成 6+1 之类，卡片看着就乱了） */
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0.8rem;
     margin-bottom: 0.8rem;
   }
   .cards.four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     margin-bottom: 0.8rem;
   }
   .stat {
@@ -360,13 +366,21 @@
     display: grid;
     grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
     gap: 0.9rem;
-    align-items: start;
+    /* 两边等高：地区分布上沿与访问趋势齐、下沿与系统/浏览器两卡的下沿齐 */
+    align-items: stretch;
   }
   .dash-main {
     display: flex;
     flex-direction: column;
     gap: 0.9rem;
     min-width: 0;
+  }
+  /* 三张卡写死高度：数据空着也不许塌，右侧地区分布才有确定的上下沿可对齐 */
+  .dash-main > .card:first-child {
+    height: 360px;
+  }
+  .pies > .card {
+    height: 260px;
   }
   .pies {
     display: grid;
@@ -375,9 +389,14 @@
   }
   .region {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
   }
   .rows-scroll {
-    height: 22rem;
+    /* 高度让父格子说了算（stretch 之后父卡多高这里多高），这里只管内部滚动 */
+    flex: 1 1 auto;
+    min-height: 12rem;
+    height: auto;
     overflow-y: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
@@ -500,10 +519,20 @@
   .jobs td {
     font-size: 0.84rem;
   }
+  /* 窄一点先降成 3 列，别一上来就 2 列把五张卡挤成两行半 */
+  @media (max-width: 1200px) {
+    .cards {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
   @media (max-width: 900px) {
     .grid,
     .dash {
       grid-template-columns: 1fr;
+    }
+    .dash-main > .card:first-child,
+    .pies > .card {
+      height: auto;
     }
     .pies {
       grid-template-columns: 1fr;

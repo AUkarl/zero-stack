@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, get, getApiBase, patch } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
   import { fetchVariantManifest, uploadVariants } from '#lib/media-variants';
@@ -64,6 +65,8 @@
   let uploading = $state(false);
   let progress = $state('');
   let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
   /* R44：存量回填（后台按钮，站长点一次） */
   let rebuilding = $state(false);
   let rebuildNote = $state('');
@@ -448,7 +451,6 @@
 </div>
 
 {#if uploading}<p class="muted">{progress}</p>{/if}
-{#if error}<p class="err">{error}</p>{/if}
 
 <div class="grid">
   {#each items as it (it.key)}
@@ -556,7 +558,7 @@
   .mset > summary {
     list-style: none;
     width: 34px;
-    height: 34px;
+    height: var(--ctl-btn);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -690,7 +692,7 @@
   }
   .bfields {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: var(--t-5);
     gap: 0.55rem;
   }
   .row .grow {

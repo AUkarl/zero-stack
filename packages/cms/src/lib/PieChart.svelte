@@ -1,7 +1,8 @@
 <script lang="ts">
   let { rows = [] }: { rows: { k: string; n: number }[] } = $props();
 
-  const COLORS = ['#2563eb', '#f59e0b', '#16a34a', '#a855f7', '#ef4444', '#94a3b8'];
+  /** 六档轮着来，颜色全部走全局 token：深浅两套各自调过，深色下与前台那支绿同色系 */
+  const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)'];
 
   const data = $derived.by(() => {
     const grouped = new Map<string, number>();

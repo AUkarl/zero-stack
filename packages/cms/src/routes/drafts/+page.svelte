@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, get, post, patch, mailNote, purgeNote, type PurgeOut } from '#lib/api';
   import { fmtDate, timeAgo, healthWarn, type BuildHealth } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
@@ -42,6 +43,9 @@
   let loading = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
   let busy = $state('');
 
   // 展开的那篇：正文与可编辑字段单独取，列表接口不带长文本
@@ -294,8 +298,6 @@
   <span class="muted small right">共 {total} 条</span>
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <div class="card">
   <div class="table-wrap">

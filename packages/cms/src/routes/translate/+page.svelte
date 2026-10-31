@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get, patch, post } from '#lib/api';
+  import { flash as watchError, toast } from '#lib/toast.svelte';
 
   /**
  * 翻译工作台：选文章（原文可为任意语言）→ 选目标语言与翻译服务 → 一键译成
@@ -42,7 +43,7 @@
   let status = $state<TrStatus | null>(null);
   let loading = $state(false);
   let error = $state('');
-  let notice = $state('');
+  watchError('err', () => error);
 
   /* -------- 服务选择：只选 provider；AI 的端点/模型/密钥统一在「设置 → AI 模型配置」 -------- */
   let provider = $state('none');
@@ -76,9 +77,9 @@
   const targetOptions = $derived(status?.targets ?? [{ code: 'zh', label: '简体中文' }]);
   const targetName = $derived(targetOptions.find((t) => t.code === target)?.label ?? '简体中文');
 
+  /** 结果只走右上角浮层（页面顶部那行小字在长页面上等于没有） */
   function flash(msg: string) {
-    notice = msg;
-    setTimeout(() => (notice = ''), 2600);
+    toast.ok(msg);
   }
 
   async function load() {
@@ -231,9 +232,6 @@
   </div>
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
-
 {#if status && !status.ready}
   <section class="card blk guide">
     <h3>还没有可用的翻译服务</h3>
@@ -357,7 +355,7 @@ date/author/comments 等字段保持不变，仅标题/摘要/描述与正文翻
   }
   .work {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+    grid-template-columns: var(--t-2);
     gap: 0.9rem;
     align-items: start;
   }

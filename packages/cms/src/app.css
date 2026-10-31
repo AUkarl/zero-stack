@@ -10,6 +10,18 @@
    ============================================================ */
 :root {
   color-scheme: light;
+  /* 控件高度只有这一把尺子：页面里别再写死 36px，手机上靠改这个变量整体放大触区 */
+  --ctl-h: 36px;
+  --ctl-btn: 34px;
+  --ctl-h-sm: 30px;
+  /* 卡片/字段行的列数：只跟视口走，页面里写 grid-template-columns: var(--t-4)。
+     别在这里写 repeat(auto-fit, minmax(...)) —— auto-fit 跟的是主区宽度，侧栏一折叠
+     主区就宽一档，「一行三个」当场变「四加二」，这是站主明确点名要消灭的排法。 */
+  --t-2: repeat(2, minmax(0, 1fr));
+  --t-3: repeat(3, minmax(0, 1fr));
+  --t-4: repeat(4, minmax(0, 1fr));
+  --t-5: repeat(5, minmax(0, 1fr));
+  --t-6: repeat(6, minmax(0, 1fr));
   --bg: #f6f7fb;
   --panel: #ffffff;
   --panel-2: #f2f4f8;
@@ -32,6 +44,13 @@
   --bad-soft: #fef3f2;
   --bad-border: #fecdca;
   --radius: 12px;
+  /* 图表配色：浅色以靛蓝领头，深色换成前台那支绿 + 薄荷 + 暖黄（与深色底都过 3:1） */
+  --chart-1: #4f46e5;
+  --chart-2: #0ea5e9;
+  --chart-3: #16a34a;
+  --chart-4: #f59e0b;
+  --chart-5: #a855f7;
+  --chart-6: #94a3b8;
   --radius-sm: 8px;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.16);
@@ -43,26 +62,36 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0b0f16;
-  --panel: #121826;
-  --panel-2: #182031;
-  --border: #243044;
-  --border-strong: #33415a;
-  --fg: #e6ebf2;
-  --muted: #95a2b8;
-  --accent: #8b93ff;
-  --accent-2: #a5abff;
-  --accent-soft: #1b2340;
-  --accent-fg: #0b0f16;
+  /* 深色整套对齐前台主题（zero-theme 的 [data-theme="dark"]）：
+     底 #1e1e1e / 卡 #2a2a2a / 正文 #eeeeee / 次要 #aaaaaa / 分隔 #444 / 主色那支绿 #6bb298。
+     只有描边比前台亮一档（--border-strong）：输入框边框要过 WCAG 1.4.11 的 3:1，
+     前台的 #444 压在 #2a2a2a 上只有 1.4:1，那是装饰性分隔线，不能照抄到控件上。 */
+  --bg: #1e1e1e;
+  --panel: #2a2a2a;
+  --panel-2: #333333;
+  --border: #444444;
+  --border-strong: #7a7a7a;
+  --fg: #eeeeee;
+  --muted: #aaaaaa;
+  --accent: #6bb298;
+  --accent-2: #7beec7;
+  --accent-soft: #203a34;
+  --accent-fg: #10231c;
   --good: #4ade80;
-  --good-soft: #10261a;
-  --good-border: #1f5134;
+  --good-soft: #1d3328;
+  --good-border: #2f5d47;
   --warn: #fbbf24;
-  --warn-soft: #2a210f;
-  --warn-border: #5b4415;
+  --warn-soft: #3a2c12;
+  --warn-border: #6b5220;
   --bad: #f87171;
-  --bad-soft: #2a1417;
-  --bad-border: #5c2227;
+  --bad-soft: #3a1c1a;
+  --bad-border: #6e3230;
+  --chart-1: #6bb298;
+  --chart-2: #7f9ed0;
+  --chart-3: #7beec7;
+  --chart-4: #fbbf24;
+  --chart-5: #f0a5c0;
+  --chart-6: #9aa4b2;
   --shadow: none;
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
@@ -70,28 +99,45 @@
 @media (prefers-color-scheme: dark) {
   :root[data-theme='system'] {
     color-scheme: dark;
-    --bg: #0b0f16;
-    --panel: #121826;
-    --panel-2: #182031;
-    --border: #243044;
-    --border-strong: #33415a;
-    --fg: #e6ebf2;
-    --muted: #95a2b8;
-    --accent: #8b93ff;
-    --accent-2: #a5abff;
-    --accent-soft: #1b2340;
-    --accent-fg: #0b0f16;
+    /* 与上面 [data-theme="dark"] 那份逐键相同 —— 两份必须一起改 */
+    --bg: #1e1e1e;
+    --panel: #2a2a2a;
+    --panel-2: #333333;
+    --border: #444444;
+    --border-strong: #7a7a7a;
+    --fg: #eeeeee;
+    --muted: #aaaaaa;
+    --accent: #6bb298;
+    --accent-2: #7beec7;
+    --accent-soft: #203a34;
+    --accent-fg: #10231c;
     --good: #4ade80;
-    --good-soft: #10261a;
-    --good-border: #1f5134;
+    --good-soft: #1d3328;
+    --good-border: #2f5d47;
     --warn: #fbbf24;
-    --warn-soft: #2a210f;
-    --warn-border: #5b4415;
+    --warn-soft: #3a2c12;
+    --warn-border: #6b5220;
     --bad: #f87171;
-    --bad-soft: #2a1417;
-    --bad-border: #5c2227;
+    --bad-soft: #3a1c1a;
+    --bad-border: #6e3230;
+    --chart-1: #6bb298;
+    --chart-2: #7f9ed0;
+    --chart-3: #7beec7;
+    --chart-4: #fbbf24;
+    --chart-5: #f0a5c0;
+    --chart-6: #9aa4b2;
     --shadow: none;
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* 笔记本宽度：列数先降一档（这一档之后 900 / 640 再各降一次，写在后面才能盖住前面） */
+@media (max-width: 1200px) {
+  :root {
+    --t-6: repeat(4, minmax(0, 1fr));
+    --t-5: repeat(4, minmax(0, 1fr));
+    --t-4: repeat(3, minmax(0, 1fr));
+    --t-3: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -101,24 +147,35 @@
     --pad: 0.95rem;
     --gap: 0.6rem;
     --card-pad: 0.9rem 0.95rem;
+    --t-6: repeat(3, minmax(0, 1fr));
+    --t-5: repeat(3, minmax(0, 1fr));
+    --t-4: repeat(2, minmax(0, 1fr));
   }
 }
 
-/* 手机：控件最小高度抬到 36px 以上，方便触摸 */
+/* 手机：控件与按钮的触区抬到 44/42/38，36px 在触屏上按不准 */
 @media (max-width: 640px) {
   :root {
     --pad: 0.8rem;
     --gap: 0.5rem;
     --card-pad: 0.8rem 0.85rem;
+    --ctl-h: 44px;
+    --ctl-btn: 42px;
+    --ctl-h-sm: 40px;
+    --t-6: 1fr;
+    --t-5: 1fr;
+    --t-4: 1fr;
+    --t-3: 1fr;
+    --t-2: 1fr;
   }
   button,
   input,
   select,
   textarea {
-    min-height: 36px;
+    min-height: var(--ctl-h);
   }
   button.sm {
-    min-height: 30px;
+    min-height: var(--ctl-h-sm);
   }
   textarea {
     font-size: 16px; /* iOS Safari 小于 16px 的输入框聚焦会自动放大页面 */
@@ -223,6 +280,16 @@ a {
 a:hover {
   color: var(--accent-2);
 }
+/* 写在句子里的链接不能只靠颜色区分（axe 的 link-in-text-block，也是色弱用户的实际障碍）：
+   段落/列表/表格里的链接一律带下划线；按钮式链接（.linkbtn、导航、标签）不在这些容器里，不受影响。 */
+p a,
+li a,
+td a,
+.small a,
+.muted a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
 button {
   font: inherit;
@@ -292,16 +359,37 @@ input[type='checkbox'],
 input[type='radio'] {
   accent-color: var(--accent);
 }
+/* 文件选择框：原生那枚按钮在深色下是一块死灰，跟周围控件完全不搭。
+   统一画成和 button.sm 一样的描边按钮，选完的文件名沿用输入框底色。 */
+input[type='file'] {
+  padding: 0.3rem 0.4rem;
+  background: var(--panel-2);
+}
+input[type='file']::file-selector-button {
+  font: inherit;
+  min-height: 30px;
+  margin-right: 0.55rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+}
+input[type='file']::file-selector-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 /* 控件统一高度：顶部工具栏里 select 与按钮不再一高一低 */
 input:not([type='checkbox']):not([type='radio']),
 select {
-  min-height: 36px;
+  min-height: var(--ctl-h);
 }
 button {
-  min-height: 34px;
+  min-height: var(--ctl-btn);
 }
 button.sm {
-  min-height: 30px;
+  min-height: var(--ctl-h-sm);
 }
 select {
   padding-right: 1.8rem;
@@ -370,8 +458,8 @@ label {
 .head .row > button,
 .head .row > select,
 .head .row > input {
-  height: 34px;
-  min-height: 34px;
+  height: var(--ctl-btn);
+  min-height: var(--ctl-btn);
 }
 .spread {
   justify-content: space-between;

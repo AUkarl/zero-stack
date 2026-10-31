@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, fmtDate, get, healthWarn, mailNote, patch, post, timeAgo, type BuildHealth } from '#lib/api';
   import { assetUrl } from '#lib/session.svelte';
 
@@ -57,6 +58,9 @@
   let busy = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
   let checking = $state(false);
   /** 头像链里哪几枚取不到（取不到就退回首字占位，不留破碎图标）；键是 `${id}:a|i` */
   let iconBad = $state<Set<string>>(new Set());
@@ -455,8 +459,6 @@
 </div>
 
 {#if tab === 'list'}
-  {#if error}<p class="err">{error}</p>{/if}
-  {#if notice}<p class="ok">{notice}</p>{/if}
   {#if checkResult.length}
     <div class="card check">
       {#each checkResult as line (line)}<p class="small">{line}</p>{/each}
@@ -783,7 +785,7 @@
   }
   .grid2 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.6rem;
     margin-bottom: 0.6rem;
   }
@@ -805,7 +807,7 @@
   }
   .fields3 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.35rem 1rem;
     margin: 0;
   }

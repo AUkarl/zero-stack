@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { get, getApiBase } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
   import { uploadVariants } from '#lib/media-variants';
@@ -40,6 +41,8 @@
   let items = $state<MediaObj[]>([]);
   let loading = $state(false);
   let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
   let prefix = $state('uploads/');
   let q = $state('');
 
@@ -249,7 +252,6 @@
 
       {#if uploading}<p class="upbar"><span style="width:{uploadPct}%"></span></p><p class="muted small">{uploadMsg}（{uploadPct}%）</p>{/if}
       {#if !uploading && uploadMsg}<p class="ok small">{uploadMsg}</p>{/if}
-      {#if error}<p class="err">{error}</p>{/if}
 
       <div class="grid">
         {#each shown as o (o.key)}

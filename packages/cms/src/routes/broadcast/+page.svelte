@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, get, post } from '#lib/api';
   import { fmtDate, timeAgo } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
@@ -61,6 +62,9 @@
   let sending = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
 
   let confirmed = $state(0);
   let logs = $state<Log[]>([]);
@@ -233,8 +237,6 @@
   <a href="/">首页的「定时任务」表</a>里；想当场验证就点下面那两个按钮，结果会写明抓到的 RSS、几篇新文章、给几位订阅者入了队多少封。
 </p>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <section class="card">
   <div class="fields">
@@ -404,10 +406,11 @@
     margin-bottom: 0.7rem;
     align-items: stretch;
   }
-  .fields > label > input,
+  /* 复选框不能被这条撑成 36px 的方块（它只该管文本框与下拉框） */
+  .fields > label > input:not([type='checkbox']):not([type='radio']),
   .fields > label > select {
     width: 100%;
-    height: 36px;
+    height: var(--ctl-h);
   }
   .fields .wide {
     grid-column: 1 / -1;
@@ -416,13 +419,23 @@
     flex-direction: row;
     align-items: center;
     gap: 0.45rem;
-    min-height: 36px;
+    /* 这一格没有上方的标题文字：贴底对齐，高度就与旁边的输入框一样，
+       不然 grid 的 stretch 会把它拉到「标题 + 控件」那么高 */
+    align-self: end;
+    min-height: var(--ctl-h);
+    height: var(--ctl-h);
     padding: 0 0.65rem;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     background: var(--panel);
     color: var(--fg);
     font-size: 0.86rem;
+    white-space: nowrap;
+  }
+  .switch > input[type='checkbox'] {
+    width: auto;
+    height: auto;
+    flex: none;
   }
   textarea {
     width: 100%;

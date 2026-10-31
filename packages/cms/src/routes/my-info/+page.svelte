@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { get, healthWarn, patch, post, put, type BuildHealth } from '#lib/api';
   import { assetUrl, session } from '#lib/session.svelte';
   import MediaPicker from '../content/MediaPicker.svelte';
@@ -74,6 +75,9 @@
   let busy = $state('');
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
   /** GET 失败的路径 → 原因，页面顶部统一列出，方便对着补后端 */
   let gaps = $state<Record<string, string>>({});
 
@@ -555,8 +559,6 @@
   <button class="sm" onclick={() => void loadAll()} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 {#if gapList.length}
   <div class="card gaps">
@@ -952,7 +954,7 @@
   }
   .grid2 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.6rem;
   }
   .block {

@@ -1,12 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import type { EmojiPack } from '../lib/emoji-packs';
   import { tr } from '../lib/i18n';
+  import EmojiPicker from './EmojiPicker.svelte';
   import Markdown from './Markdown.svelte';
 
   /**
    * CommentEditor — 主评论框 / 回复框 / 编辑框共用的那一套
    *
-   * 工具条（粗体…短链…引用）、预览开关、插入逻辑都只写在这里一份，
+   * 工具条（粗体…短链…引用）、预览开关、表情弹层、插入逻辑都只写在这里一份，
    * CommentSection 与 CommentNode 各自套壳，避免「回复框少了短链按钮」这种事再发生一次。
    */
   let {
@@ -21,6 +23,7 @@
     cancelLabel = '',
     disabled = false,
     autofocus = false,
+    packs = [] as EmojiPack[],
     onsubmit,
     oncancel,
     fields,
@@ -38,6 +41,7 @@
     /** 外部条件不满足（比如需要登录）时禁用提交按钮 */
     disabled?: boolean;
     autofocus?: boolean;
+    packs?: EmojiPack[];
     onsubmit?: () => void;
     oncancel?: () => void;
     /** 昵称/邮箱/网址这类身份输入，由调用方以片段传进来 */
@@ -50,8 +54,11 @@
 
   let area = $state<HTMLTextAreaElement | null>(null);
   let previewing = $state(false);
+  let emojiOpen = $state(false);
 
-  /* Markdown 工具条：包住选中文本，没选中就插一段示例文字让用户接着改 */
+  /* Markdown 工具条：包住选中文本，没选中就插一段示例文字让用户接着改。
+     两个工具条函数都先把 scrollTop 记下来、回来时用 focus({preventScroll:true}) 再贴回去：
+     不这么做的话，点一下按钮浏览器会把光标滚到可视区（评论框在长页面里就是「一跳到底」）。 */
   function wrap(before: string, after: string, ph: string) {
     const el = area;
     if (!el) {
@@ -60,12 +67,35 @@
     }
     const start = el.selectionStart;
     const end = el.selectionEnd;
+    const scrollTop = el.scrollTop;
     const sel = value.slice(start, end) || ph;
     value = value.slice(0, start) + before + sel + after + value.slice(end);
     previewing = false;
     queueMicrotask(() => {
-      el.focus();
+      el.focus({ preventScroll: true });
       el.setSelectionRange(start + before.length, start + before.length + sel.length);
+      el.scrollTop = scrollTop;
+    });
+  }
+
+  /** 表情：插到光标处（有选区就替换掉），插完光标停在这个表情后面 */
+  function insertEmoji(text: string) {
+    const el = area;
+    if (!el) {
+      value += text;
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const scrollTop = el.scrollTop;
+    value = value.slice(0, start) + text + value.slice(end);
+    previewing = false;
+    emojiOpen = false;
+    queueMicrotask(() => {
+      el.focus({ preventScroll: true });
+      const pos = start + text.length;
+      el.setSelectionRange(pos, pos);
+      el.scrollTop = scrollTop;
     });
   }
 
@@ -125,6 +155,24 @@
   {#if error}<p class="error-text" role="alert">{error}</p>{/if}
 
   <div class="actions">
+    {#if packs.length}
+      <div class="emoji-wrap">
+        <button
+          type="button"
+          class="emoji-btn"
+          class:active={emojiOpen}
+          aria-expanded={emojiOpen}
+          aria-haspopup="dialog"
+          onclick={() => (emojiOpen = !emojiOpen)}
+        >
+          {t('emoji')}
+        </button>
+        {#if emojiOpen}
+          <EmojiPicker {packs} {lang} onpick={insertEmoji} onclose={() => (emojiOpen = false)} />
+        {/if}
+      </div>
+    {/if}
+
     <button type="button" class="primary" disabled={!canSubmit} onclick={() => onsubmit?.()}>
       {busy ? t('submitting') : submitLabel}
     </button>
@@ -158,6 +206,13 @@
   }
   .hint { color: var(--zc-muted, #888); font-size: 0.85rem; margin: 0; }
   .actions { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.55rem; flex-wrap: wrap; }
+  .emoji-wrap { position: relative; }
+  .emoji-btn {
+    font-size: 0.85rem; padding: 0.32rem 0.7rem; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--zc-border, #e2e2e2); background: var(--zc-bg, #fff); color: var(--zc-muted, #888);
+  }
+  .emoji-btn:hover { color: var(--zc-fg, #333); border-color: var(--zc-accent, #0070f3); }
+  .emoji-btn.active { color: var(--zc-on-accent, #fff); background: var(--zc-accent, #0070f3); border-color: var(--zc-accent, #0070f3); }
   button { font: inherit; border-radius: 8px; border: 1px solid var(--zc-border, #ddd); background: var(--zc-bg, #fff); color: var(--zc-fg, #333); padding: 0.35rem 0.9rem; cursor: pointer; }
   button.primary { background: var(--zc-accent, #0070f3); border-color: var(--zc-accent, #0070f3); color: var(--zc-on-accent, #fff); }
   button.ghost { color: var(--zc-muted, #888); }

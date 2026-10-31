@@ -17,6 +17,7 @@
   import CommentNode from './CommentNode.svelte';
   import { apiFetch, canonSlug, resolveBase } from '../lib/api';
   import { commentConfig } from '../lib/config.svelte';
+  import { BUILTIN_EMOJI_PACKS } from '../lib/emoji-packs';
   import { tr } from '../lib/i18n';
   import { dropOwnerKey, ownerKeyOf, ownersParam, saveOwnerKey } from '../lib/owners';
   import { session } from '../lib/session.svelte';
@@ -47,6 +48,8 @@
   const noApiBase = $derived(t('noApiBase'));
   const showMeta = $derived(commentConfig.showMeta);
   const likeEnabled = $derived(commentConfig.likeEnabled);
+  /** 内置那几档表情（微博/B站/QQ/贴吧 + Emoji + 颜文字）；后台的自定义清单已下线 */
+  const packs = $derived(BUILTIN_EMOJI_PACKS);
 
   /** 后端按「顶层评论」分页：默认 20 条顶层 + 其全部平铺回复（与 api 的 DEFAULT_PAGE 对齐） */
   const PAGE = 20;
@@ -481,6 +484,7 @@
           {shortBase}
           lang={effectiveLang}
           rows={4}
+          {packs}
           busy={mainSubmitting}
           error={mainError}
           disabled={!allowPost}
@@ -511,6 +515,7 @@
             lang={effectiveLang}
             {showMeta}
             {likeEnabled}
+            {packs}
             identity={guestFields}
           />
           {#if reps.length}
@@ -525,6 +530,7 @@
                   lang={effectiveLang}
                   {showMeta}
                   {likeEnabled}
+                  {packs}
                   identity={guestFields}
                 />
               {/each}
@@ -551,6 +557,7 @@
             lang={effectiveLang}
             {showMeta}
             {likeEnabled}
+            {packs}
             identity={guestFields}
           />
         {/each}

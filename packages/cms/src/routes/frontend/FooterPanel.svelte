@@ -162,7 +162,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.55rem 0.8rem;
   }
   .switch {

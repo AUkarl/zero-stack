@@ -210,7 +210,11 @@ export function objectPath(bucket: MediaBucket, key: string): string {
 /**
  * 写进 Markdown 的地址必须是绝对地址：站点和 API 往往不同源，
  * 相对路径到了 Hugo 那一侧就解析成站点自己的 404。
- * mediaPublicUrl 没配时只能退回站内路径（同域部署可用）。
+ *
+ * 两个键管的是两种不同的地址，别混：
+ *   桶 baseUrl / mediaBaseUrl = 直链域名（R2 自定义域或 CDN，拼出来是 base/键）；
+ *   mediaPublicUrl = 走 Worker 公开代理（/api/media/桶/键）时，那个站内路径要补的接口 origin。
+ * 都没配就退回相对路径（只有站点与接口同源时可用）。
  */
 export async function objectUrl(env: Env, bucket: MediaBucket, key: string): Promise<string> {
   const path = objectPath(bucket, key);

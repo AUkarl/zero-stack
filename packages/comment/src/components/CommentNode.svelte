@@ -8,6 +8,7 @@
   import { session } from '../lib/session.svelte';
   import CommentEditor from './CommentEditor.svelte';
   import Markdown from './Markdown.svelte';
+  import type { EmojiPack } from '../lib/emoji-packs';
 
   /**
    * CommentNode — 一条评论（顶层或平铺出来的一级回复都用它）
@@ -26,6 +27,7 @@
     lang = '',
     showMeta = true,
     likeEnabled = true,
+    packs = [] as EmojiPack[],
     identity,
   }: {
     node: Comment;
@@ -35,6 +37,7 @@
     lang?: string;
     showMeta?: boolean;
     likeEnabled?: boolean;
+    packs?: EmojiPack[];
     /** 游客回复/编辑时的昵称邮箱网址那几行，由 CommentSection 传同一段片段下来 */
     identity?: Snippet;
   } = $props();
@@ -202,6 +205,7 @@
           lang={lang}
           {shortBase}
           rows={3}
+          packs={packs}
           busy={ctx.submitting}
           error={ctx.error}
           submitLabel={t('replySubmit')}
@@ -222,6 +226,7 @@
           lang={lang}
           {shortBase}
           rows={3}
+          packs={packs}
           busy={ctx.editBusy}
           error={ctx.editError}
           submitLabel={t('save')}

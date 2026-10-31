@@ -6,6 +6,7 @@
   import { get, post } from '#lib/api';
   import { assetUrl } from '#lib/session.svelte';
   import { pendingCounts } from '#lib/pending.svelte';
+  import Toasts from '#lib/Toasts.svelte';
 
   let { children } = $props();
 
@@ -343,6 +344,9 @@
   </div>
 {/if}
 
+<!-- 全站唯一一份操作结果浮层：各页用 flash()/toast 投递，不再在页面顶部画一行小字 -->
+<Toasts />
+
 <style>
   .nf {
     flex: 1;
@@ -679,7 +683,7 @@
     align-items: center;
     justify-content: center;
     width: 34px;
-    height: 34px;
+    height: var(--ctl-btn);
     padding: 0;
     background: transparent;
     border-color: var(--border);
@@ -787,6 +791,16 @@
       gap: 0.6rem;
       padding: 0.6rem 0.7rem;
       min-height: 42px;
+    }
+    /* 抽屉里的按钮也按触摸尺寸放大（桌面仍是 32×32，与折叠按钮对齐那条不变） */
+    .fold,
+    .theme {
+      width: 40px;
+      height: 40px;
+    }
+    .me .out,
+    .burger {
+      min-height: 40px;
     }
     nav a .txt {
       display: block;

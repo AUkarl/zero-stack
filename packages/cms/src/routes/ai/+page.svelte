@@ -3,6 +3,7 @@
   import { timeAgo } from '#lib/api';
   import { renderMarkdown } from '#lib/markdown';
   import { frontUrl } from '#lib/session.svelte';
+  import { flash as watchError, toast } from '#lib/toast.svelte';
 
   interface ProviderInfo {
     kind: string;
@@ -36,7 +37,7 @@
   let replies = $state<ReplyRow[]>([]);
   let loading = $state(false);
   let error = $state('');
-  let notice = $state('');
+  watchError('err', () => error);
 
   let replyEnabled = $state(false);
   let scope = $state<'all' | 'questions'>('all');
@@ -56,9 +57,9 @@
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
 
+  /** 结果只走右上角浮层，不再在页面顶部占一行 */
   function flash(text: string) {
-    notice = text;
-    setTimeout(() => (notice = ''), 3000);
+    toast.ok(text);
   }
 
   async function load() {
@@ -133,9 +134,6 @@
     <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
   </div>
 </div>
-
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <section class="card">
   <div class="row spread">

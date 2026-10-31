@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { get, patch, post, put } from '#lib/api';
   import { timeAgo } from '#lib/api';
   import { renderMarkdown } from '#lib/markdown';
@@ -81,6 +82,9 @@
   let saving = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
 
   // 仓库正则文件：路径一律用后端回的那个，前端不硬写
   let pfPath = $state('');
@@ -437,8 +441,6 @@
   </div>
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <div class="cols">
   <section class="card">
@@ -731,7 +733,7 @@
   }
   .cols {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    grid-template-columns: var(--t-3);
     gap: 0.8rem;
     align-items: start;
   }
@@ -742,7 +744,7 @@
   }
   .fields {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.6rem 0.8rem;
     margin: 0.5rem 0;
     align-items: start;
@@ -750,7 +752,7 @@
   .fields label > input:not([type='checkbox']):not([type='radio']),
   .fields label > select {
     width: 100%;
-    height: 36px;
+    height: var(--ctl-h);
   }
   .fields > label.switch,
   .fields > p.hint {
@@ -764,7 +766,7 @@
   }
   .fields.tight {
     margin-top: 0.4rem;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    grid-template-columns: var(--t-6);
   }
   .hint {
     font-size: 0.72rem;
@@ -1021,5 +1023,11 @@
   }
   .ops button + button {
     margin-left: 0.3rem;
+  }
+  /* 手机/小屏：两列字段表收成一列 */
+  @media (max-width: 900px) {
+    .fields {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

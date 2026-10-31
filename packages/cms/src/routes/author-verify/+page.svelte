@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, get, healthWarn, post, type BuildHealth } from '#lib/api';
   import { fmtDate, timeAgo } from '#lib/api';
 
@@ -38,6 +39,9 @@
   let loading = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
   let busy = $state('');
 
   let open = $state<ReqRow | null>(null);
@@ -170,8 +174,6 @@
   {/each}
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <div class="card">
   <div class="table-wrap">
@@ -305,7 +307,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    grid-template-columns: var(--t-5);
     gap: 0.6rem;
     padding: 0.3rem 0;
   }

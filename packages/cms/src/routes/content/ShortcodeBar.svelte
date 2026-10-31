@@ -47,8 +47,8 @@
     flex-wrap: wrap;
   }
   .sel {
-    height: 30px;
-    min-height: 30px;
+    height: var(--ctl-h-sm);
+    min-height: var(--ctl-h-sm);
     padding: 0.18rem 1.8rem 0.18rem 0.55rem;
     font-size: 0.82rem;
   }

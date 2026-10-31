@@ -132,7 +132,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.5rem 0.8rem;
   }
   .small {

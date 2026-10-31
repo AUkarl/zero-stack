@@ -234,7 +234,7 @@ Worker 让桥在站点目录里真跑一次 `hugo --minify -d .zero-doctor`，�
 「fine-grained PAT（`Contents: write`）提交 → Pages 构建 Hook 重建」，
 代码里两条路径都在 `packages/api/src/services/repo.ts`，行为一致。
 
-### 6. 冒烟测试（匿名约 37 项；带 Cookie 97 项）
+### 6. 冒烟测试（匿名 42 项 + 4 条按条件跳过；带 Cookie 103 项）
 
 ```bash
 pnpm smoke                                               # 同上，只是包一层
@@ -247,7 +247,7 @@ ADMIN_COOKIE='zero_session=…' bash scripts/smoke.sh     # 追加后台接口
 （点赞与收藏要核对文章在站上真的存在），跑完删掉。全绿输出是
 `通过 N / 失败 0 / 跳过 M` —— 数目随站点配置变：全新站大约 `37 / 0 / 3`，
 后台「头像与媒体」配了 `avatarTemplate` 之后是 `36 / 0 / 4`（多出来的那条跳过会写明原因），
-带 Cookie 是 `97 / 0 / 0`。**以脚本最后那行汇总为准。**
+带 Cookie 是 `103 / 0 / 0`。**以脚本最后那行汇总为准。**
 「跳过」是这条需要脚本当前拿不到的条件（比如没 Cookie 就建不出文章、
 匿名读不到后台的 `avatarTemplate`），既不算通过也不算失败 —— 汇总里会逐条写明原因。
 
@@ -464,6 +464,17 @@ pnpm setup -- --no-deploy      # 只建资源、跑迁移、写配置：不部�
 
 非管理员访问以上任何页面都是 404（不是跳登录页，避免暴露后台结构）。
 
+## 后台界面本身的约定
+
+改后台样式前先读这一节，页面里不要再各自发明一套。
+
+- **操作结果统一弹右上角卡片**（`src/lib/toast.svelte.ts` 投递、`src/lib/Toasts.svelte` 渲染，只在 `+layout.svelte` 挂一份）。成功 3.8 秒、警告 6.5 秒、失败 9 秒自动消失，最多同时 4 张，可以点叉立刻收。页面用 `flash('ok'|'err', () => 变量)` 监听自己的 `notice/error` 状态，不用每页画横幅。只有紧挨着按钮的字段级校验、抽屉里的小提示保留行内文字（它们就出现在你刚点的那一下旁边，弹卡片反而看不见）。
+- **响应式三档**：≥1200px 桌面（多列）、720–1200px 平板（列数减一档）、≤640px 手机（单列、侧栏默认收起、控件触区抬高）。桌面/平板下卡片的列数是**写死的**（仪表盘 5 列 / 4 列、统计 3 列），不随侧栏展开折叠变化 —— 侧栏折叠只是主区变窄，不该把"一行三个"挤成"四加二"。
+- **控件高度只有三个变量**：`--ctl-h`（输入框、下拉）、`--ctl-btn`（按钮）、`--ctl-h-sm`（小按钮），桌面 36/34/30，手机 44/42/40。页面里写死 `height: 36px` 会让手机上进不去。
+- **深浅两套配色都是 token**：深色的主色与前台 zero 主题同一支绿（底 `#1e1e1e`、卡 `#2a2a2a`、正文 `#eeeeee`、次要 `#aaaaaa`、主色 `#6bb298`、强调 `#7beec7`），`[data-theme='dark']` 与 `prefers-color-scheme: dark` 那两份必须逐键一起改。唯一比前台亮一档的是控件描边 `--border-strong`：前台的 `#444` 压在 `#2a2a2a` 上只有 1.4:1，当装饰线可以，当输入框边界过不了 WCAG 1.4.11 的 3:1。
+- **图表配色走 `--chart-1…6`**，组件里不写死十六进制；深色下这六支是在 `#2a2a2a` 上重新配过的，不是浅色那套直接压暗。
+- 无障碍是硬门槛：后台任意页面 Lighthouse「无障碍」≥90，对比度不达标的组合直接改 token，不给单个页面打补丁。
+
 ---
 
 # 五、配置的分层与权威
@@ -626,6 +637,9 @@ Cloudflare 免费档的量是硬约束，我在实现上刻意做了这些收敛
 | 评论组件区域高度 0 | 组件脚本有没有随 `zero/boot.html` 输出（主题侧不能用 `.Scratch` 去重，`hugo server` 下会漏发） |
 | `hugo` 命令一动不动 | 删掉站点目录下的 `.hugo_build.lock`（确认没有 hugo 进程在跑） |
 | 远程封面把构建卡住 | 站点参数 `[image] remote_fetch = false` 跳过抓取，`remote_timeout` 调等待上限 |
+| 后台点了保存什么都没发生 | 结果卡片弹在**屏幕右上角**（成功 3.8 秒、失败 9 秒自动收），不在页面顶部；一张卡片都没弹就是请求没发出去，看浏览器控制台 |
+| 后台在手机上按不准、表格要横向拖 | ≤640px 那一档是单列 + 44px 触区；任何页面出现横向滚动都是样式回归（操作流水的列是定宽 + 省略号截断，不该能左右滑） |
+| 后台深色和前台不是一个色系 | 后台深色 token 与前台 zero 主题同一支绿（`--accent:#6bb298`、底 `#1e1e1e`、卡 `#2a2a2a`）；改颜色必须同时改 `[data-theme='dark']` 与 `prefers-color-scheme: dark` 那两份，改完跑无障碍分数（要求 ≥90） |
 
 ---
 
@@ -644,7 +658,7 @@ Cloudflare 免费档的量是硬约束，我在实现上刻意做了这些收敛
 | `pnpm db:migrate:local` / `:remote` | 单独应用迁移 |
 | `pnpm check` | `typecheck:scripts` → `-r typecheck` → `-r build`，与 `ci.yml` 一致 |
 | `pnpm test` | 纯函数小测（作者表 YAML 校验、文章站内地址），CI 里也会跑 |
-| `pnpm smoke` / `bash scripts/smoke.sh` | 接口冒烟（匿名约 37 项；带 `ADMIN_COOKIE` 97 项），结尾自清临时文章 |
+| `pnpm smoke` / `bash scripts/smoke.sh` | 接口冒烟（匿名 42 项；带 `ADMIN_COOKIE` 103 项），结尾自清临时文章 |
 | `pnpm postdeploy` | 部署后只读核验（健康/迁移/媒体库绑定/后台守卫/批量口/CSP/站点在线），不写数据 |
 
 更细的生产步骤、故障排查与 GitHub Actions 模板见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。

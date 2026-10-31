@@ -188,7 +188,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.55rem 0.8rem;
   }
   .cnt {

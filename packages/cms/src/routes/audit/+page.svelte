@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { fmtDate, get } from '#lib/api';
 
   interface Row {
@@ -43,6 +44,8 @@
   let action = $state('');
   let loading = $state(false);
   let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
   let detailRow = $state<Row | null>(null);
 
   async function load() {
@@ -106,7 +109,6 @@
   这张表不进备份，也不自动清理，站跑久了会一直长。
 </p>
 
-{#if error}<p class="err">{error}</p>{/if}
 
 <div class="tabs">
   <button class="sm {action === '' ? 'primary' : ''}" onclick={() => pick('')}>全部</button>
@@ -116,7 +118,7 @@
 </div>
 
 <div class="card table-wrap">
-  <table class="cols-wide audit-table">
+  <table class="audit-table">
     <thead>
       <tr>
         <th>时间</th>
@@ -134,7 +136,7 @@
           <td class="small">{r.actorName || '—'}</td>
           <td class="small"><span class="badge">{LABEL[r.action] ?? r.action}</span></td>
           <td class="small mono target" title={r.target || ''}>{r.target || '—'}</td>
-          <td class="small summary">{brief(r.detail)}</td>
+          <td class="small summary" title={brief(r.detail)}>{brief(r.detail)}</td>
           <td class="ops">
             {#if r.detail}<button class="sm" onclick={() => (detailRow = r)}>原文</button>{/if}
           </td>
@@ -182,22 +184,38 @@
     font-family: ui-monospace, Menlo, Consolas, monospace;
     word-break: break-all;
   }
-  .audit-table th:nth-child(1) { width: 150px; }
-  .audit-table th:nth-child(2) { width: 80px; }
-  .audit-table th:nth-child(3) { width: 110px; }
-  .audit-table th:nth-child(4) { width: 190px; }
-  .audit-table th:nth-child(6) { width: 76px; }
+  .audit-table {
+    /* 固定布局 + 百分比列宽：列宽由表头说了算，长内容一律省略号，
+       不再出现「谁」「门类」被挤成一列一个字、整表横向能滑的情况 */
+    table-layout: fixed;
+    width: 100%;
+  }
+  .audit-table th:nth-child(1) { width: 12.5%; }
+  .audit-table th:nth-child(2) { width: 8%; }
+  .audit-table th:nth-child(3) { width: 9.5%; }
+  .audit-table th:nth-child(4) { width: 26%; }
+  .audit-table th:nth-child(6) { width: 68px; }
+  .audit-table td {
+    overflow: hidden;
+  }
+  .audit-table td:nth-child(1),
+  .audit-table td:nth-child(2),
+  .audit-table td:nth-child(3) {
+    white-space: nowrap;
+  }
+  .audit-table .badge {
+    white-space: nowrap;
+  }
   .audit-table .target {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    word-break: normal;
   }
   .audit-table .summary {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .audit-table .ops {
     white-space: nowrap;

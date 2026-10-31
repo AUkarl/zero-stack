@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { get, post, timeAgo } from '#lib/api';
   import { renderMarkdown } from '#lib/markdown';
   import { frontUrl } from '#lib/session.svelte';
@@ -21,6 +22,8 @@
   let filter = $state<'pending' | 'approved' | 'spam' | 'all'>('pending');
   let loading = $state(false);
   let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
 
   async function load() {
     loading = true;
@@ -70,7 +73,6 @@
   {/each}
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
 {#if rows.length === 0 && !loading}<p class="muted">{filter === 'pending' ? '没有待审核的评论。' : '暂无记录'}</p>{/if}
 
 <div class="list">

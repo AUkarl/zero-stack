@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get, post, patch, put, getApiBase } from '#lib/api';
+  import { flash } from '#lib/toast.svelte';
 
   type Kind = 'text' | 'textarea' | 'bool' | 'number' | 'select' | 'secret' | 'lines';
   interface Field {
@@ -183,12 +184,22 @@
     {
       title: '头像与媒体',
       desc:
-        '这一组只管两件全站兜底：① 匿名评论者的头像地址模板（留空按内置链 Gravatar→Cravatar→QQ→首字母，填了整条链换图床；注册者自己填的头像永远优先）；' +
-        '② 媒体库的公开域名（R2 自定义域或 CDN，只对默认 r2 桶生效）。' +
+        '这一组只管三件全站兜底：① 匿名评论者的头像地址模板（留空按内置链 Gravatar→Cravatar→QQ→首字母，填了整条链换图床；注册者自己填的头像永远优先）；' +
+        '② 媒体直链域名（R2 自定义域或 CDN，只对默认 r2 桶生效）；' +
+        '③ 走 Worker 代理时补在站内路径前面的接口根地址（站点与接口不同源才需要）。' +
         '站点 Logo / 分享图在「前端管理 → 基本信息」，时刻横幅与头像在「前端管理 → 时刻页」，管理员自己的头像在「我的信息 → 账号资料」，都在别处，这里不重复。',
       fields: [
         { key: 'avatarTemplate', label: '头像地址模板', hint: '' },
-        { key: 'mediaBaseUrl', label: '媒体公开域名', hint: '' },
+        {
+          key: 'mediaBaseUrl',
+          label: '媒体直链域名',
+          hint: 'R2 自定义域或 CDN 根地址，填了以后新上传的图片外链成 <域名>/uploads/…，不占 Worker 请求数；只对没单独填域名的 r2 桶生效（「媒体 → 管理存储桶」里每个桶还能各填一个，桶的优先）',
+        },
+        {
+          key: 'mediaPublicUrl',
+          label: '代理地址前缀',
+          hint: '没填直链域名时图片走 Worker 代理（站内路径 /api/media/桶/键）。站点与接口不同源时，正文里要写绝对地址 —— 这里填**接口自己的根地址**（如 https://zero-api.xxx.workers.dev），留空则按 apiBaseUrl 兜底。它不是图片域名，别填成 CDN',
+        },
       ],
     },
     {
@@ -317,6 +328,11 @@
         { key: 'githubContentDir', label: '内容目录', hint: '如 content' },
         { key: 'githubPostsDir', label: '文章目录', hint: '如 content/zh/posts（多语言）或 content/posts（单语言扁平），「文章」页写这里' },
         { key: 'githubMomentsDir', label: '时刻目录', hint: '如 content/zh/moments，「时刻」页读写这里' },
+        {
+          key: 'githubDataDir',
+          label: '数据目录',
+          hint: '后台读写 data/*.json（导航、首页、页脚、友链状态、变体清单…）与 links.yaml、authors.yaml 时用的前缀，默认 data；把站点数据挪到别的目录才需要改，改完「前端管理」九段与友链检测都跟着走这里',
+        },
         { key: 'githubLinksFile', label: '友链文件', hint: '留空 = 「数据目录」（默认 data）下的 links.yaml；只有主题装在别处、或数据目录挪走了才需要填，填了以后后台列出的、审核通过写入的、定时任务读的都是这一份' },
         { key: 'githubAuthorsFile', label: '作者数据文件', hint: '如 data/authors.yaml' },
         { key: 'cloudflarePagesBuildHook', label: 'Pages 重建 Hook', hint: '选填，填了改完友链会自动重建站点' },
@@ -588,6 +604,9 @@
   let saving = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 保存结果不再写在页面最上方（页面一长就看不见），统一走右上角浮层 */
+  flash('err', () => error);
+  flash('ok', () => notice);
   let openGroup = $state<string | null>('注册与邀请码');
 
   async function load() {
@@ -702,8 +721,6 @@
   </div>
 </div>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 {#if changed.length}
   <div class="savebar" role="status">
     <span>{changed.length} 项未保存</span>
@@ -1063,7 +1080,7 @@
   }
   .secretrow button {
     flex: none;
-    min-height: 36px;
+    min-height: var(--ctl-h);
   }
   .field input,
   .field select,

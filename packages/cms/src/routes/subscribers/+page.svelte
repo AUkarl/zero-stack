@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, fmtDate, get, post } from '#lib/api';
 
   interface Subscriber {
@@ -34,6 +35,9 @@
   let busy = $state('');
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
 
   /**
    * 各状态各多少人。列表是按当前标签过滤过的，数不出全貌，所以每次一并取 status=all 的全量来数。
@@ -150,8 +154,6 @@
   邮件群发与定时任务已挪到「<a href="/broadcast">群发</a>」页；这里只管理订阅者名单与发信日志。
 </p>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <div class="tabs">
   {#each TABS as t}

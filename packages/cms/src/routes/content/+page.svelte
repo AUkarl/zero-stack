@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { beforeNavigate } from '$app/navigation';
   import { get, post, del, purgeNote, healthBroken, type BuildHealth, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
@@ -302,6 +303,8 @@
 
   let loading = $state(false);
   let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
   let notice = $state('');
 
   // 顶部：发布后群发订阅
@@ -809,7 +812,6 @@
   </div>
 {/if}
 
-{#if error}<p class="err">{error}</p>{/if}
 
 {#if buildBroken}
   <p class="err">
@@ -1031,7 +1033,7 @@
   .new .row input,
   .new .row select,
   .new .row button {
-    height: 36px;
+    height: var(--ctl-h);
   }
   .new .row input {
     flex: 1 1 220px;
@@ -1155,8 +1157,8 @@
   .pane .row > input:not([type='checkbox']):not([type='radio']),
   .pane .row > select,
   .pane .row > button {
-    height: 36px;
-    min-height: 36px;
+    height: var(--ctl-h);
+    min-height: var(--ctl-h);
   }
   .grid2 {
     display: grid;
@@ -1235,8 +1237,8 @@
   }
   .wgt input {
     width: 88px;
-    height: 32px;
-    min-height: 32px;
+    height: var(--ctl-h-sm);
+    min-height: var(--ctl-h-sm);
     padding: 0.2rem 0.4rem;
   }
   .small {

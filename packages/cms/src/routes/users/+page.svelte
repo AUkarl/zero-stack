@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, get, patch, post } from '#lib/api';
   import { fmtDate, timeAgo } from '#lib/api';
   import { frontUrl } from '#lib/session.svelte';
@@ -57,6 +58,9 @@
   let loading = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
   let busy = $state('');
 
   // 点「评论」时展开的那一行
@@ -597,8 +601,6 @@
 
 {#if tab === 'users'}
   <p class="muted small">共 {total} 位。</p>
-  {#if error}<p class="err">{error}</p>{/if}
-  {#if notice}<p class="ok">{notice}</p>{/if}
 
   {#if reset}
     <section class="card once">
@@ -667,8 +669,8 @@
               <span class="mini {r.canAuthor ? 'on' : ''}" title="作者认证申请">认证申请</span>
               <span class="mini {r.authorVerified ? 'on' : ''}" title="已认证">已认证</span>
             </span>
-            <span class="fld"><span class="k">加入</span><span class="v" title={fmtDate(r.createdAt)}>{timeAgo(r.createdAt)}</span></span>
             <span class="fld"><span class="k">评论</span><span class="v">{r.commentCount}</span></span>
+            <span class="fld"><span class="k">加入</span><span class="v" title={fmtDate(r.createdAt)}>{timeAgo(r.createdAt)}</span></span>
           </div>
 
           <div class="uops">
@@ -989,6 +991,10 @@
     opacity: 0.75;
     font-size: 0.76rem;
   }
+  /* 选中那一档底色是主色，再乘 0.75 透明度就把对比度压到 4.26 了 */
+  .tab.on .n {
+    opacity: 1;
+  }
   .searchbar {
     flex-wrap: nowrap;
   }
@@ -1211,7 +1217,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    grid-template-columns: var(--t-5);
     gap: 0.7rem;
   }
   .hint {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { get, put } from '#lib/api';
   import { buildNote } from './types';
 
@@ -41,6 +42,9 @@
   let saving = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
   let note = $state<string | null>(null);
   /** 保存后固定为 true，配合「重新读取」按钮给出下一步动作 */
   let conflict = $state(false);
@@ -239,8 +243,6 @@
       {/if}
     </div>
 
-    {#if error}<p class="err">{error}</p>{/if}
-    {#if notice}<p class="ok">{notice}</p>{/if}
     {#if note}<p class="muted small">{note}</p>{/if}
     {#if conflict}
       <p class="err small">

@@ -3,10 +3,13 @@
     series,
     labels,
     height = 160,
+    label = '折线图',
   }: {
     series: { name: string; color: string; values: number[] }[];
     labels: string[];
     height?: number;
+    /** 读屏要能说出这张图是什么（axe: svg-img-alt） */
+    label?: string;
   } = $props();
 
   const W = 600;
@@ -40,7 +43,7 @@
     {/each}
     <span class="muted max">峰值 {max}</span>
   </div>
-  <svg viewBox="0 0 {W} {H}" role="img" preserveAspectRatio="none">
+  <svg viewBox="0 0 {W} {H}" role="img" aria-label={label} preserveAspectRatio="none">
     {#each gridYs as y}
       <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke="var(--border)" />
     {/each}

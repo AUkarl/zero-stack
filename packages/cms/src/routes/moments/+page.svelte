@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { get, put, del, purgeNote, type PurgeOut } from '#lib/api';
   import MarkdownEditor from '#lib/MarkdownEditor.svelte';
   import { renderMarkdown, splitFrontMatter } from '#lib/markdown';
@@ -47,6 +48,9 @@
   let loading = $state(false);
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
 
   // 发布表单
   let editing = $state('');
@@ -414,8 +418,6 @@
 <p class="muted small">
   发布即写仓库 <code>{momentsDir}/&lt;slug&gt;.md</code>，目录取自设置页 githubMomentsDir。
 </p>
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <section class="card form">
   <div class="row spread">
@@ -594,7 +596,7 @@
   }
   .grid2 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: var(--t-5);
     gap: 0.6rem;
   }
   .small {

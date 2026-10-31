@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { fmtDate, get, post, siteOf } from '#lib/api';
   import LineChart from '#lib/LineChart.svelte';
 
@@ -88,21 +89,21 @@
   let days = $state(14);
   let loading = $state(false);
   let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
   let enabled = $state(true);
 
   async function load() {
     loading = true;
     error = '';
     try {
-      const clean = '';
-      const cleanQ = '';
       const [s, t, dv, tp, bz, rx, ps, cfg, ct, ds] = await Promise.all([
-        get<{ data: Summary }>(`/api/analytics/summary${cleanQ}`),
-        get<{ data: Point[] }>(`/api/analytics/trend?days=${days}${clean}`),
-        get<{ data: Devices }>(`/api/analytics/devices${cleanQ}`),
-        get<{ data: Top }>(`/api/analytics/top${cleanQ}`),
-        get<{ data: Biz }>(`/api/admin/stats${cleanQ}`),
-        get<{ data: ReactionStats }>(`/api/admin/stats/reactions?limit=30${clean}`),
+        get<{ data: Summary }>('/api/analytics/summary'),
+        get<{ data: Point[] }>(`/api/analytics/trend?days=${days}`),
+        get<{ data: Devices }>('/api/analytics/devices'),
+        get<{ data: Top }>('/api/analytics/top'),
+        get<{ data: Biz }>('/api/admin/stats'),
+        get<{ data: ReactionStats }>('/api/admin/stats/reactions?limit=30'),
         get<{ data: { path: string; title: string }[] }>('/api/admin/posts'),
         get<{ data: Record<string, string> }>('/api/admin/config'),
         // 文章/时刻计数是独立的递归目录接口；它失败不能把整页统计带崩
@@ -143,8 +144,8 @@
   );
 
   const series = $derived([
-    { name: '访问量', color: '#2563eb', values: trend.map((p) => p.views) },
-    { name: visitorName, color: '#16a34a', values: trend.map((p) => p.uniqueIpVisitors ?? p.visitors) },
+    { name: '访问量', color: 'var(--accent)', values: trend.map((p) => p.views) },
+    { name: visitorName, color: 'var(--good)', values: trend.map((p) => p.uniqueIpVisitors ?? p.visitors) },
   ]);
   const labels = $derived(trend.map((p) => p.day));
 
@@ -231,7 +232,7 @@
 <div class="row spread head">
   <h2>访问统计</h2>
   <div class="toolbar">
-    <select bind:value={days}>
+    <select bind:value={days} aria-label="统计时间范围">
       <option value={7}>近 7 天</option>
       <option value={14}>近 14 天</option>
       <option value={30}>近 30 天</option>
@@ -251,7 +252,6 @@
 {#if recountNote}<p class="ok small">{recountNote}</p>{/if}
 
 {#if !enabled}<p class="warn">统计开关当前是关闭的（设置 - 访问统计），前台不再上报页面浏览。</p>{/if}
-{#if error}<p class="err">{error}</p>{/if}
 
 <div class="kpis">
   {#each [
@@ -292,7 +292,7 @@
 <section class="card">
   <h3>趋势</h3>
   {#if labels.length}
-    <LineChart {series} {labels} height={190} />
+    <LineChart {series} {labels} height={190} label="访问量与访客按天趋势折线图" />
   {:else}
     <p class="muted small">还没有数据。</p>
   {/if}
@@ -444,8 +444,8 @@
   }
   .toolbar select,
   .toolbar button {
-    height: 34px;
-    min-height: 34px;
+    height: var(--ctl-btn);
+    min-height: var(--ctl-btn);
   }
   .toolbar select {
     width: auto;
@@ -489,12 +489,8 @@
     margin: 0 0 0.8rem;
     line-height: 1.7;
   }
-  .head + .ok,
-  .head + .warn,
-  .head + .err,
   .ok.small,
-  .warn,
-  .err {
+  .warn {
     margin: 0 0 0.8rem;
   }
   section.card {
@@ -508,7 +504,8 @@
   }
   .cols {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    /* 固定三列（两行三列）：侧栏折叠把内容区拉宽也不许变成「第一行四个第二行两个」 */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.8rem;
     margin: 0 0 0.8rem;
     align-items: start;
@@ -632,7 +629,16 @@
     text-align: right;
     color: var(--muted);
   }
+  /* 平板宽度：六张分析卡先降成两列，手机一列 —— 只有响应式才允许变列数 */
+  @media (max-width: 1100px) {
+    .cols {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   @media (max-width: 720px) {
+    .cols {
+      grid-template-columns: 1fr;
+    }
     .biz .kpis {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }

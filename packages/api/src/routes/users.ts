@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { and, eq, sql } from 'drizzle-orm';
 import { createDb } from '../db/client';
-import { comments, inviteCodes, users } from '../db/schema';
+import { comments, inviteCodes, sessions, users } from '../db/schema';
 import { hashPassword, randomPassword } from '../lib/crypto';
 import { destroyUserSessions } from '../services/auth';
 import { purgeUser } from '../services/account-purge';
@@ -83,41 +83,53 @@ export function userGroupView(row: { role: string | null; userGroup: string | nu
 
 app.get('/', async (c) => {
   const db = createDb(c.env);
-  const rows = await db
-    .select({
-      id: users.id,
-      email: users.email,
-      name: users.name,
-      handle: users.handle,
-      role: users.role,
-      status: users.status,
-      canPublish: users.canPublish,
-      canAuthor: users.canAuthor,
-      authorVerified: users.authorVerified,
-      emailVerified: users.emailVerified,
-      accountSlug: users.accountSlug,
-      userGroup: users.userGroup,
-      totpEnabled: users.totpEnabled,
-      invitedBy: users.invitedBy,
-      createdAt: users.createdAt,
-      commentCount: sql<number>`(select count(*) from comments where comments.author_type = 'user' and comments.author_id = ${users.id})`,
-      sessionCount: sql<number>`(select count(*) from sessions where sessions.user_id = ${users.id})`,
-    })
-    .from(users);
+  const [rows, cmt, sess] = await Promise.all([
+    db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        handle: users.handle,
+        role: users.role,
+        status: users.status,
+        canPublish: users.canPublish,
+        canAuthor: users.canAuthor,
+        authorVerified: users.authorVerified,
+        emailVerified: users.emailVerified,
+        accountSlug: users.accountSlug,
+        userGroup: users.userGroup,
+        totpEnabled: users.totpEnabled,
+        invitedBy: users.invitedBy,
+        createdAt: users.createdAt,
+      })
+      .from(users),
+    /* 评论数与会话数另查两次再在内存里并上：
+       原先写成 select 里的相关子查询（`(select count(*) ... = ${users.id})`），
+       D1 那边恒回 0 —— 列表说「评论 0」而点开详情列得出两条，两处自相矛盾。 */
+    db
+      .select({ id: comments.authorId, n: sql<number>`count(*)` })
+      .from(comments)
+      .where(eq(comments.authorType, 'user'))
+      .groupBy(comments.authorId),
+    db.select({ id: sessions.userId, n: sql<number>`count(*)` }).from(sessions).groupBy(sessions.userId),
+  ]);
+  const cmtById = new Map(cmt.map((r) => [r.id ?? '', Number(r.n)]));
+  const sessById = new Map(sess.map((r) => [r.id ?? '', Number(r.n)]));
+  const counted = rows.map((r) => ({ ...r, commentCount: cmtById.get(r.id) ?? 0, sessionCount: sessById.get(r.id) ?? 0 }));
 
   // 邀请码只用来把 invitedBy 还原成人能看的码，不参与分页
   const codes = await db.select({ id: inviteCodes.id, code: inviteCodes.code }).from(inviteCodes);
   const codeById = new Map(codes.map((r) => [r.id, r.code]));
   const q = (c.req.query('q') ?? '').trim().toLowerCase();
   const filtered = q
-    ? rows.filter(
+    ? counted.filter(
         (r) =>
           r.email.toLowerCase().includes(q) ||
           (r.name ?? '').toLowerCase().includes(q) ||
           (r.handle ?? '').toLowerCase().includes(q) ||
           (codeById.get(r.invitedBy ?? '') ?? '').toLowerCase().includes(q),
       )
-    : rows;
+    : counted;
 
   const list = filtered
     .sort((a, b) => b.createdAt - a.createdAt)

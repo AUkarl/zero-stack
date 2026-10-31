@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { flash } from '#lib/toast.svelte';
   import { del, get, getApiBase, post } from '#lib/api';
   import { fmtDate, healthWarn, type BuildHealth } from '#lib/api';
 
@@ -96,6 +97,9 @@
   let busy = $state('');
   let error = $state('');
   let notice = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  flash('ok', () => notice);
   /** 分批提交时的进度，只有真写在跑才非空 */
   let importProgress = $state('');
   let lastExport = $state<ArchiveResult | null>(null);
@@ -637,8 +641,6 @@
   <strong>导出不挑范围，恢复时才挑分区</strong> —— 每个分区可以单独演习、单独推送，不会一把全盖回去。
 </p>
 
-{#if error}<p class="err">{error}</p>{/if}
-{#if notice}<p class="ok">{notice}</p>{/if}
 
 <section class="card">
   <h3>这份备份里有什么</h3>

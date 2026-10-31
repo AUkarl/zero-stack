@@ -157,7 +157,7 @@
   }
   .grid2 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: var(--t-4);
     gap: 0.5rem;
   }
   .row {

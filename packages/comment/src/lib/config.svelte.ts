@@ -33,14 +33,10 @@ class CommentConfig {
   }
 
   /**
-   * 后台 allowRegister：评论区的「登录」入口显隐跟着它。
-   * 拿不到配置时按 true 兜底 —— 登录页自己还会再校验一次策略，别把入口整个藏掉。
+   * 后台「注册用户可登录」（readerLoginEnabled）：评论区的「登录」入口跟着它，
+   * 而不是跟「允许注册」—— 关掉注册不等于关掉老用户的登录门。
+   * 拿不到配置时按 true 兜底：登录页自己还会再校验一次策略，别把入口整个藏掉。
    */
-  get allowRegister(): boolean {
-    return truthy(this.data?.allowRegister, true);
-  }
-
-  /** 已注册用户能不能登录；与「允许注册」分开 */
   get readerLoginEnabled(): boolean {
     return truthy(this.data?.readerLoginEnabled, true);
   }

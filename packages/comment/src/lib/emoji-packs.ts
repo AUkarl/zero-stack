@@ -1,12 +1,13 @@
 /**
- * emoji-packs.ts — 正文表情 token 的渲染白名单
+ * emoji-packs.ts — 评论表情库（多 tab 弹层的数据源 + 正文 token 的渲染白名单）
  *
- * 表情面板已下线，但历史评论里的 [库:名字] token 与 Waline 导入的那一枚 img 仍要渲染成图，
- * 所以这份白名单留着。图片清单构建期由 scripts/build-emoji-packs.mjs 从 Waline 官方表情包
- * 烘焙进 emoji-data.gen.ts，图片按需要从公共 CDN 加载，运行期不再请求 info.json。
- *
- * 只有查得到才渲染成 <img>，用户自己拼的 [任意:任意] 一律保持字面文本
- * —— 渲染点见 lib/markdown.ts 的 emoji 段。
+ * 两类库：
+ *   · 文本库（emoji / 自定义 / 颜文字）：items 是要插进正文的字符本身；
+ *   · 图片库（微博 / B站 / QQ / 贴吧）：清单构建期由 scripts/build-emoji-packs.mjs 从
+ *     Waline 官方表情包烘焙进 emoji-data.gen.ts，插进正文的是 [库:名字] 这种 token，
+ *     图片按需要从公共 CDN 加载，运行期不再请求 info.json。
+ * 图片 token 只有在 EMOJI_IMAGES 里查得到才渲染成 <img>，用户自己拼的 [任意:任意]
+ * 一律保持字面文本 —— 渲染点见 lib/markdown.ts 的 emoji 段。
  */
 
 import { EMOJI_CDN_BASES, EMOJI_IMAGE_SETS } from './emoji-data.gen';
@@ -20,16 +21,82 @@ export interface EmojiImage {
   srcs: string[];
 }
 
-/** token 内层（去掉方括号）→ 图片数据；查不到就是 undefined（正文保持 [weibo:smile] 字面文本） */
+export interface EmojiPack {
+  id: string;
+  /** tab 上的文案 */
+  label: string;
+  /** 文本表情：直接插进正文 */
+  items: string[];
+  /** 图片表情：插进正文的是 token */
+  images?: EmojiImage[];
+}
+
+/** 原来三档 Unicode 表情（抖音/微博/B站）几乎全是重复的，去重合并成一档 */
+const UNICODE: string[] = [
+  '😀', '😁', '😂', '🤣', '😊', '😍', '🥰', '😘', '😜', '😝', '🤪', '🤗',
+  '🤔', '🫣', '🙄', '😏', '😌', '😴', '🥱', '😎', '🤩', '🥳', '😳', '🤤',
+  '😱', '😭', '😅', '🤯', '😡', '🤬', '🥺', '😞', '💀', '👻', '🤡', '🫤',
+  '🙌', '👏', '👍', '👎', '🤝', '💪', '☝️', '✌️', '🤞', '👀', '🫶', '❤️',
+  '💔', '✨', '🔥', '🎉', '💯', '🌹', '☕', '🍺', '🍗', '🐶', '😄', '😆',
+  '🙂', '😉', '😒', '😔', '😤', '🥵', '🥶', '😇', '👽', '🤖', '🎈', '🌟',
+  '⭐', '🌙', '☀️', '⛅', '🌈', '☁️', '❄️', '⚡', '🌊', '🍉', '🍚', '🍜',
+  '🍕', '🍻', '🎂', '📷', '🎬', '📚', '✏️', '🎵', '💬', '📢', '💡', '💧',
+  '🍃', '🌸', '💐', '🐱', '🐼', '🐷', '🦄', '🙃', '🤢', '🛸', '🌚', '🌝',
+  '🙈', '🙉', '🙊', '🐧', '🦊', '🍬', '🍡', '🍰', '🍿', '🎤', '🎮', '📺',
+  '💖', '💰',
+];
+
+/**
+ * 颜文字：字符串里带反斜杠和引号，写的时候用单引号包住并把反斜杠转义。
+ * 长度不一，面板按宽度自动排，长的那几个会自己占一行。
+ */
+const KAOMOJI: string[] = [
+  '(╯°□°)╯︵ ┻━┻', '┬─┬ノ( º _ ºノ)', '(¬‿¬)', '(￣▽￣)"', 'Orz',
+  '_(:з」∠)_', '¯\\_(ツ)_/¯', '(ノಠ益ಠ)ノ', '(╥_╥)', '(´・ω・｀)',
+  '(っ˘ω˘ς)', '(✿◕‿◕)', '(◕‿◕)', 'm(_ _)m', '(¬_¬")',
+  '╮(╯_╰)╭', '( ￣▽￣)', '←_←', '→_→', '(⊙_⊙)',
+  '(°ロ°)!', '(￣3￣)', 'ᕕ( ᐛ )ᕗ', '(ノ´▽`)ノ♪', '凸(▀̿Ĺ̯▀̿ ̿)',
+  '(☞ﾟヮﾟ)☞', '(＾▽＾)', '(￣^￣)ゞ', '(・_・;)', '(ノД`)・゜・。',
+  '(＾ω＾)', '✧(≖ ◡ ≖✿)', '(ಡωಡ)', 'Ծ‸Ծ', '(๑•̀ㅂ•́)و✧',
+  '(￣Д￣)ﾉ', '(￢_￢)', '(｡•ˇ‸ˇ•｡)', '(￣ω￣)', '(・ω・)ノ',
+  '(￣o~￣)', '(っ´Ι`)っ', 'Σ(°△°|||)', '(●ω●)', '(๑ᵒ̴̶̷͈᷄ᗨᵒ̴̶̷͈᷅)',
+  '(*/ω＼*)', '(˘︹˘)', '( ˘ω˘ )',
+];
+
+/** 图片库的 tab 文案（dir 是 CDN 目录名，前台只认 token 那一份） */
+const IMAGE_TABS: Record<string, string> = {
+  weibo: '微博',
+  bb: 'B站',
+  qq: 'QQ',
+  tieba: '贴吧',
+};
+
+export const IMAGE_PACKS: EmojiPack[] = EMOJI_IMAGE_SETS.map((s) => ({
+  id: s.token,
+  label: IMAGE_TABS[s.token] ?? s.token,
+  items: [],
+  images: s.items.map((name) => ({
+    token: `[${s.token}:${name}]`,
+    name,
+    srcs: EMOJI_CDN_BASES.map((base) => `${base}/${s.dir}/${s.prefix}${name}.${s.type}`),
+  })),
+}));
+
+
+export const BUILTIN_EMOJI_PACKS: EmojiPack[] = [
+  ...IMAGE_PACKS,
+  { id: 'emoji', label: 'Emoji', items: UNICODE },
+  { id: 'kaomoji', label: '颜文字', items: KAOMOJI },
+];
+
+/* ------------------------------------------------------------------
+ * 正文 token → 图片：唯一一份白名单，markdown 渲染器只认这张表
+ * ----------------------------------------------------------------*/
+
+/** 'weibo:smile' → 图片数据；查不到就是 undefined（正文保持 [weibo:smile] 字面文本） */
 const EMOJI_IMAGES = new Map<string, EmojiImage>();
-for (const set of EMOJI_IMAGE_SETS) {
-  for (const name of set.items) {
-    EMOJI_IMAGES.set(`${set.token}:${name}`, {
-      token: `[${set.token}:${name}]`,
-      name,
-      srcs: EMOJI_CDN_BASES.map((base) => `${base}/${set.dir}/${set.prefix}${name}.${set.type}`),
-    });
-  }
+for (const pack of IMAGE_PACKS) {
+  for (const img of pack.images ?? []) EMOJI_IMAGES.set(img.token.slice(1, -1), img);
 }
 
 export function emojiImageOf(key: string): EmojiImage | undefined {
@@ -71,7 +138,7 @@ export function emojiImageFromLegacyUrl(src: string): EmojiImage | null {
 }
 
 /*
- * 表情图的那一枚 <img> —— 正文渲染、后台与账号页都用这一份，保证三处行为一致。
+ * 表情图的那一枚 <img> —— 正文渲染、表情面板、后台与账号页都用这一份，保证四处行为一致。
  *
  * 首张进 src，其余进 data-chain（空格分隔；地址全是构建期从白名单拼出来的，不会带空格），
  * onerror 里换下一张，全试完就把这张图换成 token 原文（[weibo:smile]）—— 宁可看见代码，
