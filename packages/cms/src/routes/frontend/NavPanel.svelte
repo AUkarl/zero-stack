@@ -152,7 +152,7 @@
   <div>
     <h3>导航栏菜单项</h3>
     <p class="muted small tip">
-      共 {count} 项（上限 {CAP.nav}）。上面的顺序就是列表顺序，真正的前台顺序由「区域 + weight」决定，右侧预览会实时跟着变。
+      共 {count} 项（上限 {CAP.nav}）。上面的顺序就是列表顺序，真正的前台顺序由「区域 + weight」决定，底部预览会实时跟着变。
     </p>
   </div>
   <button class="sm primary" onclick={addItem} disabled={count >= CAP.nav}>＋ 添加菜单项</button>
@@ -198,7 +198,7 @@
       <label>
         链接
         <input bind:value={it.url} maxlength={LIMIT.href} placeholder="/home/ 或 https://example.com" />
-        <span class="muted small">站内写 / 开头的路径；父项（只有子菜单）可留空</span>
+        <span class="muted small">站内写 / 开头的路径；父项可留空</span>
       </label>
       <label>
         区域
@@ -206,12 +206,12 @@
           <option value="">主菜单</option>
           <option value="controls">右侧图标区</option>
         </select>
-        <span class="muted small">换了区域，weight 会在下一次上移 / 下移时按新区重排</span>
+        <span class="muted small">换区域，weight 会按新区重排</span>
       </label>
       <label>
         weight（越小越靠前）
         <input type="number" step="1" bind:value={it.weight} min={LIMIT.weightMin} max={LIMIT.weightMax} />
-        <span class="muted small">主题自带的图标开关默认排在 90 和 100，要插到它们中间就填 91 ~ 99</span>
+        <span class="muted small"></span>
       </label>
       <label>
         标识 identifier
@@ -223,7 +223,7 @@
         <select bind:value={it.parent}>
           {#each parentOptions(it) as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
         </select>
-        <span class="muted small">候选只列本区域已填标识的顶级项，避免指向不存在的父项</span>
+        <span class="muted small"></span>
       </label>
       <label>
         图标（Font Awesome 类名）
@@ -248,10 +248,7 @@
         <input type="checkbox" bind:checked={it.external} />
         <span>外部链接（新标签打开）</span>
       </label>
-      <span class="muted small">
-        登录 / 账号入口不在这里配：主题固定补一项，显示与否只看「设置 → 注册与邀请码 → 前台账号系统」
-        （历史数据里勾过账号入口的那一项仍然生效，主题不会重复补第二个）。
-      </span>
+      <span class="muted small">登录 / 账号入口显示与否只看「设置 → 注册与邀请码 → 前台账号系统」。</span>
     </div>
     {#if badParent}
       <p class="err small">parent 填的「{it.parent}」在本段里没有任何项的标识与它相同，这一项不会出现在子菜单里。改 parent 或给父项补上 identifier。</p>

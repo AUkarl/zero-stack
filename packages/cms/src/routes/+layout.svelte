@@ -258,17 +258,19 @@
           aria-label={navCollapsed ? '展开侧栏' : '折叠侧栏'}
           title={navCollapsed ? '展开侧栏' : '折叠侧栏'}
           aria-expanded={!navCollapsed}>
-          <span aria-hidden="true">{navCollapsed ? '»' : '«'}</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2.5" />
+            <line x1="9" y1="4" x2="9" y2="20" />
+            <path d="M6 8.2h.01M6 12h.01M6 15.8h.01" />
+          </svg>
         </button>
       </div>
-      <div class="me" title={session.user?.name || session.user?.email || ''}>
+      <div class="me">
         <span class="ava">
           {#if avatar}<img src={avatar} alt="" />{:else}{(session.user?.name || session.user?.email || '?').slice(0, 1).toUpperCase()}{/if}
         </span>
-        <div class="meta">
-          <span class="who">{session.user?.name || session.user?.email}</span>
-          <button class="out" onclick={logout}>退出登录</button>
-        </div>
+        <span class="who" title={session.user?.name || session.user?.email || ''}>{session.user?.name || session.user?.email}</span>
+        <button class="out" onclick={logout}>退出</button>
       </div>
       <nav>
         {#each NAV as g (g.title)}
@@ -430,27 +432,30 @@
     align-items: center;
     justify-content: center;
     line-height: 1;
-    font-size: 1rem;
     color: var(--fg);
     border-color: var(--border);
     background: var(--panel-2);
     box-shadow: none;
+  }
+  .fold svg {
+    width: 17px;
+    height: 17px;
   }
   .fold:hover {
     color: var(--accent);
     border-color: var(--accent);
     background: var(--panel-2);
   }
-  /* 主题按钮只有图标：保证 36px 命中区与深色下的对比 */
+  /* 主题按钮与折叠按钮同尺寸；展开时和折叠按钮右侧对齐 */
   .theme {
-    width: 36px;
-    height: 36px;
-    min-height: 36px;
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
     padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.15rem;
+    font-size: 1rem;
     color: var(--fg);
     background: var(--panel-2);
     border-color: var(--border);
@@ -462,8 +467,8 @@
   .me {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.15rem 0.95rem 0.75rem 1.15rem;
+    gap: 0.55rem;
+    padding: 0.15rem 0.85rem 0.75rem 1.15rem;
     border-bottom: 1px solid var(--border);
     margin-bottom: 0.35rem;
   }
@@ -486,19 +491,19 @@
     height: 100%;
     object-fit: cover;
   }
-  .me .meta {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    min-width: 0;
-  }
   .me .who {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 0.84rem;
     color: var(--fg);
   }
   .me .out {
-    align-self: flex-start;
-    padding: 0;
+    flex: none;
+    margin-left: auto;
+    padding: 0.12rem 0;
     border: none;
     background: none;
     box-shadow: none;
@@ -513,7 +518,8 @@
     width: 72px;
   }
   aside.collapsed .brand,
-  aside.collapsed .me .meta,
+  aside.collapsed .me .who,
+  aside.collapsed .me .out,
   aside.collapsed nav .txt,
   aside.collapsed nav .cnt {
     display: none;
@@ -558,6 +564,7 @@
   }
   aside.collapsed .foot {
     padding: 0.65rem 0.5rem 0.9rem;
+    justify-content: center;
   }
   nav {
     flex: 1;
@@ -624,9 +631,9 @@
     padding: 0 6px;
   }
   .foot {
-    padding: 0.65rem 0.95rem 0.9rem;
+    padding: 0.65rem 0.85rem 0.9rem;
     display: flex;
-    justify-content: flex-start;
+    justify-content: flex-end;
     border-top: 1px solid var(--border);
   }
   main {

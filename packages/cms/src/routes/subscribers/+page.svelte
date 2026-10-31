@@ -202,7 +202,7 @@
 
 <h3>邮件日志</h3>
 <div class="card table-wrap">
-  <table class="cols-wide">
+  <table class="cols-wide mail-log">
     <thead>
       <tr><th>收件人</th><th>主题</th><th>状态</th><th>时间</th><th>错误</th></tr>
     </thead>
@@ -254,6 +254,20 @@
   .ops {
     justify-content: flex-end;
     white-space: nowrap;
+  }
+  .mail-log th:nth-child(1) { width: 210px; }
+  .mail-log th:nth-child(3) { width: 76px; }
+  .mail-log th:nth-child(4) { width: 150px; }
+  .mail-log th:nth-child(5) { width: 220px; }
+  .mail-log td:nth-child(1),
+  .mail-log td:nth-child(3),
+  .mail-log td:nth-child(4) {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mail-log td:nth-child(2) {
+    overflow-wrap: break-word;
   }
   .ops button + button {
     margin-left: 0.3rem;

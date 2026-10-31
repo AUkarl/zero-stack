@@ -571,22 +571,24 @@
 <section class="card blk id">
   <h3>身份</h3>
   {#if sec || profile}
-    <div class="row idrow">
-      {#if savedImage}<img class="av" src={assetUrl(savedImage) || savedImage} alt="头像" />{/if}
-      <div>
-        <p class="who">{profile?.name || sec?.name || '（未设置昵称）'}</p>
-        <p class="muted small nowrap">
-          {sec?.email ?? profile?.email ?? ''}　账号标识：<code>{sec?.accountSlug ? `@${sec.accountSlug}` : '未分配'}</code>
-        </p>
-      </div>
-      <div class="row badges">
+    <div class="idgrid">
+      {#if savedImage}
+        <img class="av" src={assetUrl(savedImage) || savedImage} alt="头像" />
+      {:else}
+        <span class="av ph">{(profile?.name || sec?.name || sec?.email || '?').slice(0, 1).toUpperCase()}</span>
+      {/if}
+      <p class="who">{profile?.name || sec?.name || '（未设置昵称）'}</p>
+      <p class="idmeta">
+        <span>{sec?.email ?? profile?.email ?? ''}</span>
+        <span>账号标识：<code>{sec?.accountSlug ? `@${sec.accountSlug}` : '未分配'}</code></span>
+      </p>
+      <div class="badges">
         <span class="badge">{sec?.isAdmin ? '管理员' : sec?.role ?? profile?.role}</span>
         {#if authorHandle}
           <span class="badge" title="文章 front matter 里的 author 写这个标识，就取你这份作者资料">
             作者标识：<code>{authorHandle}</code>
           </span>
         {/if}
-
         <span class="badge {(sec?.emailVerified ?? profile?.emailVerified) ? 'good' : 'pending'}">
           邮箱{(sec?.emailVerified ?? profile?.emailVerified) ? '已验证' : '未验证'}
         </span>
@@ -748,11 +750,10 @@
 <!-- ---------------------------------------------------------- 身份验证器 -->
 <section class="card blk">
   <h3>身份验证器（TOTP）绑定状态</h3>
-  <p class="muted small">
-    这一块只表示本账号有没有绑定验证器，<strong>不决定</strong>登录要不要动态码 ——
-    管理员要不要码由上面「管理员登录方式」说了算；普通用户绑了验证器之后，
-    是他们自己在用户中心的「两步验证」里勾选登录时要不要这一道（默认要），不受这里影响。
-    状态：{sec?.totpEnabled ? '已绑定' : '未绑定'}　签发方（totpIssuer）：<code>{issuer}</code>
+  <p class="muted small">这一块只控制管理员账号有没有绑定验证器，不决定登录要不要动态码。</p>
+  <p class="totpstate">
+    <strong>状态：{sec?.totpEnabled ? '已绑定' : '未绑定'}</strong>
+    <span>签发方（totpIssuer）：<code>{issuer}</code></span>
   </p>
   {#if sec?.totpEnabled}
     <p class="muted small">关闭需要「当前密码」或「6 位动态码」任一（后端二选一）。</p>
@@ -838,17 +839,7 @@
 <!-- ---------------------------------------------------------- 登录方式 -->
 <section class="card blk">
   <h3>管理员登录方式（只约束后台管理员，不是本账号的开关）</h3>
-  <p class="muted small">
-    这里决定的是「<strong>管理员</strong>登录后台要交哪几样凭据」：写配置键 adminLoginPolicy / totpIssuer（PATCH {EP.config}），
-    取值与后端 LOGIN_POLICIES 完全一致，一共四种：单密码 / 密码 + 身份验证器 / GitHub 登录 / 密码 + 邮箱验证码。
-    选「密码」时就算下面的验证器处于已绑定状态，登录也只要密码；
-    只有选了「密码 + 身份验证器」才要 6 位动态码。不提供「只要动态码」这一种：丢了验证器不该把人锁在站外。
-  </p>
-  <p class="muted small">
-    普通用户不跟这条策略走：他们在前台永远是邮箱 + 密码，邮箱验证码只用来验证邮箱（注册、找回密码、绑定验证器），
-    不作为登录因子。谁绑了身份验证器，谁就在自己的用户中心里决定登录时要不要那枚动态码（默认要）。
-    管理员从站点登录页进门时也按这里的策略走；选了「密码 + 邮箱验证码」就用后台的登录页，站点那一侧没有这一步。
-  </p>
+  <p class="muted small">普通用户不受这里影响；这里只决定管理员登录后台要交哪几样凭据。</p>
   <div class="grid2">
     <label>
       管理员登录方式
@@ -877,9 +868,6 @@
   .small {
     font-size: 0.76rem;
   }
-  .nowrap {
-    white-space: nowrap;
-  }
   .gaps {
     margin-bottom: 0.7rem;
     padding: 0.7rem 0.9rem;
@@ -905,9 +893,50 @@
     margin: 0;
     font-size: 0.98rem;
   }
-  .id .idrow {
-    align-items: flex-start;
-    gap: 1rem;
+  .idgrid {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 0.3rem 0.75rem;
+    align-items: center;
+  }
+  .idgrid .av {
+    grid-row: span 2;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .idgrid .av.ph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 1.1rem;
+    font-weight: 650;
+  }
+  .totpstate {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 1rem;
+    margin: 0.2rem 0 0.4rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-2);
+    font-size: 0.84rem;
+  }
+  .totpstate strong {
+    font-size: 0.92rem;
+  }
+  .idmeta {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    color: var(--muted);
+    font-size: 0.8rem;
   }
   .who {
     margin: 0;
@@ -915,7 +944,11 @@
     font-weight: 600;
   }
   .badges {
-    margin-left: auto;
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.25rem;
   }
   .grid2 {
     display: grid;

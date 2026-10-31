@@ -20,9 +20,8 @@ import { getConfig } from './config';
 import type { MediaBucket } from './media';
 import { deleteMediaObject, listMediaObjects } from './media';
 
-/** 三档：显示用 360/720，点开放大用 1080 */
-export const VARIANT_HEIGHTS = [360, 720, 1080] as const;
-export type VariantHeight = (typeof VARIANT_HEIGHTS)[number];
+/** 三档：显示用 360/720，点开放大用 1080（后台上传与构建期 srcset 都按这三档） */
+export const VARIANT_HEIGHTS = ['360', '720', '1080'] as const;
 
 export interface VariantEntry {
   /** 宽/高 */
@@ -40,10 +39,6 @@ export function isVariantKey(key: string): boolean {
 /** 母版键 → 变体目录（去掉扩展名） */
 export function variantDir(key: string): string {
   return `${VARIANT_ROOT}${key.replace(/\.[^./]+$/, '')}/`;
-}
-
-export function variantKey(key: string, height: number): string {
-  return `${variantDir(key)}h${height}.webp`;
 }
 
 function hasControlChar(v: string): boolean {

@@ -476,7 +476,7 @@ app.get('/github/callback', async (c) => {
   if (!account) return failBack('绑定的账号已被注销，请联系站主');
   if (account.status === 'banned') return failBack('账号已被封禁，请联系站主');
   // 关闭登录时非管理员也进不来（与 POST /api/auth/login 同一口径，管理员照常放行）
-  if (account.role !== 'admin' && !(await getConfigBool(c.env, 'allowRegister', true))) {
+  if (account.role !== 'admin' && !(await getConfigBool(c.env, 'readerLoginEnabled', true))) {
     return failBack('站点当前关闭了登录，如需访问请联系站长');
   }
 

@@ -11,7 +11,9 @@ import {
   createFriend,
   deleteFriend,
   groupFriends,
+  groupFriendsDetail,
   loadFriends,
+  readLinkIcons,
   reorderFriends,
   updateFriend,
 } from '../services/friends-groups';
@@ -55,10 +57,11 @@ app.get('/posts', async (c) => {
 
 /* ------------------------------------------------ 后台（旧路径，仍可用） */
 
-/** 后台旧列表：保持扁平数组，顺带把 kind / sortOrder 给出去，CMS 不改也能读到分组信息 */
+/** 后台旧列表：保持扁平数组，顺带把 kind / sortOrder 给出去，CMS 不改也能读到分组信息。
+ *  用 detail 版：后台那行要显示「上次检测时间 / 失败次数 / 头像兜底」，公开那份故意不给这些。 */
 app.get('/all', async (c) => {
   requireAdmin(c);
-  const grouped = groupFriends(await loadFriends(c.env));
+  const grouped = groupFriendsDetail(await loadFriends(c.env), await readLinkIcons(c.env));
   return ok([...grouped.friends, ...grouped.alliance]);
 });
 

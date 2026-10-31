@@ -20,7 +20,7 @@
    *
    * 评论区里的入口由 <zero-comment> 自己出，这个元素只给「没有评论区、又需要一个登录按钮」
    * 的页面用（show-entry 默认关，所以主题里常驻的那个标签不写属性就是什么都不显示）。
-   * 显隐跟后台 allowRegister 一致：注册关了就不给普通访客摆登录入口。
+   * 显隐跟后台「注册用户可登录」一致：管理员关掉普通用户登录后才收起入口。
    */
   let {
     apiBase = '',
@@ -38,7 +38,7 @@
   });
 </script>
 
-{#if showEntry && !session.user && commentConfig.allowRegister && commentConfig.accountSystemEnabled}
+{#if showEntry && !session.user && commentConfig.readerLoginEnabled && commentConfig.accountSystemEnabled}
   <a class="chip" href={loginHref}>{t('login')}</a>
 {/if}
 

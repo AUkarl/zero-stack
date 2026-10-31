@@ -22,6 +22,7 @@ import {
   validateAuthorsYaml,
 } from '../services/authors';
 import { deleteCommentSubtree } from '../services/comment-tree';
+import { readLinkIcons } from '../services/friends-groups';
 import { notifySelfTest, quotedCommentHtml } from '../services/comment-notify';
 import { contentTitles, purgeContentTitleCache } from '../services/content-title';
 import { linksFilePath } from '../services/friends-file';
@@ -40,7 +41,7 @@ import { finishRepoWrites, repoTarget, triggerPagesBuild, buildReceipt } from '.
 import { buildHealthReceipt, commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, runLocalBuildCheck, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
-import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry } from '../services/media-variants';
+import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry, VARIANT_HEIGHTS } from '../services/media-variants';
 import { checkHugoDates, checkMediaKey, checkUploadBytes } from '../services/hugo-guard';
 import { resolveSiteName } from '../services/site-name';
 import {
@@ -1594,7 +1595,7 @@ app.post('/media-variants', async (c) => {
   if (!Number.isFinite(aspect) || aspect <= 0 || aspect > 10) fail(400, 'entry.a 要写成宽/高（正数）');
   const vIn = (raw?.v ?? {}) as Record<string, unknown>;
   const v: Record<string, string> = {};
-  for (const h of ['360', '720', '1080']) {
+  for (const h of VARIANT_HEIGHTS) {
     const u = vIn[h];
     if (typeof u !== 'string' || !u) continue;
     /* 允许 http(s)，也允许以 / 开头的站内地址：本地台架没有给桶配直链域名，objectUrl 会回 /api/media/… */
@@ -2501,19 +2502,11 @@ app.get('/health-detail', async (c) => {
 app.get('/stats', async (c) => {
   requireAdmin(c);
   const db = createDb(c.env);
-  const since7 = Math.floor(Date.now() / 1000) - 7 * 86400;
-  /* 排除导入数据：评论导入时写了 is_legacy = true，这里只影响这个视图，
-     不动库里任何一条数据。统计页的开关会带 ?excludeLegacy=1。 */
-  const q = String(c.req.query('excludeLegacy') ?? '').toLowerCase();
-  const clean = q === '1' || q === 'true';
-  const notLegacyComment = clean ? eq(comments.isLegacy, false) : undefined;
-  const [articleCount] = await db.select({ n: sql<number>`count(*)` }).from(comments).where(gte(comments.createdAt, since7));
-  void articleCount;
-  const [commentCount] = await db.select({ n: sql<number>`count(*)` }).from(comments).where(notLegacyComment);
+  const [commentCount] = await db.select({ n: sql<number>`count(*)` }).from(comments);
   const [pendingCount] = await db
     .select({ n: sql<number>`count(*)` })
     .from(comments)
-    .where(and(eq(comments.status, 'pending'), notLegacyComment));
+    .where(eq(comments.status, 'pending'));
   const [subscriberCount] = await db.select({ n: sql<number>`count(*)` }).from(subscribers).where(eq(subscribers.status, 'confirmed'));
   const [userCount] = await db.select({ n: sql<number>`count(*)` }).from(users);
   const emails = await db
@@ -2526,7 +2519,6 @@ app.get('/stats', async (c) => {
     subscribers: Number(subscriberCount?.n ?? 0),
     users: Number(userCount?.n ?? 0),
     email: Object.fromEntries(emails.map((e) => [e.status, Number(e.n)])),
-    excludeLegacy: clean,
   });
 });
 
@@ -2596,11 +2588,6 @@ app.get('/stats/reactions', async (c) => {
   requireAdmin(c);
   const limit = Math.min(200, Math.max(1, Number(c.req.query('limit')) || 50));
   const offset = Math.max(0, Number(c.req.query('offset')) || 0);
-  const q = String(c.req.query('excludeLegacy') ?? '').toLowerCase();
-  const clean = q === '1' || q === 'true';
-  /* 导入旧站点赞时 fingerprint 写成 legacy:<hash>:like:<序号>；登录用户的 fingerprint 是 NULL，
-     coalesce 之后才不会被 NOT LIKE 一并滤掉 */
-  const notLegacyReaction = clean ? sql`coalesce(${reactions.fingerprint}, '') not like 'legacy:%'` : undefined;
   const db = createDb(c.env);
   const [rows, total, pages] = await Promise.all([
     db
@@ -2612,13 +2599,12 @@ app.get('/stats/reactions', async (c) => {
         lastAt: sql<number>`max(${reactions.createdAt})`,
       })
       .from(reactions)
-      .where(notLegacyReaction)
       .groupBy(reactions.targetSlug)
       .orderBy(sql`(sum(case when ${reactions.kind} = 'like' then 1 else 0 end) + sum(case when ${reactions.kind} = 'star' then 1 else 0 end)) desc`)
       .limit(limit)
       .offset(offset),
-    db.select({ n: sql<number>`count(*)` }).from(reactions).where(notLegacyReaction),
-    db.select({ n: sql<number>`count(distinct ${reactions.targetSlug})` }).from(reactions).where(notLegacyReaction),
+    db.select({ n: sql<number>`count(*)` }).from(reactions),
+    db.select({ n: sql<number>`count(distinct ${reactions.targetSlug})` }).from(reactions),
   ]);
   return ok({
     rows: rows.map((r) => ({ slug: r.slug, likes: Number(r.likes), stars: Number(r.stars), actors: Number(r.actors), lastAt: Number(r.lastAt) })),
@@ -2626,7 +2612,6 @@ app.get('/stats/reactions', async (c) => {
     offset,
     reactionRows: Number(total[0]?.n ?? 0),
     pages: Number(pages[0]?.n ?? 0),
-    excludeLegacy: clean,
   });
 });
 
@@ -2645,7 +2630,7 @@ app.get('/stats/reactions', async (c) => {
 
 app.get('/friends', async (c) => {
   requireAdmin(c);
-  return ok(groupFriendsDetail(await loadFriends(c.env)));
+  return ok(groupFriendsDetail(await loadFriends(c.env), await readLinkIcons(c.env)));
 });
 
 app.post('/friends', async (c) => {

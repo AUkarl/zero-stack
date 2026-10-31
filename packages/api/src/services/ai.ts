@@ -17,7 +17,22 @@ import { fetchWithTimeout } from '../lib/fetch';
 import { cleanMultiline } from '../lib/sanitize';
 import { resolveSiteName } from './site-name';
 
-export type AiProvider = 'openai' | 'deepseek' | 'qianwen' | 'moonshot' | 'doubao' | 'zhipu' | 'grok' | 'custom';
+export type AiProvider =
+  | 'deepseek'
+  | 'qianwen'
+  | 'moonshot'
+  | 'doubao'
+  | 'zhipu'
+  | 'wenxin'
+  | 'hunyuan'
+  | 'spark'
+  | 'siliconflow'
+  | 'openai'
+  | 'gemini'
+  | 'claude'
+  | 'grok'
+  | 'minimax'
+  | 'custom';
 
 export interface AiPreset {
   kind: AiProvider;
@@ -40,8 +55,15 @@ export const AI_PROVIDERS: AiPreset[] = [
   { kind: 'moonshot', label: 'Moonshot Kimi', endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', needsKey: true, hint: '长文本见长，8k / 32k / 128k 按需换模型' },
   { kind: 'doubao', label: '豆包（火山方舟）', endpoint: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k', needsKey: true, hint: '模型通常填控制台里的接入点 ID（ep-…），不是产品名' },
   { kind: 'zhipu', label: '智谱 GLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', needsKey: true, hint: 'glm-4-flash 免费档适合评论这种短文本' },
+  { kind: 'wenxin', label: '百度文心一言', endpoint: 'https://qianfan.baidubce.com/v2', model: 'ernie-4.0-8k', needsKey: true, hint: '百度智能云千帆的 OpenAI 兼容接口' },
+  { kind: 'hunyuan', label: '腾讯混元', endpoint: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-turbos-latest', needsKey: true, hint: '腾讯云混元的 OpenAI 兼容接口' },
+  { kind: 'spark', label: '讯飞星火', endpoint: 'https://spark-api-open.xf-yun.com/v1', model: 'generalv3.5', needsKey: true, hint: '讯飞开放平台星火 HTTP 接口' },
+  { kind: 'siliconflow', label: '硅基流动', endpoint: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3', needsKey: true, hint: '聚合国内主流开源模型，模型名可换' },
   { kind: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', needsKey: true, hint: '需要能访问 api.openai.com 的网络' },
+  { kind: 'gemini', label: 'Google Gemini', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.0-flash', needsKey: true, hint: 'Gemini 的 OpenAI 兼容接口' },
+  { kind: 'claude', label: 'Anthropic Claude', endpoint: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-latest', needsKey: true, hint: 'Anthropic 的 OpenAI 兼容层；账号需已开通' },
   { kind: 'grok', label: 'Grok（xAI）', endpoint: 'https://api.x.ai/v1', model: 'grok-2-latest', needsKey: true, hint: 'xAI 控制台签发 API Key' },
+  { kind: 'minimax', label: 'MiniMax', endpoint: 'https://api.minimax.chat/v1', model: 'abab6.5s-chat', needsKey: true, hint: 'MiniMax 开放平台的 OpenAI 兼容接口' },
   { kind: 'custom', label: '自定义 / 自建（OpenAI 兼容）', endpoint: '', model: '', needsKey: false, hint: 'Ollama、vLLM、公司网关等：端点和模型必填，不要密钥可留空' },
 ];
 
@@ -178,6 +200,23 @@ async function chat(env: Env, cfg: AiConfig, messages: { role: 'system' | 'user'
   return text;
 }
 
+export interface AiChatOptions {
+  temperature?: number;
+  maxTokens?: number;
+  timeoutMs?: number;
+}
+
+/** 供翻译等其它功能复用的通用 chat 入口（共用同一份 AI 模型配置） */
+export async function aiChat(
+  env: Env,
+  messages: { role: 'system' | 'user'; content: string }[],
+  opts: AiChatOptions = {},
+): Promise<string> {
+  const cfg = await aiConfig(env);
+  if (!cfg.ready) throw new Error('AI 未配置：到「设置 → AI 模型配置」补齐服务商与密钥');
+  return chat(env, cfg, messages, opts);
+}
+
 /** 设置页/状态卡上的「测试连接」：一次极短的 chat 调用，验证端点、模型与密钥是否真的能通 */
 export async function aiPing(env: Env): Promise<string> {
   const cfg = await aiConfig(env);
@@ -219,7 +258,7 @@ const MODERATION_SYSTEM = [
 
 export async function aiModerate(env: Env, input: AiModerationInput): Promise<AiModerationResult> {
   const cfg = await aiConfig(env);
-  if (!cfg.ready) throw new Error('AI 未配置：到「设置 → AI 服务与密钥」填端点与模型');
+  if (!cfg.ready) throw new Error('AI 未配置：到「设置 → AI 模型配置」填端点与模型');
   const payload = {
     评论: input.content.slice(0, 3000),
     昵称: input.authorName ?? '',
@@ -258,7 +297,7 @@ export interface AiReplyInput {
  */
 export async function aiComposeReply(env: Env, input: AiReplyInput): Promise<string> {
   const cfg = await aiConfig(env);
-  if (!cfg.ready) throw new Error('AI 未配置：到「设置 → AI 服务与密钥」填端点与模型');
+  if (!cfg.ready) throw new Error('AI 未配置：到「设置 → AI 模型配置」填端点与模型');
   const siteName = await resolveSiteName(env);
   const extra = cleanMultiline((await getConfig(env, 'aiReplyPrompt')) ?? '', 1000);
   const system = [

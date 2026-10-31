@@ -43,6 +43,7 @@
   let action = $state('');
   let loading = $state(false);
   let error = $state('');
+  let detailRow = $state<Row | null>(null);
 
   async function load() {
     loading = true;
@@ -115,7 +116,7 @@
 </div>
 
 <div class="card table-wrap">
-  <table class="cols-wide">
+  <table class="cols-wide audit-table">
     <thead>
       <tr>
         <th>时间</th>
@@ -132,13 +133,10 @@
           <td class="small muted">{fmtDate(r.createdAt)}</td>
           <td class="small">{r.actorName || '—'}</td>
           <td class="small"><span class="badge">{LABEL[r.action] ?? r.action}</span></td>
-          <td class="small mono">{r.target || '—'}</td>
-          <td class="small">{brief(r.detail)}</td>
-          <td>
-            {#if r.detail}<details>
-              <summary class="muted small">原文</summary>
-              <pre class="small wrap">{JSON.stringify(r.detail, null, 2)}</pre>
-            </details>{/if}
+          <td class="small mono target" title={r.target || ''}>{r.target || '—'}</td>
+          <td class="small summary">{brief(r.detail)}</td>
+          <td class="ops">
+            {#if r.detail}<button class="sm" onclick={() => (detailRow = r)}>原文</button>{/if}
           </td>
         </tr>
       {:else}
@@ -153,6 +151,21 @@
   <span class="muted small">第 {Math.floor(offset / PAGE) + 1} 页 / 共 {Math.max(1, Math.ceil(total / PAGE))} 页</span>
   <button class="sm" onclick={() => page(PAGE)} disabled={offset + PAGE >= total}>下一页</button>
 </div>
+
+{#if detailRow}
+  <div class="modal" role="dialog" aria-modal="true" aria-label="操作原文" tabindex="-1" onclick={(e) => { if (e.target === e.currentTarget) detailRow = null; }} onkeydown={(e) => { if (e.key === 'Escape') detailRow = null; }}>
+    <div class="modalbox">
+      <div class="row spread">
+        <h3>操作原文</h3>
+        <button class="sm" onclick={() => (detailRow = null)}>关闭</button>
+      </div>
+      <p class="muted small">{fmtDate(detailRow.createdAt)} · {detailRow.actorName || '—'} · {LABEL[detailRow.action] ?? detailRow.action} · {detailRow.target || '—'}</p>
+      <pre class="wrap">{JSON.stringify(detailRow.detail, null, 2)}</pre>
+    </div>
+  </div>
+{/if}
+
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') detailRow = null; }} />
 
 <style>
   .head {
@@ -169,9 +182,64 @@
     font-family: ui-monospace, Menlo, Consolas, monospace;
     word-break: break-all;
   }
+  .audit-table th:nth-child(1) { width: 150px; }
+  .audit-table th:nth-child(2) { width: 80px; }
+  .audit-table th:nth-child(3) { width: 110px; }
+  .audit-table th:nth-child(4) { width: 190px; }
+  .audit-table th:nth-child(6) { width: 76px; }
+  .audit-table .target {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .audit-table .summary {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .audit-table .ops {
+    white-space: nowrap;
+    text-align: right;
+  }
   pre.wrap {
     white-space: pre-wrap;
     word-break: break-all;
     margin: 0;
+  }
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .modalbox {
+    width: min(820px, 100%);
+    max-height: 86vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem 1.1rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+  .modalbox h3 {
+    margin: 0;
+  }
+  .modalbox pre {
+    background: var(--panel-2);
+    padding: 0.8rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    max-height: 60vh;
+    overflow: auto;
   }
 </style>

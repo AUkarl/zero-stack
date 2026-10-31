@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, post } from '#lib/api';
+  import { get, patch, post } from '#lib/api';
   import { FA_ICON_CLASSES } from '#lib/fa-icons';
   import AboutPanel from './AboutPanel.svelte';
   import ApplyPanel from './ApplyPanel.svelte';
@@ -104,6 +104,60 @@
   let saveMessage = $state('');
   let saveWritten = $state<string[]>([]);
   let saveNote = $state<string[]>([]);
+
+  const PAGE_SWITCH_KEYS = [
+    { key: 'aboutEnabled', label: '关于页 /about/' },
+    { key: 'workEnabled', label: '工坊页 /work/' },
+    { key: 'momentsEnabled', label: '时刻页 /moments/' },
+    { key: 'friendsEnabled', label: '友链页 /links/' },
+  ] as const;
+  const FRIEND_SWITCH_KEYS = [
+    { key: 'friendFeedEnabled', label: '朋友动态' },
+    { key: 'friendApplyEnabled', label: '申请友链（前台是否使用在线表单）' },
+  ] as const;
+  const defaultPageSw = (): Record<string, boolean> => ({
+    aboutEnabled: true,
+    workEnabled: true,
+    momentsEnabled: true,
+    friendsEnabled: true,
+    friendFeedEnabled: true,
+    friendApplyEnabled: true,
+  });
+  let pageSw = $state<Record<string, boolean>>(defaultPageSw());
+  let pageSwSaved = $state<Record<string, boolean>>(defaultPageSw());
+  let pageSwBusy = $state(false);
+  let pageSwNotice = $state('');
+  const pageSwDirty = $derived([...PAGE_SWITCH_KEYS, ...FRIEND_SWITCH_KEYS].some((x) => pageSw[x.key] !== pageSwSaved[x.key]));
+
+  async function loadPageSwitches() {
+    try {
+      const d = await get<{ data: Record<string, string> }>('/api/admin/config');
+      const next: Record<string, boolean> = {};
+      for (const x of [...PAGE_SWITCH_KEYS, ...FRIEND_SWITCH_KEYS]) next[x.key] = String(d.data?.[x.key] ?? 'true') === 'true';
+      pageSw = next;
+      pageSwSaved = { ...next };
+    } catch {
+      /* 开关读不到不影响 data JSON 编辑 */
+    }
+  }
+
+  async function savePageSwitches() {
+    if (pageSwBusy) return;
+    pageSwBusy = true;
+    pageSwNotice = '';
+    try {
+      const body: Record<string, boolean> = {};
+      for (const x of [...PAGE_SWITCH_KEYS, ...FRIEND_SWITCH_KEYS]) if (pageSw[x.key] !== pageSwSaved[x.key]) body[x.key] = pageSw[x.key];
+      await patch('/api/admin/config', body);
+      pageSwSaved = { ...pageSw };
+      pageSwNotice = '页面开关已保存';
+      setTimeout(() => (pageSwNotice = ''), 3000);
+    } catch (e) {
+      pageSwNotice = `保存失败：${e instanceof Error ? e.message : '请求失败'}`;
+    } finally {
+      pageSwBusy = false;
+    }
+  }
 
   function makeMeta(): Record<SectionKey, SecMeta> {
     const m = {} as Record<SectionKey, SecMeta>;
@@ -378,6 +432,7 @@ async function save() {
   const activeFallback = $derived(SECTION_META[sec].fallback);
 </script>
 
+
 <div class="row spread head">
   <h2>前端管理</h2>
   <div class="row">
@@ -387,15 +442,41 @@ async function save() {
 </div>
 
 <p class="muted small intro">
-  这一页管前台的<em>样子</em>：导航栏、首页、页脚、关于页、工坊、时刻页、友链申请。保存会写进站点 <code>{dataDir}/</code> 目录下的
-  <code>site.json / nav.json / home.json / footer.json / about.json / works.json / moments.json / apply.json / seo.json</code>，
-  主题优先读这些文件，读不到才回落到 <code>params.toml</code>（只有「友链申请」回落的是友链页自己的正文）；
-  所以每一段都能单独「删除覆盖」退回原状。评论开关、注册开关这些运行时配置在「设置」页改，不在这儿。
-  最后那个「主题配置文件」子标签是直改仓库源文件（<code>params.toml</code> 等）的入口，它有自己的读取与保存，不走下面的统一按钮。
-  <strong>本页的保存没有开关可关</strong>：这些 json 就是本页的存储本身，点保存就是一次仓库提交。想让它不再往仓库写，
-  就把「设置 → 内容仓库」的 owner / repo 留空（那时本页会明确报错，而不是悄悄存到别处）。
-  设置里那个「投稿通过后自动写入仓库」的开关只管投稿页，管不到这里。
+  前端管理，保存会写进站点 <code>{dataDir}/</code> 目录下的 json 文件，读不到会回落到 <code>params.toml</code>
+  （只有「友链申请」回落的是友链页自己的正文）；「主题配置文件」子标签是直改仓库源文件（<code>params.toml</code> 等）的入口，
+  它有自己的读取与保存，不走下面的统一按钮。不想用本页功能，就把「设置 → 内容仓库」的 owner / repo 留空即可。
 </p>
+
+<section class="card pagesw">
+  <div class="row spread">
+    <div>
+      <h3>页面开关</h3>
+      <p class="muted small">关闭后前台导航隐藏该入口；带 functions/_middleware.ts 的站会由边缘直接返回 404，不收录、不搜索。</p>
+    </div>
+    <button class="primary" onclick={() => void savePageSwitches()} disabled={pageSwBusy || !pageSwDirty}>
+      {pageSwBusy ? '保存中…' : pageSwDirty ? '保存页面开关' : '页面开关已保存'}
+    </button>
+  </div>
+  <div class="swgrid">
+    {#each PAGE_SWITCH_KEYS as x (x.key)}
+      <label class="switch">
+        <input type="checkbox" checked={pageSw[x.key]} onchange={(e) => (pageSw[x.key] = e.currentTarget.checked)} />
+        <span>{x.label}</span>
+      </label>
+    {/each}
+  </div>
+  <div class="swsub">
+    <span class="muted small">友链页内：</span>
+    {#each FRIEND_SWITCH_KEYS as x (x.key)}
+      <label class="switch" class:off={!pageSw.friendsEnabled}>
+        <input type="checkbox" checked={pageSw[x.key]} disabled={!pageSw.friendsEnabled} onchange={(e) => (pageSw[x.key] = e.currentTarget.checked)} />
+        <span>{x.label}</span>
+      </label>
+    {/each}
+    <span class="muted small">关闭朋友动态/申请后，对应标签和接口一起不可用。</span>
+  </div>
+  {#if pageSwNotice}<p class="ok small">{pageSwNotice}</p>{/if}
+</section>
 
 {#if loadError}
   <div class="card errbox">
@@ -664,5 +745,44 @@ async function save() {
   .badge.bad {
     background: var(--bad-soft);
     color: var(--bad);
+  }
+  .pagesw {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    margin-bottom: 0.8rem;
+  }
+  .pagesw h3 {
+    margin: 0 0 0.2rem;
+    font-size: 0.98rem;
+  }
+  .swgrid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.55rem 1rem;
+  }
+  .swsub {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem 1rem;
+    padding-top: 0.55rem;
+    border-top: 1px dashed var(--border);
+  }
+  .switch {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--fg);
+    font-size: 0.88rem;
+  }
+  .switch.off {
+    opacity: 0.55;
+  }
+  @media (max-width: 720px) {
+    .swgrid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 </style>

@@ -32,10 +32,6 @@ export interface Authorish {
   userGroup?: string | null;
 }
 
-export function isAdminRow(row: Authorish | null | undefined): boolean {
-  return row?.role === 'admin';
-}
-
 /**
  * 作者标识：注册信息里挑第一个还能用的 ASCII 片段。
  * 顺序是 handle → account_slug → name → 邮箱前缀，都过一遍 canonHandle（只留小写字母数字和短横线）。

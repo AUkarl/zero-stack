@@ -81,16 +81,6 @@
   </div>
 </section>
 
-<section class="card blk ro">
-  <h3>「designed by …」一行（只读）</h3>
-  <p class="roval">designed by 知止</p>
-  <p class="muted small">
-    这一行不在本页可编辑范围：主题只从 params.toml 的 <code>[footer] designer_text</code> 读它，
-    保存 <code>data/footer.json</code> 不会影响它。要改就得改 params.toml（后台的「站点设置 → 开启前端参数写回」
-    那条 TOML 通道由站点仓库决定），或者在主题里换默认值。
-  </p>
-</section>
-
 <section class="card blk">
   <div class="row spread">
     <h3>备案条目（icpItems）</h3>
@@ -100,7 +90,7 @@
     <p class="err" role="alert">{warning}</p>
   {/if}
   <p class="muted small">
-    多条会自动排成一行、条目之间加竖线分隔；文字留空的条目保存时会被丢掉（主题本来也不显示它）。最多 {CAP.icp} 条。
+    多条会自动排成一行、条目之间加竖线分隔；最多 {CAP.icp} 条。
   </p>
   {#each footer.icpItems as x, i (x)}
     <div class="icp">
@@ -143,19 +133,19 @@
 
 <FooterIconList
   title="支持服务图标（services）"
-  hint="页脚中栏的一排图标，站点联盟、打赏之类的入口。名称必填、地址必填；名称显示方式可以整排统一，也可以逐条覆盖。"
+  hint="页脚中栏的一排图标，站点联盟、打赏之类的入口。名称必填、地址必填；图标类名和图片路径都填时优先使用图片路径。"
   bind:items={footer.services}
 />
 
 <FooterIconList
   title="社交链接 第一排（socialRow1）"
-  hint="页脚右栏上面那排。站内地址（如 /index.xml）也可以填，会自动当普通链接打开。"
+  hint="页脚右栏上面那排。站内地址（如 /index.xml）也可以填，会自动当普通链接打开。图标类名和图片路径都填时优先使用图片路径。"
   bind:items={footer.socialRow1}
 />
 
 <FooterIconList
   title="社交链接 第二排（socialRow2）"
-  hint="页脚右栏下面那排。两排都为空时右栏只剩回到顶部按钮。"
+  hint="页脚右栏下面那排。两排都为空时右栏只剩回到顶部按钮。图标类名和图片路径都填时优先使用图片路径。"
   bind:items={footer.socialRow2}
 />
 
@@ -199,15 +189,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 320px;
-  }
-  .ro .roval {
-    margin: 0;
-    font-size: 0.9rem;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.4rem 0.6rem;
-    color: var(--muted);
   }
   .icp {
     display: grid;

@@ -22,6 +22,8 @@
     lastCheckedAt: number | null;
     cooldownUntil: number | null;
     createdAt: number;
+    /** 后端算好的头像兜底（定时任务抓的 favicon，取不到就是站点 /favicon.ico）；手填头像为空时用 */
+    icon?: string | null;
   }
 
   interface AppRow {
@@ -56,6 +58,9 @@
   let error = $state('');
   let notice = $state('');
   let checking = $state(false);
+  /** 头像链里哪几枚取不到（取不到就退回首字占位，不留破碎图标）；键是 `${id}:a|i` */
+  let iconBad = $state<Set<string>>(new Set());
+  const markIconBad = (k: string) => { if (!iconBad.has(k)) iconBad = new Set([...iconBad, k]); };
   let checkResult = $state<string[]>([]);
 
   let showForm = $state(false);
@@ -510,8 +515,10 @@
       {#each items as f, i (f.id)}
         <div class="frow">
           <div class="fmain">
-            {#if f.avatar}
-              <img class="av" src={assetUrl(f.avatar) || f.avatar} alt="" loading="lazy" />
+            {#if f.avatar && !iconBad.has(`${f.id}:a`)}
+              <img class="av" src={assetUrl(f.avatar) || f.avatar} alt="" loading="lazy" onerror={() => markIconBad(`${f.id}:a`)} />
+            {:else if f.icon && !iconBad.has(`${f.id}:i`)}
+              <img class="av" src={f.icon} alt="" loading="lazy" onerror={() => markIconBad(`${f.id}:i`)} />
             {:else}
               <span class="av ph" aria-hidden="true">{(f.name || '?').slice(0, 1).toUpperCase()}</span>
             {/if}

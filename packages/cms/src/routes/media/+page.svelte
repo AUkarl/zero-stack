@@ -55,6 +55,7 @@
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
 
+  let settingsOpen = $state(false);
   let items = $state<MediaItem[]>([]);
   /* R45：类型分类与条数；排序由服务端按上传时间倒序（最新在最上） */
   let kind = $state('all');
@@ -391,8 +392,18 @@
       </button>
     {/each}
     <input class="flt" placeholder="按前缀过滤，如 uploads/2026" bind:value={filter} onkeydown={(e) => e.key === 'Enter' && load()} />
-    <button class="sm" onclick={openDrawer}>管理存储桶</button>
-    <button class="sm" title="新上传的图片会自动生成变体；这里只回填历史图片（或清单丢失的条目）" onclick={() => void rebuildVariants()}>{rebuilding ? '停止回填' : '重建图片变体'}</button>
+    <details class="mset" bind:open={settingsOpen}>
+      <summary title="媒体设置" aria-label="媒体设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21h-4v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1v4H21a1.7 1.7 0 0 0-1.6 1z" />
+        </svg>
+      </summary>
+      <div class="mset-menu">
+        <button type="button" class="sm" onclick={() => { settingsOpen = false; openDrawer(); }}>管理存储桶</button>
+        <button type="button" class="sm" title="新上传的图片会自动生成变体；这里只回填历史图片（或清单丢失的条目）" onclick={() => { settingsOpen = false; void rebuildVariants(); }}>{rebuilding ? '停止回填' : '重建图片变体'}</button>
+      </div>
+    </details>
   </div>
   {#if rebuildNote}<p class="muted small">{rebuildNote}</p>{/if}
 </div>
@@ -408,8 +419,7 @@
   {#if !bucketsFromApi}<span class="warn"> · 未读到 /api/admin/media/buckets，暂用配置 mediaBuckets 渲染。</span>{/if}
   {#if selected && linkKind !== 'direct'}
     <span class="warn">
-      · 这个桶没有公开域名，「复制链接」给的是 Worker 代理地址（/api/media/…）：访客不登录也打得开，但每张图都要接口转发一次。
-      要改成直链，在「管理存储桶」里给这个桶填 baseUrl，或到「设置 → 头像与媒体」填「媒体公开域名」。
+      · 这个桶没有公开域名，「复制链接」给的是 Worker 代理地址。
       {#if linkKind === 'relative'}接口域名也没读到，这条现在还是站内相对路径 —— 站点与接口不同源时放进正文访客看不到。{/if}
     </span>
   {/if}
@@ -536,7 +546,56 @@
     margin-bottom: 0.7rem;
   }
   .flt {
-    min-width: 200px;
+    min-width: 180px;
+    flex: 1 1 180px;
+  }
+  .mset {
+    position: relative;
+    flex: none;
+  }
+  .mset > summary {
+    list-style: none;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--fg);
+    background: var(--panel);
+    cursor: pointer;
+  }
+  .mset > summary::-webkit-details-marker {
+    display: none;
+  }
+  .mset > summary:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .mset > summary svg {
+    width: 17px;
+    height: 17px;
+  }
+  .mset-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 150px;
+    padding: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+  }
+  .mset-menu button {
+    justify-content: flex-start;
+    text-align: left;
+    white-space: nowrap;
   }
   .picker {
     flex-direction: row;

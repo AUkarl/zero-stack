@@ -10,23 +10,6 @@ import { getConfig } from '../services/config';
 import { listRepoDir } from '../services/repo';
 
 /** 「日期 + 序号」那种自动名：20261021001 */
-const DATED = /^(\d{4})(\d{2})(\d{2})(\d{3,})$/;
-
-/**
- * 已经是自动名了吗（补发布时不要再数一个号）。
- *
- * 判据必须看前八位是不是个真日期：上一版只数长度（`^\d{8}\d{3,}$`），
- * 于是「标题尾巴带 13 位毫秒戳」的草稿被当成已改名，发布出来是 `/posts/1792596228706/` 这种地址。
- */
-export function isDatedSlug(slug: string): boolean {
-  const hit = DATED.exec(String(slug ?? '').trim());
-  if (!hit) return false;
-  const year = Number(hit[1]);
-  const month = Number(hit[2]);
-  const day = Number(hit[3]);
-  return year >= 1900 && year <= 2999 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
-}
-
 /**
  * 发布那天的键（YYYYMMDD）。日子按站点自己的时区算 —— 复用统计那套 `statsUtcOffsetHours`
  * （默认东八区），不然北京时间早上七点发的那篇会被算进前一天，文件名和站点显示的日期不一致。

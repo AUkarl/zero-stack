@@ -8,7 +8,7 @@
 
 import { getConfig } from './config';
 import { purgeTargetCache } from './target-cache';
-import { deleteViaTarget, listDirViaTarget, readFileFrom, repoBackend, resolveRepoTarget, runLocalBuildCheck, buildHealthReceipt, targetFromInput, writeViaTarget } from './repo';
+import { deleteViaTarget, listDirViaTarget, readFileFrom, repoBackend, resolveRepoTarget, runLocalBuildCheck, targetFromInput, writeViaTarget } from './repo';
 import type { RepoEntry, RepoFile, RepoFileResult, RepoTarget } from './repo';
 import { fetchWithTimeout } from '../lib/fetch';
 
@@ -125,13 +125,4 @@ export async function finishRepoWrites(
   await purgeTargetCache(env);
   const build = triggerBuild ? await triggerPagesBuild(env) : null;
   return { build, buildHealth: await runLocalBuildCheck(env) };
-}
-
-/** 给调用方拼回执用的完整一句：重建 + 体检 */
-export function writeReceipt(
-  envText: string,
-  build: Parameters<typeof buildReceipt>[0],
-  health: Awaited<ReturnType<typeof runLocalBuildCheck>>,
-): string {
-  return buildReceipt(build, envText) + buildHealthReceipt(health);
 }

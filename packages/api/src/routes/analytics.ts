@@ -13,17 +13,6 @@ import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
 
-/**
- * 后台「排除导入数据」开关（?excludeLegacy=1）。
- * 导入旧站浏览量时，每一行都挂在 session_id = legacy:<hash>:views 下（见 services/comment-import.ts），
- * 这里只影响趋势/分布/排行这类按明细聚合的视图；建站以来累计读的是永久计数器，不改。
- */
-function isClean(q: string | undefined): boolean {
-  const v = String(q ?? '').toLowerCase();
-  return v === '1' || v === 'true';
-}
-const notLegacyVisit = sql`${visits.sessionId} not like 'legacy:%'`;
-
 /*
  * 后台这几块统计（概览 / 趋势 / 设备 / 排行）都是对 visits 的区间扫描：
  * 30 天窗口在 5000 访问/天 下要读 15 万行，一次打开四张卡片就是六十万行，
@@ -170,14 +159,12 @@ app.post('/heartbeat', async (c) => {
 app.get('/summary', async (c) => {
   requireAdmin(c);
   const env = c.env;
-  const clean = isClean(c.req.query('excludeLegacy'));
   return ok(
-    await memoized(`analytics:summary:${clean ? 'clean' : 'all'}`, async () => {
+    await memoized('analytics:summary', async () => {
       const db = createDb(env);
       const offset = await offsetHours(env);
       const todayStart = localStartOfDay(offset);
       const onlineWindow = Math.floor(Date.now() / 1000) - 300;
-      const cleanCond = clean ? notLegacyVisit : undefined;
 
       /*
        * 口径：
@@ -192,15 +179,15 @@ app.get('/summary', async (c) => {
       const [today] = await db
         .select({ n: sql<number>`count(*)`, s: visitorDistinctSql() })
         .from(visits)
-        .where(and(gte(visits.createdAt, todayStart), cleanCond));
+        .where(and(gte(visits.createdAt, todayStart)));
       const online = await db
         .select({ s: visitorDistinctSql() })
         .from(visits)
-        .where(and(gte(visits.createdAt, onlineWindow), cleanCond));
+        .where(and(gte(visits.createdAt, onlineWindow)));
       const avg = await db
         .select({ d: sql<number>`coalesce(avg(duration), 0)` })
         .from(visits)
-        .where(and(gte(visits.createdAt, todayStart - 7 * 86400), cleanCond));
+        .where(and(gte(visits.createdAt, todayStart - 7 * 86400)));
       const [lifetime, meta] = await Promise.all([lifetimeStats(env), statsMeta(env)]);
 
       return {
@@ -216,8 +203,6 @@ app.get('/summary', async (c) => {
         allTimeViews: lifetime.totalViews,
         totalUniqueIpVisitors: lifetime.totalVisitors,
         retentionDays: meta.retentionDays,
-        retentionNote: meta.note,
-        excludeLegacy: clean,
         /* 被判为机器人而没入库的量 —— 这条是「今天统计为什么少了一半」的线索：
            以前 isBot 命中就静默丢掉（回 200 tracked:false），对着空表只能猜。
            口径写死在这里：本 isolate、当前小时窗口，冷启动清零，不是全站累计。 */
@@ -232,9 +217,8 @@ app.get('/trend', async (c) => {
   requireAdmin(c);
   const env = c.env;
   const days = Math.min(Number(c.req.query('days') ?? '30') || 30, 90);
-  const clean = isClean(c.req.query('excludeLegacy'));
   return ok(
-    await memoized(`analytics:trend:${days}:${clean ? 'clean' : 'all'}`, async () => {
+    await memoized(`analytics:trend:${days}`, async () => {
       const offset = await offsetHours(env);
       const shift = offset * 3600;
       const dayExpr = sql<string>`date(created_at + ${shift}, 'unixepoch')`;
@@ -247,7 +231,7 @@ app.get('/trend', async (c) => {
           visitors: visitorDistinctSql(),
         })
         .from(visits)
-        .where(and(gte(visits.createdAt, since), clean ? notLegacyVisit : undefined))
+        .where(gte(visits.createdAt, since))
         .groupBy(dayExpr)
         .orderBy(asc(dayExpr));
 
@@ -267,17 +251,15 @@ app.get('/trend', async (c) => {
 
 app.get('/devices', async (c) => {
   requireAdmin(c);
-  const clean = isClean(c.req.query('excludeLegacy'));
   return ok(
-    await memoized(`analytics:devices:${clean ? 'clean' : 'all'}`, async () => {
+    await memoized('analytics:devices', async () => {
       const offset = await offsetHours(c.env);
       const since = localStartOfDay(offset) - 30 * 86400;
-      const cleanCond = clean ? notLegacyVisit : undefined;
       const groupBy = (field: 'device' | 'browser' | 'os' | 'country') =>
         createDb(c.env as Env)
           .select({ k: visits[field], n: sql<number>`count(*)` })
           .from(visits)
-          .where(and(gte(visits.createdAt, since), cleanCond))
+          .where(and(gte(visits.createdAt, since)))
           .groupBy(visits[field])
           .orderBy(desc(sql`count(*)`));
       return {
@@ -293,13 +275,11 @@ app.get('/devices', async (c) => {
 app.get('/top', async (c) => {
   requireAdmin(c);
   const days = Math.min(Number(c.req.query('days') ?? '30') || 30, 90);
-  const clean = isClean(c.req.query('excludeLegacy'));
   return ok(
-    await memoized(`analytics:top:${days}:${clean ? 'clean' : 'all'}`, async () => {
+    await memoized(`analytics:top:${days}`, async () => {
       const offset = await offsetHours(c.env);
       // 与 /trend 同一个窗口：含今天在内共 days 天（原来这里是 days 整，比趋势多算一天）
       const since = localStartOfDay(offset) - (days - 1) * 86400;
-      const cleanCond = clean ? notLegacyVisit : undefined;
       const db = createDb(c.env);
       const pathRows = await db
         .select({
@@ -308,7 +288,7 @@ app.get('/top', async (c) => {
           visitors: visitorDistinctSql(),
         })
         .from(visits)
-        .where(and(gte(visits.createdAt, since), cleanCond))
+        .where(and(gte(visits.createdAt, since)))
         .groupBy(visits.path);
       // 同一篇文章在早期数据里可能存成 /x 与 /x/ 两行（normalizePath 之前没有强制尾斜杠），
       // 读的时候并成一条；去重访客不能相加，取两边上界，宁可少报也不虚报。
@@ -328,7 +308,7 @@ app.get('/top', async (c) => {
       const refs = await db
         .select({ referrer: visits.referrer, n: sql<number>`count(*)`, s: visitorDistinctSql() })
         .from(visits)
-        .where(and(gte(visits.createdAt, since), sql`${visits.referrer} <> ''`, cleanCond))
+        .where(and(gte(visits.createdAt, since), sql`${visits.referrer} <> ''`))
         .groupBy(visits.referrer)
         .orderBy(desc(sql`count(*)`))
         .limit(50);

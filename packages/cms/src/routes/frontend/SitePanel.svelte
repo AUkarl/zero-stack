@@ -31,10 +31,6 @@
 
 <section class="card blk">
   <h3>站点名称</h3>
-  <p class="muted small">
-    这一份写进站点 <code>data/site.json</code>，主题读它优先、读不到才回落到 <code>params.toml</code> 顶层的
-    <code>navName / site_name / logo / favicon / author / default_author / description / keywords</code>。
-  </p>
   <div class="grid2">
     <label>
       站点名（导航栏、浏览器标题、分享卡片都用它）
@@ -48,7 +44,6 @@
   <label>
     站点主地址（邮件里的确认 / 退订链接前缀、后台仪表盘的跳转都用它）
     <input bind:value={site.siteUrl} maxlength={LIMIT.href} placeholder="https://example.com" />
-    <span class="muted small cnt">保存时一起写：<code>hugo.toml</code> 的 <code>baseURL</code>、友链申请页里的「链接」「RSS」、以及配置键 <code>siteUrl</code>。换域名只改这里 + Worker 的 <code>wrangler.jsonc</code> 就够，构建完成后 canonical / sitemap / RSS 全部跟上。</span>
   </label>
   <div class="row sws">
     <label class="switch"><input type="checkbox" bind:checked={site.showLogo} /><span>导航栏显示 Logo</span></label>
@@ -73,30 +68,30 @@
         <button class="sm ghost" onclick={() => (pickFavicon = true)}>选媒体</button>
       </div>
     </label>
+    <label>
+      分享图（文章没有封面时，社交平台卡片用的那一张；留空回落到 Logo）
+      <div class="row">
+        <input bind:value={site.ogImage} maxlength={LIMIT.href} placeholder="/img/bj.webp" />
+        <button class="sm ghost" onclick={() => (pickOg = true)}>选媒体</button>
+      </div>
+    </label>
+    <label>
+      落地页背景图（进站第一屏 /index 那张底图）
+      <div class="row">
+        <input bind:value={site.landingImage} maxlength={LIMIT.href} placeholder="/img/bj.png" />
+        <button class="sm ghost" onclick={() => (pickLanding = true)}>选媒体</button>
+      </div>
+      <span class="muted small cnt">
+        只影响 <code>/index</code> 那一屏的背景，首页 <code>/home/</code> 与文章页都不读它。
+        {#if site.landingImage.trim()}
+          {@const pv = previewSrc(site.landingImage)}
+          当前背景图：{#if pv}<img class="thumb" src={pv} alt="落地页背景图预览" />{:else}<code>{site.landingImage.trim()}</code>（没配站点地址，拼不出预览）{/if}
+        {:else}
+          留空时前台用主题自带的 <code>img/bj.png</code>。
+        {/if}
+      </span>
+    </label>
   </div>
-  <label>
-    分享图（文章没有封面时，社交平台卡片用的那一张；留空回落到 Logo）
-    <div class="row">
-      <input bind:value={site.ogImage} maxlength={LIMIT.href} placeholder="/img/bj.webp" />
-      <button class="sm ghost" onclick={() => (pickOg = true)}>选媒体</button>
-    </div>
-  </label>
-  <label>
-    落地页背景图（进站第一屏 /index 那张底图）
-    <div class="row">
-      <input bind:value={site.landingImage} maxlength={LIMIT.href} placeholder="/img/bj.png" />
-      <button class="sm ghost" onclick={() => (pickLanding = true)}>选媒体</button>
-    </div>
-    <span class="muted small cnt">
-      只影响 <code>/index</code> 那一屏的背景，首页 <code>/home/</code> 与文章页都不读它。
-      {#if site.landingImage.trim()}
-        {@const pv = previewSrc(site.landingImage)}
-        当前背景图：{#if pv}<img class="thumb" src={pv} alt="落地页背景图预览" />{:else}<code>{site.landingImage.trim()}</code>（没配站点地址，拼不出预览）{/if}
-      {:else}
-        留空时前台用主题自带的 <code>img/bj.png</code>。
-      {/if}
-    </span>
-  </label>
   <p class="muted small">
     填站内路径（<code>/img/xxx.webp</code>，对应站点 static 目录）或完整 <code>https://</code> 外链都行。
     {#if site.logo.trim()}
@@ -147,13 +142,23 @@
   }
   .grid2 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 0.5rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem 0.8rem;
+    align-items: start;
   }
   .row {
     display: flex;
     gap: 0.4rem;
     align-items: center;
+  }
+  .row input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  @media (max-width: 720px) {
+    .grid2 {
+      grid-template-columns: 1fr;
+    }
   }
   .sws {
     flex-wrap: wrap;

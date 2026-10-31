@@ -4,7 +4,7 @@ import { apiFetch, resolveBase } from './api';
  * config.svelte.ts — 全站公开配置的共享只读缓存（GET /api/config）
  *
  * 后端 getPublicConfig 会把 'true'/'false' 转成布尔、纯数字转成数字，
- * 所以 commentShowMeta 拿到的是 boolean，commentEmojiPacks 拿到的是 JSON 字符串数组。
+ * 所以 commentShowMeta 拿到的是 boolean。
  * 五个 Custom Element 共用一份，同一个 apiBase 只请求一次。
  */
 
@@ -15,31 +15,6 @@ function truthy(v: ConfigValue | undefined, fallback: boolean): boolean {
   if (typeof v === 'boolean') return v;
   if (typeof v === 'number') return v !== 0;
   return v === 'true' || v === '1';
-}
-
-/** 兼容三种写法：JSON 字符串数组、已解析数组、后台手写的换行分隔文本 */
-function parseEmojiPacks(raw: ConfigValue | undefined): string[] {
-  if (!raw) return [];
-  const flat = (arr: unknown): string[] => {
-    if (!Array.isArray(arr)) return [];
-    return arr.flatMap((v) => (Array.isArray(v) ? flat(v) : typeof v === 'string' ? [v.trim()] : []));
-  };
-
-  let out: string[] = [];
-  if (Array.isArray(raw)) out = flat(raw);
-  else if (typeof raw === 'string') {
-    const text = raw.trim();
-    if (text.startsWith('[')) {
-      try {
-        out = flat(JSON.parse(text) as unknown);
-      } catch {
-        out = [];
-      }
-    } else {
-      out = text.split(/[\n,]+/).map((s) => s.trim());
-    }
-  }
-  return [...new Set(out.filter(Boolean))].slice(0, 200);
 }
 
 class CommentConfig {
@@ -53,14 +28,6 @@ class CommentConfig {
     return truthy(this.data?.commentShowMeta, true);
   }
 
-  /**
-   * 后台 commentEmojiPacks 的原始列表（空数组 = 后台没配）。
-   * 这份只作为「自定义」tab 追加在内置 emoji 档后面，不再顶掉内置库。
-   */
-  get customEmojis(): string[] {
-    return parseEmojiPacks(this.data?.commentEmojiPacks);
-  }
-
   get likeEnabled(): boolean {
     return truthy(this.data?.likeEnabled, true);
   }
@@ -71,6 +38,11 @@ class CommentConfig {
    */
   get allowRegister(): boolean {
     return truthy(this.data?.allowRegister, true);
+  }
+
+  /** 已注册用户能不能登录；与「允许注册」分开 */
+  get readerLoginEnabled(): boolean {
+    return truthy(this.data?.readerLoginEnabled, true);
   }
 
   /**

@@ -114,12 +114,12 @@ function accountPayload(row: UserRow) {
 }
 
 /**
- * allowRegister=false 的语义是「关掉前端注册与新登录入口」，不是把管理员也锁在门外：
- * 后台地址仍然要能进，所以只有非管理员账号被拦。
+ * readerLoginEnabled=false 只拦普通用户；allowRegister 只管注册，不再影响已注册用户登录。
+ * 管理员任何时候都能从后台地址进来。
  */
 async function loginGate(env: Env, row: UserRow): Promise<void> {
   if (row.role === 'admin') return;
-  if (await getConfigBool(env, 'allowRegister', true)) return;
+  if (await getConfigBool(env, 'readerLoginEnabled', true)) return;
   const contact = await getAdminContactEmail(env);
   failExtra(403, '站点当前关闭了登录，如需访问请联系站长', contact ? { contact: contact } : {});
 }

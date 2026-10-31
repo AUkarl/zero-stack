@@ -18,14 +18,11 @@
     todayUniqueIpVisitors?: number;
     totalUniqueIpVisitors?: number;
     allTimeViews?: number;
-    /** 明细保留天数 + 口径说明，statsMeta() 生成 */
+    /** 明细保留天数，statsMeta() 生成 */
     retentionDays?: number;
-    retentionNote?: string;
     /** 本 isolate 这一小时里被 isBot() 判掉、没入库的 /beat 条数（冷启动清零，不是全站累计） */
     botFilteredThisHour?: number;
     botFilteredNote?: string;
-    /** 本次请求是否带了「排除导入数据」 */
-    excludeLegacy?: boolean;
   }
   interface Point {
     day: string;
@@ -57,7 +54,6 @@
     users: number;
     email: Record<string, number>;
     pendingDrafts?: number;
-    excludeLegacy?: boolean;
   }
   /** 按页面汇总的点赞 / 收藏：票数远大于 actors 就是刷出来的 */
   interface ReactionRow {
@@ -71,7 +67,6 @@
     rows: ReactionRow[];
     reactionRows: number;
     pages: number;
-    excludeLegacy?: boolean;
   }
   /** 按明细重算永久计数器的演习 / 应用结果 */
   interface RecountResult {
@@ -91,8 +86,6 @@
   /** 文章地址 → 标题：/api/admin/posts 是后端缓存过的那份，这里只做显示用，取不到就原样给地址 */
   let titles = $state<Record<string, string>>({});
   let days = $state(14);
-  /** 排除从旧站导入的数据（评论 is_legacy / 访问与点赞的 legacy: 标记）；只影响视图，不改库 */
-  let excludeLegacy = $state(false);
   let loading = $state(false);
   let error = $state('');
   let enabled = $state(true);
@@ -101,8 +94,8 @@
     loading = true;
     error = '';
     try {
-      const clean = excludeLegacy ? '&excludeLegacy=1' : '';
-      const cleanQ = excludeLegacy ? '?excludeLegacy=1' : '';
+      const clean = '';
+      const cleanQ = '';
       const [s, t, dv, tp, bz, rx, ps, cfg, ct, ds] = await Promise.all([
         get<{ data: Summary }>(`/api/analytics/summary${cleanQ}`),
         get<{ data: Point[] }>(`/api/analytics/trend?days=${days}${clean}`),
@@ -250,22 +243,12 @@
     <button class="sm" onclick={() => void recount()} disabled={recounting} title="按现有明细重算「建站以来累计」；会先演习并让你确认">
       {recounting ? '重算中…' : '按明细重算累计'}
     </button>
-    <label class="small check" title="排除从旧站导入的评论、浏览与点赞；只影响本页视图，不改库里的数据">
-      <input type="checkbox" bind:checked={excludeLegacy} />
-      排除导入数据
-    </label>
     <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
   </div>
 </div>
 
 {#if exportNote}<p class="ok small">统计导出：{exportNote}</p>{/if}
 {#if recountNote}<p class="ok small">{recountNote}</p>{/if}
-{#if excludeLegacy}
-  <p class="muted small">
-    已排除导入数据：趋势、设备、排行、评论数与点赞只统计不带 legacy 标记的部分；
-    「累计访问量 / 建站以来累计访问人数」读的是永久计数器，无法从历史总额里剔除导入的部分。
-  </p>
-{/if}
 
 {#if !enabled}<p class="warn">统计开关当前是关闭的（设置 - 访问统计），前台不再上报页面浏览。</p>{/if}
 {#if error}<p class="err">{error}</p>{/if}
@@ -467,14 +450,6 @@
   .toolbar select {
     width: auto;
     min-width: 110px;
-  }
-  .check {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.4rem;
-    white-space: nowrap;
-    font-size: 0.84rem;
   }
   .mono {
     font-family: ui-monospace, Menlo, Consolas, monospace;

@@ -180,15 +180,12 @@ async function importFriendsFromLinks(env: Env, sites: LinkSite[]): Promise<stri
 /**
  * 友链可用性检测。
  *
- * 默认只检「填了 RSS 地址」的站（配置键 friendsCheckOnlyRss）：没有 RSS 的站不会进
- * 朋友动态，检它只能知道链接死没死，却要每天一次 Cron 里为每个站等最长 15 秒。
- * 想恢复全站扫描就把这个开关打开（false = 不只检 RSS）。
+ * 所有友链（站点联盟除外）都参与每日检测：没有 RSS 的站也要知道链接是否还能打开。
  *
  * friendsCheckIntervalHours（默认 24 小时）是每条友链自己的最小重检间隔：
  * Cron 一天可能跑多次，同一站在间隔内不重复出网，省 Workers 子请求也省 D1 写。
  */
 async function checkFriends(env: Env): Promise<string> {
-  const onlyRss = await getConfigBool(env, 'friendsCheckOnlyRss', true);
   const intervalH = Math.min(Math.max(Number(await getConfig(env, 'friendsCheckIntervalHours')) || 24, 1), 720);
   const db = createDb(env);
   const now = Math.floor(Date.now() / 1000);
@@ -198,7 +195,7 @@ async function checkFriends(env: Env): Promise<string> {
     .where(eligible(now))
     .limit(100);
   const due = (f: (typeof candidates)[number]) => !f.lastCheckedAt || now - f.lastCheckedAt >= intervalH * 3600;
-  const rows = candidates.filter((f) => f.kind !== 'alliance' && due(f) && (!onlyRss || (f.rssUrl ?? '').trim() !== ''));
+  const rows = candidates.filter((f) => f.kind !== 'alliance' && due(f));
 
   let alive = 0;
   let cooled = 0;
@@ -234,7 +231,7 @@ async function checkFriends(env: Env): Promise<string> {
         .where(eq(friends.id, f.id));
     }
   }
-  return `检测 ${rows.length} 条（候选 ${candidates.length} 条，间隔 ${intervalH} 小时${onlyRss ? '，只检填了 RSS 的' : ''}），正常 ${alive}，进入冷却 ${cooled}`;
+  return `检测 ${rows.length} 条（候选 ${candidates.length} 条，间隔 ${intervalH} 小时），正常 ${alive}，进入冷却 ${cooled}`;
 }
 
 /**

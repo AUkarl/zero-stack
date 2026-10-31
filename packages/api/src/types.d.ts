@@ -45,11 +45,6 @@ interface Env {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   GITHUB_REDIRECT_URI?: string;
-  /** 翻译服务的密钥兜底（优先用 site_config 里的 translateKey） */
-  TRANSLATE_API_KEY?: string;
-
-  /* 可选绑定：wrangler.jsonc 里加 "ai": { "binding": "AI" } 才存在 */
-  AI?: { run(model: string, input: Record<string, unknown>): Promise<{ translated_text?: string }> };
 
   /* 内容仓库默认值，同样可被 site_config 覆盖 */
   GITHUB_OWNER?: string;

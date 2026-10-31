@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { buildHealthReceipt, commitRepoFiles, readRepoFile, repoBackend, runLocalBuildCheck, writeRepoFile } from '../services/repo';
+import { parse as parseToml } from 'smol-toml';
 import { getAllConfig, getConfig, setConfig } from '../services/config';
 import { requireAdmin } from '../middleware/auth';
 import { buildReceipt, triggerPagesBuild } from '../services/git';
@@ -554,6 +555,47 @@ export async function syncCommentCsp(
   return { written: files.map((f) => f.path), origins, notes };
 }
 
+/** 页脚图标在 params.toml 里的回落值（与主题 cms/list.html 的规则一致：data 为空才用 params） */
+async function paramsFooterIcons(env: Env): Promise<Record<string, unknown[]>> {
+  const empty = { services: [], socialRow1: [], socialRow2: [] };
+  let content = '';
+  for (const path of ['config/_default/params.toml', 'config/params.toml', 'params.toml']) {
+    const file = await readRepoFile(env, path).catch(() => null);
+    if (file?.content?.trim()) { content = file.content; break; }
+  }
+  if (!content) return empty;
+  try {
+    const parsed = parseToml(content) as { footer?: Record<string, unknown> };
+    const f = parsed.footer;
+    if (!f || typeof f !== 'object') return empty;
+    const norm = (v: unknown) => {
+      if (!Array.isArray(v)) return [];
+      return v.flatMap((x) => {
+        if (!x || typeof x !== 'object') return [];
+        const o = x as Record<string, unknown>;
+        const name = String(o.name ?? '').trim();
+        const link = String(o.link ?? o.url ?? '').trim();
+        if (!name || !link) return [];
+        return [{
+          name,
+          icon: String(o.icon ?? ''),
+          img: String(o.img ?? o.image ?? ''),
+          link,
+          invert: Boolean(o.invert),
+          ...(typeof o.showName === 'boolean' ? { showName: o.showName } : {}),
+        }];
+      });
+    };
+    return {
+      services: norm(f.services),
+      socialRow1: norm(f.socialRow1 ?? f.social_row1),
+      socialRow2: norm(f.socialRow2 ?? f.social_row2),
+    };
+  } catch {
+    return empty;
+  }
+}
+
 app.get('/', async (c) => {
   requireAdmin(c);
   const dir = await dataDir(c.env);
@@ -563,6 +605,24 @@ app.get('/', async (c) => {
     const hit = await readSection(c.env, dir, key);
     out[key] = hit?.value ?? null;
     if (hit?.notice) notices.push(hit.notice);
+  }
+  /* 页脚三组图标在 data/footer.json 里为空时，前台会回落到 params.toml；后台也把这份
+     实际生效的值带回来，否则站主会看到「前台有图标、后台是空的」，以为设置丢了。 */
+  const footer = out.footer as Record<string, unknown> | null;
+  if (footer && typeof footer === 'object') {
+    const missing = ['services', 'socialRow1', 'socialRow2'].filter((k) => !Array.isArray(footer[k]) || (footer[k] as unknown[]).length === 0);
+    if (missing.length) {
+      const fallback = await paramsFooterIcons(c.env);
+      let filled = false;
+      for (const k of missing) {
+        const v = fallback[k];
+        if (Array.isArray(v) && v.length) {
+          footer[k] = v;
+          filled = true;
+        }
+      }
+      if (filled) notices.push('页脚图标/社交链接在 data/footer.json 里为空，这里显示的是 params.toml 的回落值；保存后会写进 data/footer.json');
+    }
   }
   return ok({ ...out, dataDir: dir, notice: notices.join('；') || null });
 });

@@ -154,7 +154,7 @@
     {#if !status.ready}
       <p class="warn small">
         还没有可用的 AI{status.hint ? `：${status.hint}` : ''}。到
-        <a href="/settings">「设置 → AI 服务与密钥」</a>
+        <a href="/settings">「设置 → AI 模型配置」</a>
         补齐；自建 Ollama / vLLM 选「自定义」并填端点与模型。
       </p>
     {/if}

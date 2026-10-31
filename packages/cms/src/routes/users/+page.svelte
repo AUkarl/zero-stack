@@ -561,7 +561,7 @@
 <div class="row spread head">
   <h2>用户与邀请码</h2>
   {#if tab === 'users'}
-    <div class="row">
+    <div class="row searchbar">
       <input class="search" placeholder="按邮箱 / 昵称 / 作者标识 / 邀请码筛选" bind:value={q} onkeydown={(e) => e.key === 'Enter' && load()} />
       <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '查询中…' : '查询'}</button>
     </div>
@@ -596,10 +596,7 @@
 </div>
 
 {#if tab === 'users'}
-  <p class="muted small">
-    共 {total} 位。管理员唯一（部署时的首位账号），这里不提供把读者提为管理员的入口；
-    降权与封禁都不能作用于当前登录的自己，封禁会作废该用户的全部会话。
-  </p>
+  <p class="muted small">共 {total} 位。</p>
   {#if error}<p class="err">{error}</p>{/if}
   {#if notice}<p class="ok">{notice}</p>{/if}
 
@@ -646,15 +643,19 @@
           <div class="ufields">
             <span class="fld">
               <span class="k">用户组</span>
-              <select
-                class="grp"
-                value={r.userGroup ?? 'friend'}
-                disabled={busy === r.id}
-                aria-label="用户组"
-                onchange={(e) => setGroup(r, e.currentTarget.value as UserGroup)}
-              >
-                {#each GROUPS as g (g.value)}<option value={g.value}>{g.label}</option>{/each}
-              </select>
+              {#if r.role === 'admin'}
+                <span class="badge">站长</span>
+              {:else}
+                <select
+                  class="grp"
+                  value={r.userGroup ?? 'friend'}
+                  disabled={busy === r.id}
+                  aria-label="用户组"
+                  onchange={(e) => setGroup(r, e.currentTarget.value as UserGroup)}
+                >
+                  {#each GROUPS as g (g.value)}<option value={g.value}>{g.label}</option>{/each}
+                </select>
+              {/if}
             </span>
             <span class="fld">
               <span class="k">状态</span>
@@ -680,10 +681,12 @@
             >
               重置密码
             </button>
-            <button class="sm {r.status === 'banned' ? '' : 'danger'}" onclick={() => void toggleBan(r)} disabled={busy === r.id}>
+            <button class="sm {r.status === 'banned' ? '' : 'danger'}" onclick={() => void toggleBan(r)} disabled={busy === r.id || r.role === 'admin'}
+              title={r.role === 'admin' ? '站长账号不可封禁' : ''}>
               {r.status === 'banned' ? '解封' : '封禁'}
             </button>
-            <button class="sm danger" onclick={() => (deleting = { id: r.id, email: r.email, typed: '' })} disabled={busy === r.id}>
+            <button class="sm danger" onclick={() => (deleting = { id: r.id, email: r.email, typed: '' })} disabled={busy === r.id || r.role === 'admin'}
+              title={r.role === 'admin' ? '站长账号不可删除' : ''}>
               删除账号
             </button>
           </div>
@@ -699,8 +702,8 @@
                   value={r.handle ?? ''}
                   placeholder="未设置"
                   maxlength="40"
-                  disabled={busy === r.id}
-                  title="小写字母、数字、短横线；要与文章 front matter 的 author 一致"
+                  disabled={busy === r.id || r.role === 'admin'}
+                  title={r.role === 'admin' ? '站长作者标识请到「我的信息」修改' : '小写字母、数字、短横线；要与文章 front matter 的 author 一致'}
                   onblur={(e) => void saveHandle(r, e.currentTarget.value)}
                   onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                 />
@@ -729,9 +732,6 @@
                 />
                 <span>已认证徽章</span>
               </label>
-              {#if r.role === 'admin'}
-                <span class="muted small">站长的这三项恒为开启（管理员默认就是认证作者、默认全权限），这里改不动；要改的是上面的作者标识。</span>
-              {/if}
             </div>
             <div class="extrow comments">
               <span class="k">最近评论</span>
@@ -989,8 +989,16 @@
     opacity: 0.75;
     font-size: 0.76rem;
   }
+  .searchbar {
+    flex-wrap: nowrap;
+  }
   .search {
     width: min(240px, 100%);
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  .searchbar button {
+    flex: none;
   }
   .small {
     font-size: 0.76rem;

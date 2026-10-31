@@ -41,14 +41,13 @@
       <label class="ic2">
         图标类名
         <input bind:value={x.icon} list="zero-fa-icons" maxlength={LIMIT.short} placeholder="fa-brands fa-github" />
-        <span class="muted small">清单内图标使用精简字体；填自定义图片时优先用图片（现有行为不变）</span>
       </label>
       <label class="lk">
         地址
         <input bind:value={x.link} maxlength={LIMIT.href} placeholder="https://github.com/你的用户名" />
       </label>
       <label class="im">
-        图片路径（填了就优先用图片）
+        图片路径
         <input bind:value={x.img} maxlength={LIMIT.href} placeholder="/img/alliance.png" />
       </label>
       <label class="sw">

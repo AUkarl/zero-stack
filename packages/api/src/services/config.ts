@@ -9,10 +9,10 @@ import { createDb } from '../db/client';
  */
 
 export type ConfigKey =
-  // 站点信息
-  | 'siteName'
-  | 'siteDescription'
-  | 'siteLogo'
+// 站点信息
+| 'siteName'
+| 'siteDescription'
+| 'siteLogo'
   | 'siteFavicon'
   | 'author'
   /** 站长本人在 data/authors.yaml 里的作者标识；邮件落款与 SEO 的作者兜底读它 */
@@ -27,6 +27,7 @@ export type ConfigKey =
   // 注册与邀请码
   | 'accountSystemEnabled'
   | 'allowRegister'
+  | 'readerLoginEnabled'
   | 'requireInviteCode'
   | 'inviteCodeLength'
   | 'inviteCodeUses'
@@ -68,8 +69,8 @@ export type ConfigKey =
   | 'cloudflareEmailToken'
   // 友链
   | 'friendsEnabled'
+  | 'friendFeedEnabled'
   | 'friendsAutoCheck'
-  | 'friendsCheckOnlyRss'
   | 'friendsCheckIntervalHours'
   /** 连续不可访问多少天进「迷失的小船」（页面承诺 30） */
   | 'friendsLostAfterDays'
@@ -100,18 +101,8 @@ export type ConfigKey =
   | 'spamHoldPending'
   | 'spamRuleWeight'
   | 'spamUseBuiltinPatterns'
-  | 'spamExternalProvider'
-  | 'spamExternalEndpoint'
-  | 'spamExternalKey'
   // 机器辅助翻译
   | 'translateProvider'
-  | 'translateEndpoint'
-  | 'translateModel'
-  | 'translateKey'
-  | 'translateBaiduAppId'
-  | 'translateBaiduKey'
-  | 'translateYoudaoAppKey'
-  | 'translateYoudaoAppSecret'
   // AI：评论审核与自动回复
   | 'aiProvider'
   | 'aiEndpoint'
@@ -148,7 +139,6 @@ export type ConfigKey =
   | 'commentNotifyReply'
   | 'commentNotifyAuthor'
   | 'commentShowMeta'
-  | 'commentEmojiPacks'
   /* 邮件 HTML 模板 */
   | 'emailTemplateCode'
   | 'emailTemplateSubscribe'
@@ -184,6 +174,7 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'cmsAdminUrl',
   'accountSystemEnabled',
   'allowRegister',
+  'readerLoginEnabled',
   'requireInviteCode',
   'inviteCodeLength',
   'inviteCodeUses',
@@ -217,10 +208,10 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'cloudflareAccountId',
   'cloudflareEmailToken',
   'friendsEnabled',
+  'friendFeedEnabled',
   'friendsAutoCheck',
   'workEnabled',
   'aboutEnabled',
-  'friendsCheckOnlyRss',
   'friendsCheckIntervalHours',
   'friendsLostAfterDays',
   'friendsStaleAfterDays',
@@ -241,17 +232,7 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'spamHoldPending',
   'spamRuleWeight',
   'spamUseBuiltinPatterns',
-  'spamExternalProvider',
-  'spamExternalEndpoint',
-  'spamExternalKey',
   'translateProvider',
-  'translateEndpoint',
-  'translateModel',
-  'translateKey',
-  'translateBaiduAppId',
-  'translateBaiduKey',
-  'translateYoudaoAppKey',
-  'translateYoudaoAppSecret',
   'aiProvider',
   'aiEndpoint',
   'aiModel',
@@ -278,7 +259,6 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'commentNotifyReply',
   'commentNotifyAuthor',
   'commentShowMeta',
-  'commentEmojiPacks',
   'emailTemplateCode',
   'emailTemplateSubscribe',
   'emailTemplateComment',
@@ -332,6 +312,7 @@ function fromVars(env: Env, key: ConfigKey): string | undefined {
 export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   accountSystemEnabled: 'true',
   allowRegister: 'true',
+  readerLoginEnabled: 'true',
   requireInviteCode: 'false',
   inviteCodeLength: '8',
   inviteCodeUses: '1',
@@ -365,9 +346,9 @@ export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
    */
   smtpSecure: 'false',
   friendsEnabled: 'true',
+  friendFeedEnabled: 'true',
   friendsAutoCheck: 'true',
   /** true = 每天的可用性检测只检填了 RSS 地址的友链 */
-  friendsCheckOnlyRss: 'true',
   friendsCheckIntervalHours: '24',
   friendsLostAfterDays: '30',
   friendsStaleAfterDays: '90',
@@ -397,17 +378,7 @@ export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   /** 明确规则（关键词 / 默认规则集 / 自定义正则 / 仓库文件）的单条命中分；默认 70 高于 spamThreshold 60，一条即拦 */
   spamRuleWeight: '70',
   spamUseBuiltinPatterns: 'true',
-  spamExternalProvider: 'none',
-  spamExternalEndpoint: '',
-  spamExternalKey: '',
   translateProvider: 'none',
-  translateEndpoint: '',
-  translateModel: '',
-  translateKey: '',
-  translateBaiduAppId: '',
-  translateBaiduKey: '',
-  translateYoudaoAppKey: '',
-  translateYoudaoAppSecret: '',
   aiProvider: 'deepseek',
   aiEndpoint: '',
   aiModel: '',
@@ -433,8 +404,6 @@ export const STATIC_DEFAULTS: Partial<Record<ConfigKey, string>> = {
   commentNotifyReply: 'true',
   commentNotifyAuthor: 'true',
   commentShowMeta: 'true',
-  commentEmojiPacks:
-    '["😀","😄","😂","🤣","😊","😍","😘","😜","🤔","😎","😭","😅","🙁","😡","👍","👎","👏","🙏","💪","🔥","✨","🎉","💯","❤️","💔","🌟","🌈","☕","🍺","🐶"]',
   emailTemplateCode: DEFAULT_TEMPLATES.code,
   emailTemplateSubscribe: DEFAULT_TEMPLATES.subscribe,
   emailTemplateComment: DEFAULT_TEMPLATES.comment,
@@ -545,12 +514,8 @@ export const SECRET_KEYS: ConfigKey[] = [
   'cloudflareEmailToken',
   'cloudflarePagesBuildHook',
   'cfPurgeToken',
-  'spamExternalKey',
   'spamProviderKeyId',
   'spamProviderSecret',
-  'translateKey',
-  'translateBaiduKey',
-  'translateYoudaoAppSecret',
   'aiKey',
 ];
 
@@ -600,7 +565,8 @@ export const ENUM_CONFIG_KEYS: Record<string, string[]> = {
   commentProvider: ['zero', 'waline', 'twikoo', 'giscus', 'artalk'],
   momentCommentProvider: ['zero', 'waline', 'twikoo', 'giscus', 'artalk'],
   emailProvider: ['smtp', 'resend', 'cloudflare'],
-  aiProvider: ['openai', 'deepseek', 'qianwen', 'moonshot', 'doubao', 'zhipu', 'grok', 'custom'],
+  translateProvider: ['none', 'mymemory', 'ai'],
+  aiProvider: ['deepseek', 'qianwen', 'moonshot', 'doubao', 'zhipu', 'wenxin', 'hunyuan', 'spark', 'siliconflow', 'openai', 'gemini', 'claude', 'grok', 'minimax', 'custom'],
   aiReplyScope: ['all', 'questions'],
 };
 
@@ -630,7 +596,6 @@ export const JSON_CONFIG_KEYS: Record<string, JsonShape> = {
   commentProviders: 'providerMap',
   spamKeywords: 'stringArray',
   friendApplyBlocklist: 'stringArray',
-  commentEmojiPacks: 'stringArray',
   mediaBuckets: 'objectArray',
 };
 
@@ -698,7 +663,7 @@ export function jsonKeyBadValue(key: string, value: string): string | null {
  * `og:site_name`、JSON-LD 与 RSS —— 全站标题与结构化数据一起被撑爆，后台界面也跟着横向溢出。
  * 每档都比现网任何一份正常配置宽一到两个数量级：只挡误粘贴与手滑，不挡正经文案。
  */
-const NAME_KEYS = new Set(['siteName', 'emailFromName', 'totpIssuer', 'author', 'defaultAuthor', 'githubOwner', 'githubRepo', 'githubBranch', 'smtpUser', 'translateModel', 'cloudflareAccountId']);
+const NAME_KEYS = new Set(['siteName', 'emailFromName', 'totpIssuer', 'author', 'defaultAuthor', 'githubOwner', 'githubRepo', 'githubBranch', 'smtpUser', 'cloudflareAccountId']);
 const PATH_SHAPE_KEYS = /(Url|URL|Endpoint|Host|Dir|File|Favicon|Logo|Token|Email|Hook|Zone|Model|Branch|Owner|Repo|User)$/;
 
 export function textKeyMaxLen(key: string): number {
@@ -763,6 +728,7 @@ const PUBLIC_KEYS: ConfigKey[] = [
   'siteUrl',
   'accountSystemEnabled',
   'allowRegister',
+  'readerLoginEnabled',
   'requireInviteCode',
   'commentEnabled',
   'commentProvider',
@@ -772,7 +738,7 @@ const PUBLIC_KEYS: ConfigKey[] = [
   'commentAllowAnonymous',
   'commentRequireReview',
   'commentShowMeta',
-  'commentEmojiPacks',
+  'friendFeedEnabled',
   'friendApplyEnabled',
   'friendApplyRequireReview',
   'likeEnabled',
@@ -789,6 +755,7 @@ const PUBLIC_KEYS: ConfigKey[] = [
   'authorVerifyEnabled',
   'analyticsEnabled',
   'cmsAdminUrl',
+  'translateProvider',
 ];
 
 /**

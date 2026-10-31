@@ -10,7 +10,7 @@
    *   GET  /documents   列 content/zh/posts 已发布文章（后端缓存 5 分钟），无语言参数
    *   POST /document    {path} 正文按段落译成简体中文，返回可编辑草稿，不写盘
    *   POST /publish     {path,front,body,message,overwrite} 写入 content/<目标语言>/posts/<源文件名>.md 并触发重建
-   *   PATCH /api/admin/config  只写 translateProvider；端点 / 模型 / 密钥在「设置 → 机器翻译」
+   *   PATCH /api/admin/config  只写 translateProvider；翻译使用「设置 → AI 模型配置」里的同一份模型
    *
    * provider 的 kind 字符串必须与后端 services/translate.ts 的 PRESETS、设置页下拉完全一致。
    */
@@ -19,7 +19,7 @@
     kind: string;
     label: string;
     needsKey: boolean;
-    family: 'none' | 'workers' | 'chat' | 'public' | 'keyed' | 'free';
+    family: 'none' | 'public' | 'ai';
   }
   interface TrStatus {
     provider: string;
@@ -44,7 +44,7 @@
   let error = $state('');
   let notice = $state('');
 
-  /* -------- 服务选择：只选 provider，端点/模型/密钥统一在「设置 → 机器翻译」 -------- */
+  /* -------- 服务选择：只选 provider；AI 的端点/模型/密钥统一在「设置 → AI 模型配置」 -------- */
   let provider = $state('none');
   let savingProvider = $state(false);
 
@@ -107,7 +107,7 @@
       await patch('/api/admin/config', { translateProvider: provider });
       const st = await get<{ data: TrStatus }>('/api/admin/translate/status');
       status = st.data;
-      flash(st.data.ready ? `已切换到 ${provider}` : `已切换到 ${provider}，还缺端点/密钥，去「设置 → 机器翻译」补齐`);
+      flash(st.data.ready ? `已切换到 ${provider}` : `已切换到 ${provider}，还缺 AI 配置，去「设置 → AI 模型配置」补齐`);
     } catch (e) {
       error = e instanceof Error ? e.message : '保存翻译服务失败';
     } finally {
@@ -243,10 +243,8 @@
       公共接口配额低，只适合先跑通。
     </p>
     <p class="small">
-      免费额度：选 <strong>百度翻译</strong> 或 <strong>有道翻译</strong>，到
-      <a href="/settings">「设置 → 机器翻译」</a> 填好对应的 App ID / 密钥即可。
-      要更好的效果：选 <strong>deepseek / qianwen / moonshot / doubao / grok / zhipu / openai</strong>，
-      在设置里填 API Key 与模型。译文语言在开始翻译前选。
+      要更好的效果：选「使用 AI 模型配置」，到 <a href="/settings">「设置 → AI 模型配置」</a>
+      选服务商并填 API Key；评论审核、AI 回复和翻译共用这一份配置。译文语言在开始翻译前选。
     </p>
   </section>
 {/if}
@@ -283,20 +281,14 @@
         服务
         <select bind:value={provider} onchange={onProviderChange} disabled={savingProvider}>
           {#each currentProviders as p (p.kind)}
-            <option value={p.kind}>{p.label}{p.kind === 'none' ? '' : p.needsKey ? '（需密钥）' : '（免密钥）'}</option>
+            <option value={p.kind}>{p.label}</option>
           {/each}
         </select>
       </label>
       <p class="muted small">
-        端点、模型、密钥和百度/有道凭据都在
-        <a href="/settings">「设置 → 机器翻译」</a>
-        里改，这里只选服务。
+        翻译与评论审核、AI 回复共用一份 <a href="/settings">「设置 → AI 模型配置」</a>；
+        MyMemory 是免密钥公共接口，配额低，失败会原样报错。
       </p>
-      {#if activeProviderInfo?.family === 'public'}
-        <p class="muted small">免费公共接口，无需密钥，配额低，失败会原样报错。</p>
-      {:else if activeProviderInfo?.family === 'keyed'}
-        <p class="muted small">需要在设置里填好该服务商的 App ID / 密钥；免费额度用完会返回服务商原文。</p>
-      {/if}
       <button class="primary" onclick={() => void doTranslate()} disabled={translating || !docPath || savingProvider}>
         {translating ? '翻译中…' : `一键译成${targetName}`}
       </button>

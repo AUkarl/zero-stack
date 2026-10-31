@@ -390,17 +390,19 @@
 
   function insertShortcode(sc: Shortcode) {
     const live = bodyArea();
-    const from = live ? live.selectionStart : body.length;
-    const to = live ? live.selectionEnd : body.length;
+    const from = live ? (document.activeElement === live ? live.selectionStart : selStart) : body.length;
+    const to = live ? (document.activeElement === live ? live.selectionEnd : selEnd) : body.length;
+    const scrollTop = live?.scrollTop ?? 0;
     body = body.slice(0, from) + sc.text + body.slice(to);
     const i = sc.pick ? sc.text.indexOf(sc.pick) : -1;
     queueMicrotask(() => {
       const el = live ?? area;
       if (!el || !el.isConnected) return;
-      el.focus();
+      el.focus({ preventScroll: true });
       const a = i >= 0 ? from + i : from + sc.text.length;
       const b = i >= 0 ? a + sc.pick.length : a;
       el.setSelectionRange(a, b);
+      el.scrollTop = scrollTop;
       selStart = a;
       selEnd = b;
     });
@@ -409,15 +411,17 @@
   /** 在光标处插入一段文本（图片 ![]()、音视频按短代码），并把光标停在插入内容之后 */
   function insertFragment(text: string) {
     const live = bodyArea();
-    const from = live ? live.selectionStart : body.length;
-    const to = live ? live.selectionEnd : body.length;
+    const from = live ? (document.activeElement === live ? live.selectionStart : selStart) : body.length;
+    const to = live ? (document.activeElement === live ? live.selectionEnd : selEnd) : body.length;
+    const scrollTop = live?.scrollTop ?? 0;
     body = body.slice(0, from) + text + body.slice(to);
     queueMicrotask(() => {
       const el = live ?? area;
       if (!el || !el.isConnected) return;
-      el.focus();
+      el.focus({ preventScroll: true });
       const caret = from + text.length;
       el.setSelectionRange(caret, caret);
+      el.scrollTop = scrollTop;
       selStart = caret;
       selEnd = caret;
     });
@@ -978,7 +982,7 @@
             {#if trDraft}<textarea rows="5" bind:value={trDraft} placeholder="译稿"></textarea>{/if}
           </div>
         {:else if tr && tr.provider !== 'none' && tr.hint}
-          <p class="muted small">机器翻译暂不可用：{tr.hint}（到「设置 - 机器翻译」调整）</p>
+          <p class="muted small">机器翻译暂不可用：{tr.hint}（到「设置 → AI 模型配置」调整）</p>
         {/if}
       </div>
     {:else}
@@ -1142,6 +1146,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
   }
   .pane .row > input:not([type='checkbox']):not([type='radio']),
   .pane .row > select,

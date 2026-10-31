@@ -43,7 +43,7 @@ test('commentProviders：值不是参数对象时也拒（主题侧 `|| {}` 会�
 });
 
 test('字符串数组那几键：必须是「非空字符串」数组', () => {
-  for (const key of ['spamKeywords', 'friendApplyBlocklist', 'commentEmojiPacks']) {
+  for (const key of ['spamKeywords', 'friendApplyBlocklist']) {
     assert.equal(JSON_CONFIG_KEYS[key], 'stringArray', `${key} 的档位`);
     assert.equal(jsonKeyBadValue(key, '["博彩","广告"]'), null);
     assert.equal(jsonKeyBadValue(key, ''), null);

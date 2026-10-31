@@ -37,11 +37,13 @@
     const start = el.selectionStart;
     const end = el.selectionEnd;
     const sel = value.slice(start, end) || placeholderText;
+    const scrollTop = el.scrollTop;
     value = value.slice(0, start) + before + sel + after + value.slice(end);
     previewing = false;
     queueMicrotask(() => {
-      el.focus();
+      el.focus({ preventScroll: true });
       el.setSelectionRange(start + before.length, start + before.length + sel.length);
+      el.scrollTop = scrollTop;
     });
   }
 
@@ -55,11 +57,13 @@
     const at = lineEnd === -1 ? value.length : lineEnd;
     const line = value.slice(lineStart, at);
     const next = line ? `${prefixText}${line.replace(/^[#>\-*]\s*/, '')}` : `${prefixText}${placeholderText}`;
+    const scrollTop = el.scrollTop;
     value = value.slice(0, lineStart) + next + value.slice(at);
     previewing = false;
     queueMicrotask(() => {
-      el.focus();
+      el.focus({ preventScroll: true });
       el.setSelectionRange(lineStart + next.length, lineStart + next.length);
+      el.scrollTop = scrollTop;
     });
   }
 
@@ -71,12 +75,14 @@
     }
     const start = el.selectionStart;
     const end = el.selectionEnd;
+    const scrollTop = el.scrollTop;
     value = value.slice(0, start) + text + value.slice(end);
     previewing = false;
     queueMicrotask(() => {
-      el.focus();
+      el.focus({ preventScroll: true });
       const caret = start + text.length;
       el.setSelectionRange(caret, caret);
+      el.scrollTop = scrollTop;
     });
   }
 
@@ -157,7 +163,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.32rem;
+    gap: 0.42rem;
   }
   .tools .grow {
     flex: 1;

@@ -17,7 +17,6 @@
   import CommentNode from './CommentNode.svelte';
   import { apiFetch, canonSlug, resolveBase } from '../lib/api';
   import { commentConfig } from '../lib/config.svelte';
-  import { emojiPacks } from '../lib/emoji-packs';
   import { tr } from '../lib/i18n';
   import { dropOwnerKey, ownerKeyOf, ownersParam, saveOwnerKey } from '../lib/owners';
   import { session } from '../lib/session.svelte';
@@ -48,8 +47,6 @@
   const noApiBase = $derived(t('noApiBase'));
   const showMeta = $derived(commentConfig.showMeta);
   const likeEnabled = $derived(commentConfig.likeEnabled);
-  /** 内置四组 + 后台 commentEmojiPacks 追加的「自定义」那组 */
-  const packs = $derived(emojiPacks(commentConfig.customEmojis));
 
   /** 后端按「顶层评论」分页：默认 20 条顶层 + 其全部平铺回复（与 api 的 DEFAULT_PAGE 对齐） */
   const PAGE = 20;
@@ -445,7 +442,7 @@
    * 登录入口要同时看两个开关：后台注册开关 + 「前台账号系统」总开关。
    * 总开关关掉时整站无处登录，按钮留着只会把游客引到一个打不开的页面。
    */
-  const showLogin = $derived(isGuest && commentConfig.allowRegister && commentConfig.accountSystemEnabled);
+  const showLogin = $derived(isGuest && commentConfig.readerLoginEnabled && commentConfig.accountSystemEnabled);
   /** 提交按钮之前的顺序固定是 表情 → 发表评论 → 登录，提示文案跟在最后 */
   const allowPost = $derived(!needLogin);
 </script>
@@ -484,7 +481,6 @@
           {shortBase}
           lang={effectiveLang}
           rows={4}
-          {packs}
           busy={mainSubmitting}
           error={mainError}
           disabled={!allowPost}
@@ -515,7 +511,6 @@
             lang={effectiveLang}
             {showMeta}
             {likeEnabled}
-            {packs}
             identity={guestFields}
           />
           {#if reps.length}
@@ -530,7 +525,6 @@
                   lang={effectiveLang}
                   {showMeta}
                   {likeEnabled}
-                  {packs}
                   identity={guestFields}
                 />
               {/each}
@@ -557,7 +551,6 @@
             lang={effectiveLang}
             {showMeta}
             {likeEnabled}
-            {packs}
             identity={guestFields}
           />
         {/each}

@@ -19,6 +19,8 @@ import { addFriendToLinksFile, linksFileHas, removeFriendFromLinksFile, sortFrie
 import { normalizeFriendUrl, type NewFriend } from './links-yaml';
 import { finishRepoWrites } from './git';
 import { newId } from '../lib/crypto';
+import { getConfig } from './config';
+import { readRepoFile } from './repo';
 import { httpUrlField, optionalHttpUrlField } from '../lib/httpUrl';
 import { fail } from '../lib/errors';
 import { zodZh } from '../lib/zmsg';
@@ -147,16 +149,46 @@ export function groupFriends(rows: FriendRow[]): { friends: FriendItem[]; allian
 }
 
 /** 后台列表：分组 + 保留健康详情字段，CMS 一张表就能显示状态 */
-export function groupFriendsDetail(rows: FriendRow[]) {
+export function groupFriendsDetail(rows: FriendRow[], icons: Record<string, string> = {}) {
+  const iconOf = (r: FriendRow): string | null => {
+    if ((r.avatar ?? '').trim()) return null;
+    const hit = icons[r.url] ?? icons[normalizeFriendUrl(r.url)];
+    if (hit) return hit;
+    try {
+      return `${new URL(r.url).origin}/favicon.ico`;
+    } catch {
+      return null;
+    }
+  };
   const pack = (kind: FriendKind) =>
     byKind(rows, kind).map((r) => ({
       ...toFriendItem(r),
+      /** 前台实际会显示的兜底图标（手填头像优先，这里是空头像时的候选） */
+      icon: iconOf(r),
       failCount: r.failCount,
       lastCheckedAt: r.lastCheckedAt,
       cooldownUntil: r.cooldownUntil,
       createdAt: r.createdAt,
     }));
   return { friends: pack('friend'), alliance: pack('alliance') };
+}
+
+/** 读取定时任务写进仓库的站点图标缓存（data/linksicons.json）；读不到就返回空表 */
+export async function readLinkIcons(env: Env): Promise<Record<string, string>> {
+  const dir = ((await getConfig(env, 'githubDataDir')) ?? '').trim() || 'data';
+  try {
+    const file = await readRepoFile(env, `${dir}/linksicons.json`);
+    if (!file?.content?.trim()) return {};
+    const parsed = JSON.parse(file.content) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'string' && v) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 /** 新条目默认排到该组末尾，免得管理员忘了填就全挤在 0 上 */

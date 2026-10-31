@@ -28,8 +28,6 @@
     fields: Field[];
     /** 分了小节的组按节显示，隐藏的通道字段不占位；没写的组一马平川 */
     sections?: Section[];
-    /** 按哪个配置键决定哪些小节可见；缺省是发信通道 emailProvider */
-    providerKey?: string;
   }
 
   const PROVIDERS = [
@@ -40,32 +38,6 @@
     { value: 'artalk', label: 'Artalk' },
   ];
 
-  /** 与后端 services/translate.ts 的 PRESETS kind 一一对应，改一处必须改另一处 */
-  const TRANSLATE_PROVIDERS = [
-    { value: 'none', label: '不使用' },
-    { value: 'mymemory', label: 'MyMemory（免费，无需密钥）' },
-    { value: 'baidu', label: '百度翻译（免费额度）' },
-    { value: 'youdao', label: '有道翻译（免费额度）' },
-    { value: 'workers-ai', label: 'Cloudflare Workers AI' },
-    { value: 'deepseek', label: 'DeepSeek' },
-    { value: 'qianwen', label: '通义千问' },
-    { value: 'moonshot', label: 'Moonshot' },
-    { value: 'doubao', label: '豆包' },
-    { value: 'zhipu', label: '智谱 GLM' },
-    { value: 'grok', label: 'Grok' },
-    { value: 'openai', label: 'OpenAI' },
-  ];
-
-  /** 与后端 moderation.ts 的 SPAM_PROVIDER_PRESETS 对齐 */
-  const SPAM_PROVIDERS = [
-    { value: 'none', label: '不使用' },
-    { value: 'generic', label: '自建 HTTP 服务' },
-    { value: 'netease', label: '网易易盾' },
-    { value: 'aliyun', label: '阿里绿网（内容安全）' },
-    { value: 'tencent', label: '腾讯云天御（内容安全）' },
-    { value: 'moderatejs', label: 'moderate.js 自建服务' },
-  ];
-
   /** 与后端 services/ai.ts 的 AI_PROVIDERS 对齐：切服务商时把默认端点/模型填进下面两格 */
   const AI_PROVIDERS = [
     { value: 'deepseek', label: 'DeepSeek', endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
@@ -73,8 +45,15 @@
     { value: 'moonshot', label: 'Moonshot Kimi', endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
     { value: 'doubao', label: '豆包（火山方舟）', endpoint: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k' },
     { value: 'zhipu', label: '智谱 GLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+    { value: 'wenxin', label: '百度文心一言', endpoint: 'https://qianfan.baidubce.com/v2', model: 'ernie-4.0-8k' },
+    { value: 'hunyuan', label: '腾讯混元', endpoint: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-turbos-latest' },
+    { value: 'spark', label: '讯飞星火', endpoint: 'https://spark-api-open.xf-yun.com/v1', model: 'generalv3.5' },
+    { value: 'siliconflow', label: '硅基流动', endpoint: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
     { value: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    { value: 'gemini', label: 'Google Gemini', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.0-flash' },
+    { value: 'claude', label: 'Anthropic Claude', endpoint: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-latest' },
     { value: 'grok', label: 'Grok（xAI）', endpoint: 'https://api.x.ai/v1', model: 'grok-2-latest' },
+    { value: 'minimax', label: 'MiniMax', endpoint: 'https://api.minimax.chat/v1', model: 'abab6.5s-chat' },
     { value: 'custom', label: '自定义 / 自建（OpenAI 兼容）', endpoint: '', model: '' },
   ];
   const AI_DEFAULTS = new Map(AI_PROVIDERS.map((p) => [p.value, { endpoint: p.endpoint, model: p.model }]));
@@ -85,9 +64,10 @@
       desc: '「前台账号系统」关掉后 /account/ 整页只留提示，用户无法登录；管理员仍可从站点后台路径登录。「允许注册」只下线注册 tab 与验证码注册通道，已注册用户照常登录。',
       fields: [
         { key: 'accountSystemEnabled', label: '前台账号系统', kind: 'bool' },
-        { key: 'allowRegister', label: '允许注册', kind: 'bool', hint: '关掉后普通账号也无法登录（只有站长与管理员还能进），需要收口时再关' },
+        { key: 'allowRegister', label: '允许注册', kind: 'bool', hint: '只控制新账号注册；已注册用户是否还能登录看下面一项' },
+        { key: 'readerLoginEnabled', label: '注册用户可登录', kind: 'bool', hint: '关掉后只有站长/管理员能登录，普通用户会被拒绝；不影响注册开关' },
         { key: 'requireInviteCode', label: '注册需邀请码', kind: 'bool', hint: '邀请码在「用户」页的「邀请码」tab 生成' },
-        { key: 'cmsAdminUrl', label: '后台地址', hint: '管理员在前台登录成功后跳这里。后台是独立的 Pages 项目，与站点不同域：留空时前端只能按同域 /admin/ 兜底，那个路径必然是 404。管理员第一次从后台登录时会自动记下后台自己的域名，换域名后在这里改' },
+        { key: 'cmsAdminUrl', label: '后台地址', hint: '管理员在前台登录成功后跳这里。留空时只能按同域 /admin/ 兜底，路径必然是 404。' },
         { key: 'inviteCodeLength', label: '随机码长度', kind: 'number', hint: '4 ~ 16' },
         { key: 'inviteCodeUses', label: '随机码默认可用次数', kind: 'number', hint: '0 表示不限' },
       ],
@@ -111,7 +91,7 @@
           key: 'commentAllowAnonymous',
           label: '允许游客评论',
           kind: 'bool',
-          hint: '只有「注册与邀请码 → 前台账号系统」打开时这一项才有作用：账号系统关着时前台本来就没有登录入口，评论一律按游客处理（接口会强制放行，见 api routes/comments.ts 的 allowAnonymous）；评论选用 Waline 等第三方服务商时也不归这项管，去服务商自己的后台设',
+          hint: '只有开启登录注册时才有作用，否则一律按游客处理；不控制第三方评论',
         },
         { key: 'commentRequireReview', label: '游客评论需审核', kind: 'bool', hint: '登录用户评论始终直接通过' },
         { key: 'commentMaxDepth', label: '最大嵌套层级', kind: 'number', hint: '2 ~ 7' },
@@ -133,7 +113,6 @@
         '评论入库前先过本地规则（关键词 / 正则 / 仓库规则文件），这里配的是「再加一道外部服务商」：它说垃圾才算加分，' +
         '异常或超时一律 fail-open。审核规则本身在「评论审核」页调，这里只放凭据。',
       fields: [
-        { key: 'spamProviderKind', label: '服务商', kind: 'select', options: SPAM_PROVIDERS },
         {
           key: 'spamProviderEndpoint',
           label: 'Endpoint',
@@ -154,12 +133,10 @@
       ],
     },
     {
-      title: 'AI 服务与密钥',
+      title: 'AI 模型配置',
       desc:
-        '这里只配「用哪家大模型」，供「评论审核 → AI 审核」与「评论 → AI 回复」共用。' +
-        '已内置 DeepSeek、通义千问、Moonshot Kimi、豆包、智谱、OpenAI、Grok；端点与模型留空就用该服务商的默认值，' +
-        '自建 Ollama / vLLM 或代理网关选「自定义」并填端点与模型。两个功能开关分别在评论审核页与「AI 回复」页。' +
-        '开启后评论正文、昵称与邮箱会发送到你选的服务商，介意隐私或服务商在境外时建议保持关闭。',
+        'AI 模型配置，供评论审核、AI 回复、翻译等共用。开启后相关内容会发送到你选的服务商，' +
+        '介意隐私或服务商在境外时建议保持关闭。',
       fields: [
         {
           key: 'aiProvider',
@@ -187,69 +164,6 @@
       ],
     },
     {
-      title: '机器翻译',
-      desc:
-        '翻译工作台只负责选服务；端点、模型与各家凭据都在这里。免密钥的只剩 MyMemory（公共接口，配额低）；' +
-        '百度 / 有道用免费额度需要各自的 App ID 与密钥；大模型一档走 OpenAI 兼容接口。',
-      providerKey: 'translateProvider',
-      fields: [
-        { key: 'translateProvider', label: '服务商', kind: 'select', options: TRANSLATE_PROVIDERS },
-        {
-          key: 'translateEndpoint',
-          label: '接口地址',
-          hint: '大模型 / Workers AI 用：填基础地址（如 https://api.deepseek.com）或完整 …/chat/completions；留空用服务默认',
-        },
-        { key: 'translateModel', label: '模型', hint: '大模型 / Workers AI 用，如 deepseek-chat、qwen-plus、gpt-4o-mini' },
-        {
-          key: 'translateKey',
-          label: 'API Key',
-          kind: 'secret',
-          hint: '大模型 / Workers AI 用；百度、有道不用这一项。读取只显示「已设置」，留空表示不修改',
-        },
-        { key: 'translateBaiduAppId', label: '百度翻译 AppID', hint: '百度翻译开放平台 → 管理控制台 → 开发者信息' },
-        {
-          key: 'translateBaiduKey',
-          label: '百度翻译密钥',
-          kind: 'secret',
-          hint: '与 AppID 配对；签名由后端按官方 MD5 规则算好',
-        },
-        { key: 'translateYoudaoAppKey', label: '有道应用 ID', hint: '有道智云 → 应用管理 → 应用 ID' },
-        {
-          key: 'translateYoudaoAppSecret',
-          label: '有道应用密钥',
-          kind: 'secret',
-          hint: '与有道应用 ID 配对；签名由后端按 v3 SHA-256 规则算好',
-        },
-      ],
-      sections: [
-        { title: '服务商', keys: ['translateProvider'] },
-        {
-          title: '大模型 / Workers AI',
-          desc: '端点、模型与 API Key 三项；换服务商只改这里，翻译工作台不用动。',
-          keys: ['translateEndpoint', 'translateModel', 'translateKey'],
-          onlyFor: ['workers-ai', 'openai', 'deepseek', 'qianwen', 'moonshot', 'doubao', 'grok', 'zhipu'],
-        },
-        {
-          title: '百度翻译',
-          desc: '免费额度按字符计，超出后服务商会回错误码；AppID 与密钥在百度翻译开放平台获取。',
-          keys: ['translateBaiduAppId', 'translateBaiduKey'],
-          onlyFor: ['baidu'],
-        },
-        {
-          title: '有道翻译',
-          desc: '免费体验额度用完后需要到有道智云开通；应用 ID 与应用密钥在控制台获取。',
-          keys: ['translateYoudaoAppKey', 'translateYoudaoAppSecret'],
-          onlyFor: ['youdao'],
-        },
-        {
-          title: 'MyMemory',
-          desc: '无需密钥的公共接口，每天有匿名配额，长文会被截断或限流；适合先跑通或偶尔译一段。',
-          keys: [],
-          onlyFor: ['mymemory'],
-        },
-      ],
-    },
-    {
       title: '点赞与收藏',
       fields: [
         { key: 'likeEnabled', label: '开启点赞', kind: 'bool' },
@@ -262,8 +176,8 @@
       fields: [
         { key: 'subscribeEnabled', label: '开启订阅', kind: 'bool' },
         { key: 'subscribeDoubleOptIn', label: '双重确认', kind: 'bool', hint: '关闭后直接置为已确认，容易被灌订阅' },
-        { key: 'subscribePushEnabled', label: '新文章自动推送', kind: 'bool', hint: '每天一次的定时任务（世界时 02:00，北京 10:00）抓下面这个 RSS，比上次位点新的文章就发一封汇总信，只发给已确认订阅者。这一页改完不会立刻发信，要验证去「群发」页点「推送新文章」，它会写明卡在哪一步（开关关着 / RSS 抓不到 / 没有已确认订阅者 / 发信额度不够）' },
-        { key: 'subscribeFeedUrl', label: '用于比对的 RSS 地址', hint: '留空则按「站点地址 + /index.xml」拼；Pages 的站点是 https://你的域名/index.xml，Hugo 的 RSS 就是这个。填错的话推送只会报「RSS 里没有条目」' },
+        { key: 'subscribePushEnabled', label: '新文章自动推送', kind: 'bool', hint: '每天一次的定时任务（北京时间 10:00），只发给已确认订阅者' },
+        { key: 'subscribeFeedUrl', label: '用于比对的 RSS 地址', hint: '留空则按「站点地址 + /index.xml」拼；填错的话推送只会报「RSS 里没有条目」' },
       ],
     },
     {
@@ -273,8 +187,8 @@
         '② 媒体库的公开域名（R2 自定义域或 CDN，只对默认 r2 桶生效）。' +
         '站点 Logo / 分享图在「前端管理 → 基本信息」，时刻横幅与头像在「前端管理 → 时刻页」，管理员自己的头像在「我的信息 → 账号资料」，都在别处，这里不重复。',
       fields: [
-        { key: 'avatarTemplate', label: '头像地址模板', hint: '留空就是内置那条链：Gravatar → Cravatar →（QQ 号）QQ 头像 → 首字母。填了就整条链换图床并顶到最前（{hash} 换成邮箱 MD5，{email} 换成 URL 编码后的邮箱）。别写 d=mp 这类「没有也给一张通用灰影人」的参数，那样链条当场断在第一级，本人真有头像也取不到' },
-        { key: 'mediaBaseUrl', label: '媒体公开域名', hint: 'R2 自定义域名或 CDN，只作用到默认 r2 桶；留空则复制 / 插入的是 Worker 代理链接 —— 访客不用登录也打得开，但每张图都要接口转发一次。桶自己填了 baseUrl 的以桶为准' },
+        { key: 'avatarTemplate', label: '头像地址模板', hint: '' },
+        { key: 'mediaBaseUrl', label: '媒体公开域名', hint: '' },
       ],
     },
     {
@@ -291,7 +205,7 @@
             { value: 'cloudflare', label: 'Cloudflare Email Sending' },
           ],
         },
-        { key: 'emailDailyLimit', label: '每日发信上限', kind: 'number', hint: '按 UTC 日界计数，Resend 免费档是 100 封/天；填 0 表示不限制' },
+        { key: 'emailDailyLimit', label: '每日发信上限', kind: 'number', hint: '按 UTC 日界计数，填 0 表示不限制' },
         { key: 'emailFrom', label: '发件邮箱' },
         { key: 'emailFromName', label: '发件人名称' },
         { key: 'smtpHost', label: 'SMTP 服务器' },
@@ -300,8 +214,7 @@
           key: 'smtpSecure',
           label: '使用 SSL/TLS',
           kind: 'bool',
-          hint: '465 端口一定走隐式 TLS（实测明文连过去对方不应答），这一项不勾也照样是 TLS；' +
-            '它只给「587 / 2525 之类的端口但服务端只收隐式 TLS」的自建环境用，勾上表示那个端口也直接上 TLS',
+          hint: '',
         },
         { key: 'smtpUser', label: 'SMTP 用户名' },
         {
@@ -345,14 +258,7 @@
     {
       title: '友情链接',
       fields: [
-        { key: 'friendsEnabled', label: '开启友链', kind: 'bool' },
         { key: 'friendsAutoCheck', label: '定时检测存活', kind: 'bool' },
-        {
-          key: 'friendsCheckOnlyRss',
-          label: '只检测填了 RSS 的友链',
-          kind: 'bool',
-          hint: '默认开。没填 RSS 的站不会进朋友动态，每天为它们各等一次超时不值；关掉就是全站都检',
-        },
         {
           key: 'friendsCheckIntervalHours',
           label: '检测间隔（小时）',
@@ -371,18 +277,9 @@
           kind: 'number',
           hint: '默认 90，只看填了 RSS 的站（没 RSS 抓不到更新时间）；填 0 表示不按更新频率降级',
         },
-        { key: 'friendApplyEnabled', label: '开放在线申请', kind: 'bool', hint: '前台友链页把「提交示例」换成在线表单' },
         { key: 'friendApplyRequireReview', label: '申请需人工审核', kind: 'bool' },
         { key: 'friendApplyAutoPublish', label: '通过后自动写友链文件', kind: 'bool', hint: '只管这一条路径：关掉就只进数据库、不提交 links.yaml，与投稿那个开关互不影响' },
         { key: 'friendApplyBlocklist', label: '申请黑名单关键词', kind: 'lines', hint: '一行一个，站名/网址/描述命中即直接拒绝' },
-      ],
-    },
-    {
-      title: '工坊 / 关于',
-      desc: '这两个页面没有独立的管理页，开关放在这里（工坊的项目在「前端管理 → 工坊」，关于的文案在「前端管理 → 关于」，关掉开关只下线页面，内容本身不动）。关掉后前台导航里的入口消失、页面正文换成「已关闭」提示；内容仓库里带了那个边缘中间件（functions/_middleware.ts）的站，还会直接返回 404 并带上 noindex，旧链接和搜索引擎都拿不到内容。',
-      fields: [
-        { key: 'workEnabled', label: '开放工坊页 /work/', kind: 'bool' },
-        { key: 'aboutEnabled', label: '开放关于页 /about/', kind: 'bool' },
       ],
     },
     {
@@ -477,12 +374,11 @@
         {
           key: 'adminNotifyEmail',
           label: '站长收件邮箱',
-          hint: '「新评论提醒管理员」「投稿 / 友链申请待处理」这类给站长的信发到这里。留空就发到「发信方式」里的发件邮箱 —— 很多站两者本来就是同一个地址。以前没有这一项，给站长的提醒永远发回发件邮箱自己',
+          hint: '评论通知等给站长的信发到这里。留空就发到「发信方式」里的发件邮箱。此项方便发信邮箱配置与站长邮箱不一致的情况',
         },
         { key: 'commentNotifyReply', label: '被回复时提醒', kind: 'bool' },
         { key: 'commentNotifyAuthor', label: '提醒文章作者', kind: 'bool' },
         { key: 'commentShowMeta', label: '前台展示属地 / 设备等信息', kind: 'bool' },
-        { key: 'commentEmojiPacks', label: '表情面板', kind: 'lines', hint: '一行一个 emoji，保存为 JSON 数组' },
       ],
     },
   ];
@@ -623,13 +519,10 @@
   }
 
   /**
-   * 没选中的通道那一节直接不显示；配置还没读回来时按各自默认值对待
-   * （发信按 smtp，翻译按 none）。用 providerKey 区分是哪一组的选择框，
-   * 不能一律读 emailProvider —— 翻译组会被发信通道的取值误伤。
+   * 没选中的发信通道那一节直接不显示；配置还没读回来时按默认值 smtp 对待。
    */
   function visibleSections(g: Group, values: Record<string, string>): Section[] {
-    const key = g.providerKey ?? 'emailProvider';
-    const now = (values[key] || (key === 'emailProvider' ? 'smtp' : 'none')).trim();
+    const now = (values['emailProvider'] || 'smtp').trim();
     return (g.sections ?? []).filter((s) => !s.onlyFor || s.onlyFor.includes(now));
   }
 
@@ -858,20 +751,32 @@
         {:else}
           <label>
             {f.label}
-            <input
-              type={f.kind === 'secret' ? 'password' : f.kind === 'number' ? 'number' : 'text'}
-              maxlength={maxLen[f.key]}
-              value={cfg[f.key] ?? ''}
-              oninput={(e) => setVal(f.key, e.currentTarget.value)}
-              placeholder={f.kind === 'secret' && secretSet.includes(f.key) ? '已设置（留空不修改）' : ''}
-              autocomplete={f.kind === 'secret' ? 'new-password' : 'on'}
-            />
+            {#if f.kind === 'secret'}
+              <div class="secretrow">
+                <input
+                  type="password"
+                  maxlength={maxLen[f.key]}
+                  value={cfg[f.key] ?? ''}
+                  oninput={(e) => setVal(f.key, e.currentTarget.value)}
+                  placeholder={secretSet.includes(f.key) ? '已设置（留空不修改）' : ''}
+                  autocomplete="new-password"
+                />
+                {#if secretSet.includes(f.key)}
+                  <button type="button" class="sm" title="清除服务端已存的这份密钥" onclick={() => toggleClear(f.key)}>
+                    {clearSecrets.includes(f.key) ? '撤回' : '清除'}
+                  </button>
+                {/if}
+              </div>
+            {:else}
+              <input
+                type={f.kind === 'number' ? 'number' : 'text'}
+                maxlength={maxLen[f.key]}
+                value={cfg[f.key] ?? ''}
+                oninput={(e) => setVal(f.key, e.currentTarget.value)}
+                autocomplete="on"
+              />
+            {/if}
           </label>
-          {#if f.kind === 'secret' && secretSet.includes(f.key)}
-            <button type="button" class="sm" onclick={() => toggleClear(f.key)}>
-              {clearSecrets.includes(f.key) ? '已标记清除（点这里撤回）' : '清除已存密钥'}
-            </button>
-          {/if}
         {/if}
         {#if f.hint}<span class="muted hint">{f.hint}</span>{/if}
         {#if (emailVars[tplKind(f.key)] ?? []).length}
@@ -890,10 +795,12 @@
 
 {#snippet testSend()}
   <div class="row testrow">
-    <label class="inline grow">
+    <label class="inline testto">
       测试收件人
       <input bind:value={testTo} placeholder="you@example.com" />
     </label>
+  </div>
+  <div class="row testrow">
     <label class="inline">
       发哪一封
       <select bind:value={testKind}>
@@ -906,16 +813,14 @@
     <button class="sm" onclick={() => void sendTestEmail()} disabled={testBusy || !testTo.trim()}>
       {testBusy ? '发送中…' : '发一封测试信'}
     </button>
-  </div>
-  {#if testResult}
-    <p class="small testresult {testResult.ok ? 'ok' : 'err'}">{testResult.text}</p>
-  {/if}
-  <div class="row testrow">
     <button class="sm" onclick={() => void runNotifyTest()} disabled={notifyBusy}>
       {notifyBusy ? '两封发送中…' : '通知链路自检（站长那封 + 用户那封各一封）'}
     </button>
-    <span class="muted small">收件人不填就发给你自己；这一步走的是新评论提醒真正用的那套收件人算法与模板。</span>
   </div>
+  <span class="muted small">收件人不填就发给你自己；通知链路自检走的是新评论提醒真正用的那套收件人算法与模板。</span>
+  {#if testResult}
+    <p class="small testresult {testResult.ok ? 'ok' : 'err'}">{testResult.text}</p>
+  {/if}
   {#if notifyResult}
     <div class="notifybox">
       <p class="small">
@@ -1053,11 +958,13 @@
     flex-wrap: wrap;
     margin-bottom: 0.4rem;
   }
-
-  .grow {
-    min-width: 240px;
-    flex: 1 1 240px;
+  .testto {
+    flex: 1 1 100%;
   }
+  .testto input {
+    width: 100%;
+  }
+
 
   .linkbtn {
     display: inline-flex;
@@ -1144,6 +1051,19 @@
     gap: 0.25rem;
     /* 没有这行，一长串地址会把所在列撑破（grid 子项默认 min-width:auto） */
     min-width: 0;
+  }
+  .secretrow {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .secretrow input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .secretrow button {
+    flex: none;
+    min-height: 36px;
   }
   .field input,
   .field select,

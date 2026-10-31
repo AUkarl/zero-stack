@@ -107,9 +107,18 @@ skip() { SKIP=$((SKIP + 1)); SKIPPED+=("$1 <- $2"); printf '  \033[33m•\033[0m
 section '公开：配置与内容'
 req GET /api/health 200 '' '健康检查'
 req GET /api/config 200 '' '运行时公开配置'
-printf '%s' "$BODY_TEXT" | grep -q '"commentEmojiPacks"' \
-  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '公开配置含 commentEmojiPacks（表情包）'; } \
-  || { FAIL=$((FAIL + 1)); FAILED+=('公开配置缺 commentEmojiPacks'); printf '  \033[31m✗\033[0m %-56s\n' '公开配置含 commentEmojiPacks（表情包）'; }
+printf '%s' "$BODY_TEXT" | grep -q '"readerLoginEnabled"' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '公开配置含 readerLoginEnabled（前台登录入口）'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=('公开配置缺 readerLoginEnabled'); printf '  \033[31m✗\033[0m %-56s\n' '公开配置含 readerLoginEnabled'; }
+printf '%s' "$BODY_TEXT" | grep -q '"friendFeedEnabled"' \
+  && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '公开配置含 friendFeedEnabled（朋友动态开关）'; } \
+  || { FAIL=$((FAIL + 1)); FAILED+=('公开配置缺 friendFeedEnabled'); printf '  \033[31m✗\033[0m %-56s\n' '公开配置含 friendFeedEnabled'; }
+# 表情面板与旧翻译/外部审核服务商已下线：这些键再出现在公开回包里，说明删漏了或有人加回去
+for gone in commentEmojiPacks translateEndpoint translateBaiduAppId spamExternalEndpoint friendsCheckOnlyRss; do
+  printf '%s' "$BODY_TEXT" | grep -q "\"$gone\"" \
+    && { FAIL=$((FAIL + 1)); FAILED+=("公开配置仍带已下线的 $gone"); printf '  \033[31m✗\033[0m %-56s\n' "公开配置不再回显 $gone"; } \
+    || { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' "公开配置不再回显 $gone"; }
+done
 printf '%s' "$BODY_TEXT" | grep -q '"commentShowMeta"' \
   && { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %-56s\n' '公开配置含 commentShowMeta（属地/设备开关）'; } \
   || { FAIL=$((FAIL + 1)); FAILED+=('公开配置缺 commentShowMeta'); printf '  \033[31m✗\033[0m %-56s\n' '公开配置含 commentShowMeta'; }

@@ -662,15 +662,17 @@
     只在文件里列出旧值给你人工对照。图片本体不在文件里，用下面「图片（媒体本体）」那一节单独导一个图片包过去。
   </p>
 
-  <div class="row actions">
-    <label class="row" style="gap:6px;align-items:center;margin-right:8px">
+  <div class="exportbar">
+    <label class="switch creds">
       <input type="checkbox" bind:checked={includeCreds} />
       <span class="small">包含登录与凭证数据（口令散列 / 验证器密钥 / 退订令牌 / 评论编辑凭证）</span>
     </label>
-    <button onclick={() => void download()} disabled={busy !== ''}>{busy === 'download' ? '导出中…' : '导出到本地'}</button>
-    <button class="primary" onclick={() => void archive()} disabled={busy !== ''}>
-      {busy === 'archive' ? '存档中…' : '存档到 R2'}
-    </button>
+    <div class="row exportacts">
+      <button onclick={() => void download()} disabled={busy !== ''}>{busy === 'download' ? '导出中…' : '导出到本地'}</button>
+      <button class="primary" onclick={() => void archive()} disabled={busy !== ''}>
+        {busy === 'archive' ? '存档中…' : '存档到 R2'}
+      </button>
+    </div>
   </div>
 
   {#if exportWarn.length}
@@ -1060,6 +1062,26 @@
   .actions {
     margin-top: 0.6rem;
     align-items: center;
+  }
+  .exportbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem 1.2rem;
+    flex-wrap: wrap;
+    margin-top: 0.9rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--border);
+  }
+  .creds {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0;
+    max-width: 54rem;
+  }
+  .exportacts {
+    flex-wrap: nowrap;
   }
   .switch {
     display: flex;

@@ -43,11 +43,13 @@
   .sc {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.45rem;
     flex-wrap: wrap;
   }
   .sel {
-    padding: 0.18rem 0.5rem;
+    height: 30px;
+    min-height: 30px;
+    padding: 0.18rem 1.8rem 0.18rem 0.55rem;
     font-size: 0.82rem;
   }
   .small {

@@ -399,9 +399,15 @@
   }
   .fields {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 0.7rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.7rem 0.8rem;
     margin-bottom: 0.7rem;
+    align-items: stretch;
+  }
+  .fields > label > input,
+  .fields > label > select {
+    width: 100%;
+    height: 36px;
   }
   .fields .wide {
     grid-column: 1 / -1;
@@ -410,12 +416,21 @@
     flex-direction: row;
     align-items: center;
     gap: 0.45rem;
+    min-height: 36px;
+    padding: 0 0.65rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--panel);
     color: var(--fg);
     font-size: 0.86rem;
-    align-self: end;
   }
   textarea {
     width: 100%;
+  }
+  @media (max-width: 720px) {
+    .fields {
+      grid-template-columns: 1fr;
+    }
   }
   .acts {
     margin-top: 0.7rem;

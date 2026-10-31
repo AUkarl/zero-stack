@@ -4,8 +4,8 @@
   let { home }: { home: HomeSection } = $props();
 
   const LAYOUTS: { value: 'bento' | 'grid'; title: string; desc: string }[] = [
-    { value: 'bento', title: 'bento 精选网格', desc: '顶部简介 + 精选区（11 个槽位）+ 全部文章等高网格，点开先显示几行、可「加载更多」' },
-    { value: 'grid', title: 'grid 旧版卡片', desc: '等宽等高的一整片卡片网格，就是最早那套首页布局，随时可以切回去' },
+    { value: 'bento', title: 'bento 精选网格', desc: '顶部简介 + 精选区（11 个槽位）+ 全部文章等高网格，点击可加载更多' },
+    { value: 'grid', title: 'grid 旧版卡片', desc: '等宽等高的卡片网格，做了卡片交错，既保留规整感又增加了瀑布流的感觉' },
   ];
 </script>
 
@@ -20,10 +20,7 @@
       </button>
     {/each}
   </div>
-  <p class="muted small">
-    当前选择：<strong>{home.layout}</strong>。精选区排布、列数、宽度占比、封面兜底图等细节仍然读 params.toml 的
-    <code>[home]</code> 与 <code>[home.bento]</code>，这一页只覆盖上面这三项。
-  </p>
+  <p class="muted small">当前选择：<strong>{home.layout}</strong>。仅选择 Home 页面风格，具体细节要去 params.toml。</p>
 </section>
 
 <section class="card blk">

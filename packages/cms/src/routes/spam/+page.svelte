@@ -99,7 +99,7 @@
   let aiProbe = $state<{ verdict: string; reason: string } | null>(null);
   let aiProbing = $state(false);
 
-  // AI 审核：连接配置在「设置 → AI 服务与密钥」，这里只管开关与试判
+  // AI 审核：连接配置在「设置 → AI 模型配置」，这里只管开关与试判
   interface AiStatusLite {
     provider: string;
     label: string;
@@ -117,6 +117,13 @@
   // 队列
   let queue = $state<Cmt[]>([]);
   let queueStatus = $state<'spam' | 'pending'>('spam');
+  let expandedContent = $state<Set<string>>(new Set());
+  function toggleContent(id: string) {
+    const next = new Set(expandedContent);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    expandedContent = next;
+  }
 
   const kwJson = (arr: string[]) => JSON.stringify(arr.map((s) => s.trim()).filter(Boolean));
 
@@ -517,7 +524,7 @@
         {#if !ai.ready}
           <p class="warn small">
             还没配好{ai.hint ? `：${ai.hint}` : ''}。去
-            <a href="/settings">「设置 → AI 服务与密钥」</a>
+            <a href="/settings">「设置 → AI 模型配置」</a>
             补齐。
           </p>
         {/if}
@@ -675,30 +682,31 @@
         <thead>
           <tr>
             <th>作者</th>
+            <th>邮箱</th>
             <th>内容</th>
             <th>位置</th>
-            <th>分数</th>
-            <th>命中原因</th>
             <th>时间</th>
-            <th></th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
           {#each queue as r (r.id)}
             <tr>
-              <td>{r.authorName}{r.authorEmail ? ` 〈${r.authorEmail}〉` : ''}</td>
-              <td class="clip">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</td>
-              <td>
-                {#if frontUrl(r.postSlug)}
-                  <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer">{r.postTitle || r.postSlug}</a>
-                {:else}
-                  <span class="muted">{r.postTitle || r.postSlug}</span>
-                {/if}
-                {#if r.postTitle}<div class="muted small">{r.postSlug}</div>{/if}
+              <td class="author">{r.authorName}</td>
+              <td class="email">{r.authorEmail || '—'}</td>
+              <td class="content-cell" class:open={expandedContent.has(r.id)}>
+                <div class="clip">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</div>
+                <button class="sm ghost more" type="button" onclick={() => toggleContent(r.id)}>{expandedContent.has(r.id) ? '收起' : '展开'}</button>
               </td>
-              <td>{r.spamScore ?? '—'}</td>
-              <td class="clip">{r.spamReason || '—'}</td>
-              <td>{timeAgo(r.createdAt)}</td>
+              <td class="place">
+                {#if frontUrl(r.postSlug)}
+                  <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer" title={r.postTitle || r.postSlug}>{r.postTitle || r.postSlug}</a>
+                {:else}
+                  <span class="muted" title={r.postTitle || r.postSlug}>{r.postTitle || r.postSlug}</span>
+                {/if}
+                {#if r.postTitle}<div class="muted small" title={r.postSlug}>{r.postSlug}</div>{/if}
+              </td>
+              <td class="time">{timeAgo(r.createdAt)}</td>
               <td class="ops">
                 <button class="sm" onclick={() => void moderate(r.id, 'approve')}>放行</button>
                 <button class="sm" onclick={() => void aiReview(r.id)} disabled={aiBusy === r.id}>
@@ -946,26 +954,46 @@
   }
   .queue table {
     table-layout: fixed;
-    min-width: 880px;
+    min-width: 940px;
   }
-  .queue th:nth-child(1) { width: 150px; }
-  .queue th:nth-child(3) { width: 170px; }
-  .queue th:nth-child(4) { width: 58px; }
-  .queue th:nth-child(5) { width: 190px; }
-  .queue th:nth-child(6) { width: 92px; }
-  .queue th:nth-child(7) { width: 190px; }
-  .queue td:nth-child(1),
-  .queue td:nth-child(4),
-  .queue td:nth-child(6) {
+  .queue th:nth-child(1) { width: 120px; }
+  .queue th:nth-child(2) { width: 170px; }
+  .queue th:nth-child(4) { width: 170px; }
+  .queue th:nth-child(5) { width: 84px; }
+  .queue th:nth-child(6) { width: 190px; }
+  .queue td.author,
+  .queue td.email,
+  .queue td.time {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .queue td:nth-child(3) a {
+  .queue td.place a,
+  .queue td.place .muted {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .queue td.content-cell .clip {
+    max-width: 320px;
+  }
+  .queue td.content-cell.open .clip {
+    max-width: none;
+    white-space: normal;
+  }
+  .queue td.content-cell .more {
+    margin-top: 2px;
+    padding: 0 0.35rem;
+    min-height: 22px;
+    font-size: 0.72rem;
+  }
+  .queue td.content-cell .clip :global(p) {
+    margin: 0;
+  }
+  .queue td.content-cell.open .clip :global(p) {
+    margin: 0.25rem 0;
+    white-space: normal;
   }
   .queue .on {
     background: var(--accent);

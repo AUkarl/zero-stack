@@ -871,38 +871,6 @@ function clip(s: string): string {
   return String(s ?? '').replace(/\s+/g, ' ').slice(0, 160);
 }
 
-/* 旧版单端点 provider（spamExternalProvider），保留兼容，新配置走 providerVerdict */
-
-async function externalVerdict(env: Env, text: string): Promise<{ score: number; reason: string } | null> {
-  const provider = (await getConfig(env, 'spamExternalProvider')) ?? 'none';
-  const endpoint = (await getConfig(env, 'spamExternalEndpoint')) ?? '';
-  const key = (await getConfig(env, 'spamExternalKey')) ?? '';
-  if (provider === 'none' || !endpoint) return null;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-  try {
-    const res = await fetchWithTimeout(endpoint, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(key ? { Authorization: `Bearer ${key}`, 'X-Api-Key': key } : {}),
-      },
-      body: JSON.stringify({ text, provider }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json().catch(() => null)) as { spam?: boolean; score?: number; label?: string } | null;
-    if (!data) return null;
-    const score = Number.isFinite(data.score) ? Math.max(0, Math.min(100, Number(data.score))) : data.spam ? 60 : 0;
-    return { score, reason: data.label ? `外部服务：${data.label}` : '外部服务判定' };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** 后台「规则试跑」可以临时指定 provider 与密钥，不用先写进 site_config 再测 */
 export interface InspectOptions {
   /** 临时覆盖 spamProviderKind */
@@ -1037,16 +1005,6 @@ export async function inspectComment(env: Env, input: Candidate, options: Inspec
       score = Math.max(score, provider.score);
       hits.push(label);
       ruleHits.push({ source: 'provider', pattern: `provider:${provider.kind}`, label, weight: provider.score });
-    }
-  }
-
-  /* 旧版单端点配置，留着不破坏已有站点 */
-  const external = await externalVerdict(env, raw);
-  if (external) {
-    score = Math.max(score, external.score);
-    if (external.score > 0) {
-      hits.push(external.reason);
-      ruleHits.push({ source: 'provider', pattern: 'spamExternalProvider', label: external.reason, weight: external.score });
     }
   }
 
