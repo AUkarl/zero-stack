@@ -1,0 +1,97 @@
+# ============================================================
+# 用户可选部署模板 —— 属于 **zero-stack 这一侧**（接口 + 后台），
+# 复制到你自己的 zero-stack 仓库的 .github/workflows/deploy.yml 即可启用。
+#
+# 不要放进内容仓 zero-site：下面的步骤要 pnpm install、packages/api 的
+# wrangler.jsonc 和 .svelte-kit/cloudflare 产物，内容仓一样都没有，
+# 第一次跑就死在「缺少 packages/api/wrangler.jsonc」。内容仓那份由
+# pnpm create:site 生成（hugo --minify + pages deploy public）。
+#
+# 需要在仓库 Secrets 中配置：
+#   CF_API_TOKEN   Cloudflare API Token（需 Workers / Pages / D1 权限）
+#   CF_ACCOUNT_ID  Cloudflare 账户 ID
+# ============================================================
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          # 与 ci.yml、根 package.json engines 一致：allowBuilds 那份白名单按 pnpm 11 写，旧版不认
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install
+      - name: Check wrangler config exists
+        # packages/api/wrangler.jsonc 里有你自己的 D1 / R2 / KV 真实 id，仓库刻意不入库。
+        # CI 里必须让它存在，否则 wrangler 认不出配置、退回框架自动探测，
+        # 认出 Hono 后直接报「cannot be automatically configured」。
+        # 两种做法：① 把它提交进你自己的（私有）仓库 —— 那些 id 不是密钥；
+        #          ② 用 Secrets/Variables 在这里渲染出来，见 docs/DEPLOYMENT.md 第 2 节。
+        run: |
+          if [ ! -f packages/api/wrangler.jsonc ]; then
+            echo "::error::缺少 packages/api/wrangler.jsonc —— 见本步骤注释"; exit 1;
+          fi
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: packages/api
+          command: d1 migrations apply zero-db --remote
+      - name: Deploy API
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: packages/api
+          command: deploy
+
+  deploy-cms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          # 与 ci.yml、根 package.json engines 一致：allowBuilds 那份白名单按 pnpm 11 写，旧版不认
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install
+      - name: Build CMS
+        # VITE_API_BASE 有值就编进后台产物：打开登录页不用再手填 worker 域名。
+        # 在仓库 Settings → Secrets and variables → Actions → Variables 建一个 API_BASE_URL，
+        # 填 Worker 地址（https://zero-api.xxx.workers.dev）。不建 = 留空 = 回到登录页手填的老行为；
+        # 改了它必须重新跑这条流水线才生效。
+        env:
+          VITE_API_BASE: ${{ vars.API_BASE_URL }}
+        run: pnpm --filter zero-cms build
+      - name: Ensure Pages project exists
+        # pages deploy 遇到不存在的项目会问「要不要创建」，CI 是非交互上下文 → 直接报
+        # 「This command cannot be run in a non-interactive context」。先显式建项目；
+        # 已存在时 wrangler 会失败，这条用 continue-on-error 放过。
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages project create zero-cms --production-branch main
+      - name: Deploy CMS
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: packages/cms
+          command: pages deploy .svelte-kit/cloudflare --project-name=zero-cms

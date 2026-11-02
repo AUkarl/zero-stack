@@ -1,0 +1,658 @@
+/* ============================================================
+   app.css — 后台的全局令牌与基础组件
+   ------------------------------------------------------------
+   风格：柔和卡片（浅灰画布 + 白卡片 + 12px 圆角 + 极浅阴影 + 靛蓝主色）。
+   所有颜色只在这里定义；页面自己的 <style> 一律引用变量，深浅色才切得干净。
+
+   深色有两份：`data-theme="dark"`（手动选深色）与系统深色 + `data-theme="system"`。
+   两份值必须一致 —— 这里刻意重复一遍，而不是用 CSS 变量继承绕开，
+   否则系统深色那一支要额外维护一层映射，改一处忘一处。
+   ============================================================ */
+:root {
+  color-scheme: light;
+  /* 控件高度只有这一把尺子：页面里别再写死 36px，手机上靠改这个变量整体放大触区 */
+  --ctl-h: 36px;
+  --ctl-btn: 34px;
+  --ctl-h-sm: 30px;
+  /* 卡片/字段行的列数：只跟视口走，页面里写 grid-template-columns: var(--t-4)。
+     别在这里写 repeat(auto-fit, minmax(...)) —— auto-fit 跟的是主区宽度，侧栏一折叠
+     主区就宽一档，「一行三个」当场变「四加二」，这是站主明确点名要消灭的排法。 */
+  --t-2: repeat(2, minmax(0, 1fr));
+  --t-3: repeat(3, minmax(0, 1fr));
+  --t-4: repeat(4, minmax(0, 1fr));
+  --t-5: repeat(5, minmax(0, 1fr));
+  --t-6: repeat(6, minmax(0, 1fr));
+  --bg: #f6f7fb;
+  --panel: #ffffff;
+  --panel-2: #f2f4f8;
+  --border: #e6e8ef;
+  --border-strong: #d5d9e2;
+  --fg: #141a23;
+  /* #667085 在 #ffffff 上 4.54、在 #f2f4f8 上 4.2 —— 次要文字只在白底用，卡片里的说明用 --fg 降一档 */
+  --muted: #667085;
+  --accent: #4f46e5;
+  --accent-2: #4338ca;
+  --accent-soft: #eef2ff;
+  --accent-fg: #ffffff;
+  --good: #067647;
+  --good-soft: #ecfdf3;
+  --good-border: #abefc6;
+  --warn: #b54708;
+  --warn-soft: #fffaeb;
+  --warn-border: #fedf89;
+  --bad: #b42318;
+  --bad-soft: #fef3f2;
+  --bad-border: #fecdca;
+  --radius: 12px;
+  /* 图表配色：浅色以靛蓝领头，深色换成前台那支绿 + 薄荷 + 暖黄（与深色底都过 3:1） */
+  --chart-1: #4f46e5;
+  --chart-2: #0ea5e9;
+  --chart-3: #16a34a;
+  --chart-4: #f59e0b;
+  --chart-5: #a855f7;
+  --chart-6: #94a3b8;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.16);
+  /* 全站统一的间距，窄屏在下面的媒体查询里一次性收小 */
+  --pad: 1.25rem;
+  --gap: 0.75rem;
+  --card-pad: 1.1rem 1.2rem;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  /* 深色整套对齐前台主题（zero-theme 的 [data-theme="dark"]）：
+     底 #1e1e1e / 卡 #2a2a2a / 正文 #eeeeee / 次要 #aaaaaa / 分隔 #444 / 主色那支绿 #6bb298。
+     只有描边比前台亮一档（--border-strong）：输入框边框要过 WCAG 1.4.11 的 3:1，
+     前台的 #444 压在 #2a2a2a 上只有 1.4:1，那是装饰性分隔线，不能照抄到控件上。 */
+  --bg: #1e1e1e;
+  --panel: #2a2a2a;
+  --panel-2: #333333;
+  --border: #444444;
+  --border-strong: #7a7a7a;
+  --fg: #eeeeee;
+  --muted: #aaaaaa;
+  --accent: #6bb298;
+  --accent-2: #7beec7;
+  --accent-soft: #203a34;
+  --accent-fg: #10231c;
+  --good: #4ade80;
+  --good-soft: #1d3328;
+  --good-border: #2f5d47;
+  --warn: #fbbf24;
+  --warn-soft: #3a2c12;
+  --warn-border: #6b5220;
+  --bad: #f87171;
+  --bad-soft: #3a1c1a;
+  --bad-border: #6e3230;
+  --chart-1: #6bb298;
+  --chart-2: #7f9ed0;
+  --chart-3: #7beec7;
+  --chart-4: #fbbf24;
+  --chart-5: #f0a5c0;
+  --chart-6: #9aa4b2;
+  --shadow: none;
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    color-scheme: dark;
+    /* 与上面 [data-theme="dark"] 那份逐键相同 —— 两份必须一起改 */
+    --bg: #1e1e1e;
+    --panel: #2a2a2a;
+    --panel-2: #333333;
+    --border: #444444;
+    --border-strong: #7a7a7a;
+    --fg: #eeeeee;
+    --muted: #aaaaaa;
+    --accent: #6bb298;
+    --accent-2: #7beec7;
+    --accent-soft: #203a34;
+    --accent-fg: #10231c;
+    --good: #4ade80;
+    --good-soft: #1d3328;
+    --good-border: #2f5d47;
+    --warn: #fbbf24;
+    --warn-soft: #3a2c12;
+    --warn-border: #6b5220;
+    --bad: #f87171;
+    --bad-soft: #3a1c1a;
+    --bad-border: #6e3230;
+    --chart-1: #6bb298;
+    --chart-2: #7f9ed0;
+    --chart-3: #7beec7;
+    --chart-4: #fbbf24;
+    --chart-5: #f0a5c0;
+    --chart-6: #9aa4b2;
+    --shadow: none;
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* 笔记本宽度：列数先降一档（这一档之后 900 / 640 再各降一次，写在后面才能盖住前面） */
+@media (max-width: 1200px) {
+  :root {
+    --t-6: repeat(4, minmax(0, 1fr));
+    --t-5: repeat(4, minmax(0, 1fr));
+    --t-4: repeat(3, minmax(0, 1fr));
+    --t-3: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 平板：卡片内边距与栅格间隙收一点，避免两列被挤到换行 */
+@media (max-width: 900px) {
+  :root {
+    --pad: 0.95rem;
+    --gap: 0.6rem;
+    --card-pad: 0.9rem 0.95rem;
+    --t-6: repeat(3, minmax(0, 1fr));
+    --t-5: repeat(3, minmax(0, 1fr));
+    --t-4: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 手机：控件与按钮的触区抬到 44/42/38，36px 在触屏上按不准 */
+@media (max-width: 640px) {
+  :root {
+    --pad: 0.8rem;
+    --gap: 0.5rem;
+    --card-pad: 0.8rem 0.85rem;
+    --ctl-h: 44px;
+    --ctl-btn: 42px;
+    --ctl-h-sm: 40px;
+    --t-6: 1fr;
+    --t-5: 1fr;
+    --t-4: 1fr;
+    --t-3: 1fr;
+    --t-2: 1fr;
+  }
+  button,
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    min-height: var(--ctl-h);
+  }
+  button.sm {
+    min-height: var(--ctl-h-sm);
+  }
+  /* 手指点的勾选框要大一档，15px 按不准；仍是正方形，与桌面同一形状 */
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 20px;
+    height: 20px;
+  }
+  textarea {
+    font-size: 16px; /* iOS Safari 小于 16px 的输入框聚焦会自动放大页面 */
+  }
+}
+
+/* 窄屏撑破页面的通常是「长内容 + 不换行」，把横向滚动限制在明确的容器里，
+   而不是给 html/body 加 overflow-x:hidden —— 那会让侧栏的 position:sticky 失效 */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap > table {
+  min-width: 100%;
+}
+/* 列数多的表在窄屏上不靠压缩列宽，而是给一个横向滚动的最小宽度，
+   具体数值由各页在 scoped 样式里按需设定 */
+.table-wrap > table.cols-wide {
+  min-width: 720px;
+}
+
+/* 窄屏（手机与 pad 竖屏）：带 .stack 的表不再横向滑动 —— 一条记录变成一张小卡，
+   每个字段一行、左边是列名（列名写在各 td 的 data-label 上）。
+   站主第 4/6/7/8 条：「可以左右滑动」就是要消灭的东西，项目显示成两行三行的多行列表卡片。
+   阈值算法：卡片表的最小可用宽度 = .cols-wide 的 720px，而卡片内宽 = 视口 - 侧栏(216)
+   - 主区内边距(58) - 卡片内边距(38)，即视口要 ≥1032 才排得下横表；取 1080 留一点余量，
+   这样 1024（iPad Pro 竖屏、也是窄窗口）一律走卡片。 */
+@media (max-width: 1080px) {
+  .table-wrap:has(> table.stack) {
+    overflow-x: visible;
+  }
+  /* 上面那条 .cols-wide 的 720px 最小宽度是给横向滚动用的，改成卡片后必须撤掉，
+     否则表还是 720 宽，整页跟着横向溢出 */
+  .table-wrap > table.stack {
+    min-width: 0;
+  }
+  table.stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  table.stack,
+  table.stack tbody,
+  table.stack tr,
+  table.stack td {
+    display: block;
+    width: auto;
+    min-width: 0;
+  }
+  table.stack tr {
+    margin: 0 0 0.55rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--panel);
+  }
+  table.stack td {
+    display: grid;
+    /* 列名格按「最长列名四个字」留宽（第八轮第 1 条：以前 5.4em 是按六字留的，
+       两字的「标题」「状态」右边白空 50 多 px，值那一列被挤窄）。列名一律压到四字内。
+       用 rem 不用 em：等宽/小字号那些格用 em 会算出更窄的一列，同一张卡里值对不齐。 */
+    grid-template-columns: 3.7rem minmax(0, 1fr);
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.14rem 0;
+    border: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  table.stack td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 0.74rem;
+    white-space: nowrap;
+  }
+  table.stack td:not([data-label])::before {
+    content: none;
+  }
+  /* 桌面表里那些 max-width 是防撑破列用的；改成卡片后整格都是它的宽度，再按老上限
+     切就是「右边空一大片、字却被截了」（第八轮第 2 条）。收到 100% 而不是 none：
+     既放开死上限，又保证任何元素不会宽过这一格。 */
+  table.stack td[class],
+  table.stack td [class] {
+    max-width: 100%;
+  }
+  /* 卡片竖向有空间，这些纯文字格直接折行显示全，不再单行省略
+     （评论审核那条正文格不算：它有自己的「展开/收起」，见 spam 页） */
+  table.stack td.clip,
+  table.stack td.author,
+  table.stack td.reason,
+  table.stack td .nick,
+  table.stack td .tag {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  /* 评论审核那一格保留「展开/收起」，但 320px 的死上限在卡片里同样会留一大片空白 */
+  table.stack td.content-cell .clip {
+    max-width: 100%;
+  }
+  /* 一个格里有不止一个元素（作者名 + 邮箱、正文 + 展开按钮）时，自动排布会把第二个
+     塞回左边那列列名底下 —— 全部钉在右列，纵向排。 */
+  table.stack td:not(.ops):not(.acts) > * {
+    grid-column: 2;
+    /* 网格项默认被拉满整列：状态徽章、邮箱这类本来一行的东西会撑成一条通栏色块，
+       按内容收回来（fit-content 仍然不超过列宽，长文本照旧折行） */
+    justify-self: start;
+  }
+  /* 操作按钮那一格不需要列名，整行横向排开（不写 flex 的话一格一个按钮，竖着排成一列） */
+  table.stack td.ops,
+  table.stack td.acts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    padding-top: 0.4rem;
+  }
+  /* 跨整行的格子（展开的详情、投稿编辑抽屉、核验表单）不是「列名 + 值」那种一行一项，
+     跟着排会整块被推到 3.7rem 的列名位右边 —— 站主图1/图2 的「左边空、右边挤」就是这个。
+     它们回到普通块级，自己按自己的栅格铺满整行。 */
+  table.stack td[colspan] {
+    display: block;
+    /* 光改 display 还不够：这一格身上还留着上一句的 grid-template-columns 与
+       「子元素一律钉在第二列、按内容收宽」，抽屉里的表单就被挤成半宽。整组清掉。 */
+    grid-template-columns: none;
+  }
+  table.stack td[colspan]:not(.ops):not(.acts) > * {
+    grid-column: auto;
+    justify-self: auto;
+  }
+}
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  height: auto;
+}
+input,
+select,
+textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+.card,
+.box {
+  min-width: 0;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::selection {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.6rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+h2 {
+  font-size: 1.14rem;
+}
+h3 {
+  font-size: 0.98rem;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--accent-2);
+}
+/* 写在句子里的链接不能只靠颜色区分（axe 的 link-in-text-block，也是色弱用户的实际障碍）：
+   段落/列表/表格里的链接一律带下划线；按钮式链接（.linkbtn、导航、标签）不在这些容器里，不受影响。 */
+p a,
+li a,
+td a,
+.small a,
+.muted a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button {
+  font: inherit;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--fg);
+  border-radius: var(--radius-sm);
+  padding: 0.42rem 0.95rem;
+  cursor: pointer;
+  box-shadow: 0 1px 1px rgba(16, 24, 40, 0.03);
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  box-shadow: 0 1px 2px rgba(79, 70, 229, 0.25);
+}
+button.primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: var(--accent-fg);
+}
+button.danger {
+  color: var(--bad);
+  border-color: var(--bad-border);
+}
+button.sm {
+  padding: 0.18rem 0.6rem;
+  font-size: 0.82rem;
+}
+/* 同一行里的按钮等高：.sm 只是字号小一档，不再矮一截。
+   站主第 13 条「功能框横向高度一致」—— 以前一行里「重新读取」(30) 挨着「保存」(34)，
+   上下边线对不齐，整条工具栏看着就是散的。
+   用 min-height 而不是 height：卡片式按钮（首页布局那两格，里面是两行说明文字）
+   被写死高度后文字会溢出到自己的框外面，窄屏上叠成一片（站主第 9 条）。 */
+.row > button,
+.row > button.sm {
+  min-height: var(--ctl-btn);
+}
+/* 次要操作也要看得见：纯文字按钮在深色下几乎消失，统一成浅底描边 */
+button.ghost {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--fg);
+}
+button.ghost:hover {
+  background: var(--panel-2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.46rem 0.65rem;
+  background: var(--panel);
+  transition: border-color 0.15s ease;
+}
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent);
+  /* 勾选框全站必须一个尺寸：Chromium 的复选框跟着 font-size 伸缩，
+     而各页标签字号不完全一样 —— 实测别的页 13×13、设置页 16×16。写死才一致。 */
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+/* 文件选择框：原生那枚按钮在深色下是一块死灰，跟周围控件完全不搭。
+   统一画成和 button.sm 一样的描边按钮，选完的文件名沿用输入框底色。 */
+input[type='file'] {
+  padding: 0.3rem 0.4rem;
+  background: var(--panel-2);
+  /* 与同排其它输入框同高，别比人家出一截（备份页「图片」那一节实测 42 vs 36） */
+  height: var(--ctl-h);
+}
+input[type='file']::file-selector-button {
+  font: inherit;
+  min-height: 30px;
+  margin-right: 0.55rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+}
+input[type='file']::file-selector-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* 控件统一高度：顶部工具栏里 select 与按钮不再一高一低 */
+input:not([type='checkbox']):not([type='radio']),
+select {
+  min-height: var(--ctl-h);
+}
+button {
+  min-height: var(--ctl-btn);
+}
+button.sm {
+  min-height: var(--ctl-h-sm);
+}
+select {
+  padding-right: 1.8rem;
+}
+option {
+  background: var(--panel);
+  color: var(--fg);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 3px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+textarea {
+  resize: vertical;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: var(--card-pad);
+}
+
+.muted {
+  color: var(--muted);
+}
+.muted.small {
+  margin-left: 0.35rem;
+}
+.err {
+  color: var(--bad);
+  font-size: 0.85rem;
+}
+.ok {
+  color: var(--good);
+  font-size: 0.85rem;
+}
+.warn {
+  color: var(--warn);
+  font-size: 0.85rem;
+}
+
+.row {
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* 页头右侧的操作条：select / input / button 统一高度，不再一高一低 */
+.head .row > button,
+.head .row > select,
+.head .row > input {
+  height: var(--ctl-btn);
+  min-height: var(--ctl-btn);
+}
+.spread {
+  justify-content: space-between;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+th {
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+/* 邮箱、URL 这类长串在没有空格可断时会顶破单元格，允许它们按需断行 */
+td {
+  overflow-wrap: break-word;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.badge.pending {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.badge.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.badge.good {
+  background: var(--good-soft);
+  color: var(--good);
+}
+
+/* 只给读屏的标题：后台每一页的可见标题都是 <h2>，整页没有 <h1> 时读屏用户
+   的「跳到标题」列表是空的。clip 那套写法是 WCAG 推荐的，不用 display:none
+   （那样读屏也读不到），也不用 position:absolute 单打独斗（会被父级 overflow 裁掉）。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

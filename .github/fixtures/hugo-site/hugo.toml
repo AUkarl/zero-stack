@@ -1,0 +1,34 @@
+# ============================================================
+# hugo.toml — CI 用的最小内容仓库
+# ============================================================
+#
+# 这份 fixture 只为一条断言存在：评论反垃圾规则文件必须待在 Hugo 完全不碰的
+# .zero/ 下（口径见 packages/api/src/services/moderation.ts 的 SPAM_PATTERN_FILE）。
+# 配置照 scripts/create-site.ts 生成的那一份抄 —— 尤其 [languages.zh] 的 contentDir
+# 与 defaultContentLanguageInSubdir，这两条一改测的就不是本站的构建方式了。
+
+baseURL = "https://example.com/"
+title = "反垃圾规则位置断言"
+theme = "zero"
+locale = "zh-CN"
+defaultContentLanguage = "zh"
+defaultContentLanguageInSubdir = false
+hasCJKLanguage = true
+
+# 内容一律放 content/zh/ 下，靠这一段映射成 /posts/；
+# 抹平这层 zh，Hugo 就把 content/zh/ 当成一个叫「zh」的栏目。
+[languages]
+  [languages.zh]
+    label = "中文"
+    contentDir = "content/zh"
+    weight = 1
+
+# 主题的署名要点进 /author/<标识>/，这条必须有；Hugo 不读主题里的 [taxonomies]。
+[taxonomies]
+  author = "author"
+
+[markup]
+  [markup.highlight]
+    noClasses = false
+  [markup.goldmark.renderer]
+    unsafe = true

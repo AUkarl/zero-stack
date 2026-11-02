@@ -1,0 +1,1385 @@
+<script lang="ts">
+  import { flash } from '#lib/toast.svelte';
+  import { beforeNavigate } from '$app/navigation';
+  import { get, post, del, purgeNote, healthBroken, type BuildHealth, type PurgeOut } from '#lib/api';
+  import MarkdownEditor from '#lib/MarkdownEditor.svelte';
+  import { splitFrontMatter } from '#lib/markdown';
+  import { assetUrl, frontUrl } from '#lib/session.svelte';
+  import MediaPicker from './MediaPicker.svelte';
+  import ShortcodeBar from './ShortcodeBar.svelte';
+  import type { Shortcode } from './_shortcodes';
+  import {
+    canonSlug,
+    composeFile,
+    emptyForm,
+    fromDateInput,
+    formFromDoc,
+    frontFromForm,
+    nowInput,
+    parseFront,
+    type FrontDoc,
+    type PostForm,
+  } from './_frontmatter';
+  import {
+    clearLegacyDrafts,
+    deleteDraft,
+    draftOf,
+    fetchDraft,
+    formatSavedAt,
+    legacyDrafts,
+    loadDrafts,
+    saveDraft,
+    upsertDraft,
+    type Draft,
+    type DraftMeta,
+  } from './_drafts';
+
+  interface Entry {
+    name: string;
+    path: string;
+    type: 'file' | 'dir';
+    size?: number;
+  }
+
+  let contentDir = $state('content');
+  let dir = $state('content');
+  let entries = $state<Entry[]>([]);
+  let langDirs = $state<string[]>([]);
+
+  let file = $state('');
+  let doc = $state<FrontDoc>(parseFront(''));
+  let form = $state<PostForm>(emptyForm());
+  let baseForm = $state<PostForm>(emptyForm());
+  let body = $state('');
+  let baseBody = $state('');
+  let sha = $state('');
+  /** 编辑器身份代号：切换/新建/删除时自增，迟到的异步响应不得覆盖新编辑器 */
+  let editorEpoch = $state(0);
+
+  const dirty = $derived(JSON.stringify(form) !== JSON.stringify(baseForm) || body !== baseBody);
+
+  /* ---------------- 本地暂存队列：「保存本地」→ 右上角「保存到 Git」 ---------------- */
+
+  /** 草稿箱：服务端（D1）只回元数据，正文在推送 / 打开时按需取 */
+  let drafts = $state<DraftMeta[]>([]);
+  let showDrafts = $state(false);
+  let pushing = $state(false);
+  /** 旧版本存在浏览器里的草稿，提示导入一次 */
+  let legacy = $state<Draft[]>([]);
+  /** 推送结果里没成功的部分（冲突 / 失败），列在暂存面板里，改完可以再推 */
+  let pushProblems = $state<{ path: string; error: string }[]>([]);
+  /**
+   * 本地后端的构建体检失败：这一条必须常驻，不能用那条 6 秒就消失的 notice。
+   * 「保存成功但站点构建挂了」是后台以前完全看不见的失败（台架 F-01 / O-06）：
+   * 一篇 front matter 日期写坏 = Hugo 整站失败，前台停在上一版，而每笔保存都回「已保存」。
+   * 线上部署跑不到体检（Worker 起不了子进程），这个状态就一直是 null，界面不会多出一行噪音。
+   */
+  let buildBroken = $state<{ errors: string[]; note: string } | null>(null);
+
+  async function loadPostMeta() {
+    try {
+      const d = await get<{ data: { path: string; title?: string; draft?: boolean; hidden?: boolean }[] }>('/api/admin/posts?all=1');
+      const map: Record<string, PostMeta> = {};
+      for (const p of d.data ?? []) map[p.path] = { title: p.title ?? '', draft: Boolean(p.draft), hidden: Boolean(p.hidden) };
+      postMeta = map;
+    } catch {
+      postMeta = {};
+    }
+  }
+
+  /** 搜索时把整棵 content 树列一遍：目录没展开时 entries 里只有顶层，直接过滤会漏文章 */
+  let searchEntries = $state<Entry[] | null>(null);
+  let searchTreeLoaded = false;
+  let searchBusy = $state(false);
+  let searchError = $state('');
+
+  async function loadSearchTree(): Promise<Entry[]> {
+    const out: Entry[] = [];
+    const queue = [contentDir];
+    const seen = new Set<string>();
+    while (queue.length) {
+      const path = queue.shift()!;
+      if (seen.has(path)) continue;
+      seen.add(path);
+      const d = await get<{ data: Entry[] }>(`/api/admin/content?path=${encodeURIComponent(path)}`);
+      for (const e of d.data || []) {
+        if (isMomentPath(e.path)) continue;
+        if (e.type === 'dir') queue.push(e.path);
+        else out.push(e);
+      }
+    }
+    return out;
+  }
+
+  $effect(() => {
+    const q = fileQuery.trim();
+    if (!q) {
+      searchError = '';
+      searchBusy = false;
+      return;
+    }
+    /* 整棵树只在第一次搜索时列一遍：线上每个目录都是一次 GitHub Contents 请求，
+       每敲一个字都重走一遍既慢又吃限额；清空搜索词不丢缓存，本次进页面内后续搜索直接复用。 */
+    if (searchTreeLoaded) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      searchBusy = true;
+      searchError = '';
+      loadSearchTree()
+        .then((list) => {
+          if (!cancelled) {
+            searchEntries = list;
+            searchTreeLoaded = true;
+          }
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          searchError = e instanceof Error ? e.message : '搜索失败';
+        })
+        .finally(() => {
+          if (!cancelled) searchBusy = false;
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  });
+
+  /** 过滤后的文件列表：无搜索词时只显示当前目录；搜索时用整棵树，结果显示相对路径 */
+  const shownEntries = $derived.by(() => {
+    const q = fileQuery.trim().toLowerCase();
+    if (!q) return entries;
+    const rel = (p: string) => (p.startsWith(`${contentDir}/`) ? p.slice(contentDir.length + 1) : p);
+    return (searchEntries ?? [])
+      .filter((e) => {
+        const meta = postMeta[e.path];
+        return (e.name + ' ' + e.path + ' ' + (meta?.title ?? '')).toLowerCase().includes(q);
+      })
+      .map((e) => ({ ...e, name: rel(e.path) }));
+  });
+
+  const queued = $derived(drafts.length);
+  /** 有队列就推队列；没队列就只推正在编辑的这一篇（含未「保存本地」的当前改动） */
+  const pushTargets = $derived.by((): (DraftMeta | Draft)[] => {
+    const list: (DraftMeta | Draft)[] = drafts.slice();
+    if (file && dirty) {
+      const mine = localDraft();
+      if (mine) {
+        const i = list.findIndex((x) => x.path === mine.path);
+        if (i >= 0) list[i] = mine;
+        else list.push(mine);
+      }
+    }
+    return list;
+  });
+
+  /** 当前编辑器内容 → 一条暂存记录；标题没填就没有内容可存（返回 null，调用方给提示） */
+  function localDraft(): Draft | null {
+    if (!file || !form.title.trim()) return null;
+    let front: string;
+    try {
+      front = frontFromForm(form, doc);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'front matter 拼装失败';
+      return null;
+    }
+    return {
+      path: file,
+      title: form.title.trim(),
+      front: frontPayload(form),
+      body,
+      content: composeFile(front, body),
+      sha,
+      notifySubscribers,
+      savedAt: Date.now(),
+      bytes: body.length,
+    };
+  }
+
+  /** 把旧版本留在浏览器里的草稿一次性搬进草稿箱，成功后清掉 localStorage 那份 */
+  async function importLegacy() {
+    if (!legacy.length) return;
+    let ok = 0;
+    for (const d of legacy) {
+      try {
+        await saveDraft(d);
+        ok++;
+      } catch {
+        /* 单篇失败就留着，下次再导 */
+      }
+    }
+    try {
+      drafts = await loadDrafts();
+    } catch {
+      /* 列表没刷出来也不影响已导入的 */
+    }
+    legacy = legacy.filter((d) => !drafts.some((x) => x.path === d.path));
+    if (!legacy.length) clearLegacyDrafts();
+    notice = `已导入 ${ok} 篇到草稿箱${legacy.length ? `，还有 ${legacy.length} 篇没导上` : ''}`;
+    setTimeout(() => (notice = ''), 5000);
+  }
+
+  /** 存草稿：写进草稿箱（同一篇覆盖同一行），不碰仓库 */
+  async function saveLocal() {
+    if (!file) {
+      error = '还没有可暂存的文件：左列点开一篇，或先「新建文章」；若刚才读取报错，见下方错误信息';
+      return;
+    }
+    const d = localDraft();
+    if (!d) {
+      error = '标题必填（暂存也要有标题，不然不知道存成哪篇）';
+      return;
+    }
+    error = '';
+    try {
+      const meta = await saveDraft(d);
+      drafts = upsertDraft(drafts, meta);
+      legacy = legacy.filter((x) => x.path !== d.path);
+    } catch (e) {
+      error = `草稿没存上：${e instanceof Error ? e.message : '网络错误'}`;
+      return;
+    }
+    // 当前内容成为新的基准：「未保存」指的是没进仓库，存进草稿箱就不算丢改动
+    baseForm = { ...form };
+    baseBody = body;
+    doc = parseFront(frontFromForm(form, doc));
+    notice = '已存进草稿箱，点右上角「保存到 Git」才会进仓库';
+    setTimeout(() => (notice = ''), 4000);
+  }
+
+  /** 右上角「保存到 Git」：整批一次提交，冲突的那篇跳过、留在队列里 */
+  async function pushToGit() {
+    const editing = file;
+    const epoch = editorEpoch;
+    const targets = pushTargets;
+    if (!targets.length) {
+      error = '没有待推送的内容：先编辑一篇，或点「存草稿」';
+      return;
+    }
+    /* 保存期间的编辑不能被收尾时的实时 form/body 覆盖掉：本次提交的是下面的快照，
+       收尾时基线也只回到这份快照；实时内容若已变，dirty 会继续保持为真。 */
+    const savedForm: PostForm = $state.snapshot(form);
+    const savedBody = body;
+    pushing = true;
+    error = '';
+    pushProblems = [];
+    buildBroken = null;
+    try {
+      /* 草稿箱里只有元数据：推之前把正文取回来（当前正在编辑的那篇就是完整对象，直接用） */
+      const full: Draft[] = [];
+      for (const t of targets) full.push('content' in t ? (t as Draft) : await fetchDraft(t.path));
+      const d = await post<{
+        data: {
+          total: number;
+          done: number;
+          message: string;
+          results: { path: string; ok: boolean; sha?: string; error?: string }[];
+          buildHealth?: BuildHealth | null;
+        };
+      }>('/api/admin/content/batch', {
+        files: full.map((t) => ({
+          path: t.path,
+          front: t.front,
+          body: t.body,
+          content: t.content,
+          ...(t.sha ? { sha: t.sha } : {}),
+          notifySubscribers: t.notifySubscribers,
+          message: `zero-cms: update ${t.path}`,
+        })),
+      });
+      const okPaths = new Set(d.data.results.filter((r) => r.ok).map((r) => r.path));
+      const failed = d.data.results.filter((r) => !r.ok);
+      pushProblems = failed.map((r) => ({ path: r.path, error: r.error ?? '未知原因' }));
+      const h = d.data.buildHealth;
+      if (healthBroken(h)) buildBroken = { errors: h.errors ?? [], note: h.note ?? '' };
+      for (const p of okPaths) {
+        try {
+          await deleteDraft(p);
+        } catch {
+          /* 推成功了但没删掉：下次还会在草稿箱里，再推一次是幂等的 */
+        }
+      }
+      drafts = drafts.filter((x) => !okPaths.has(x.path));
+      void loadPostMeta();
+      // 正在编辑的这篇推上去了：把基准与 sha 对齐，否则会一直显示未保存 / 下次必冲突
+      const mine = d.data.results.find((r) => r.ok && r.path === editing);
+      if (mine && epoch === editorEpoch && file === editing) {
+        if (mine.sha) sha = mine.sha;
+        /* 只把基线推进到本次真正写进仓库的快照；推送期间的新改动保持未保存 */
+        baseForm = savedForm;
+        baseBody = savedBody;
+      }
+      const changedWhileSaving =
+        epoch === editorEpoch &&
+        file === editing &&
+        (JSON.stringify(form) !== JSON.stringify(savedForm) || body !== savedBody);
+      notice =
+        d.data.message +
+        (failed.length ? `，${failed.length} 篇留在本地暂存` : '') +
+        (changedWhileSaving ? '；保存期间的新改动尚未写入，请再点一次「保存到 Git」' : '');
+      setTimeout(() => (notice = ''), 6000);
+      if (failed.length) showDrafts = true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : '批量提交失败';
+    } finally {
+      pushing = false;
+    }
+  }
+
+  async function dropDraft(path: string) {
+    try {
+      await deleteDraft(path);
+      drafts = drafts.filter((x) => x.path !== path);
+      pushProblems = pushProblems.filter((p) => p.path !== path);
+    } catch (e) {
+      error = `草稿没删掉：${e instanceof Error ? e.message : '网络错误'}`;
+    }
+  }
+
+  /** 从队列里打开某一篇：先落好当前这篇的暂存，别把正在编辑的内容丢了 */
+  async function openDraft(d: DraftMeta) {
+    const seq = ++editorEpoch;
+    loading = false;
+    if (file && dirty) await saveLocal();
+    try {
+      const res = await get<{ data: { exists: boolean; content: string; sha: string } }>(
+        `/api/admin/content/file?path=${encodeURIComponent(d.path)}`,
+      );
+      if (seq !== editorEpoch) return;
+      const parts = splitFrontMatter(res.data.content);
+      file = d.path;
+      doc = parseFront(parts.front);
+      form = formFromDoc(doc);
+      baseForm = { ...form };
+      body = parts.body;
+      baseBody = parts.body;
+      sha = res.data.sha;
+      const queuedDraft = draftOf(drafts, d.path);
+      if (queuedDraft) {
+        const full = await fetchDraft(d.path);
+        if (seq !== editorEpoch) return;
+        const qp = splitFrontMatter(full.content);
+        doc = parseFront(qp.front);
+        form = formFromDoc(doc);
+        body = qp.body;
+        notice = '这篇用的是本地暂存的内容（还没推给仓库）';
+        setTimeout(() => (notice = ''), 5000);
+      } else {
+        notice = '';
+      }
+      baseForm = { ...form };
+      baseBody = body;
+    } catch (e) {
+      error = e instanceof Error ? e.message : '读取失败';
+    }
+  }
+
+  const pathPreview = $derived.by(() => {
+    /** 文件名口径与投稿同一条（`lib/postName.ts`）：填了按填的，没填用服务端数出来的「今天 + 当天序号」 */
+    const filled = canonSlug(newSlug);
+    if (filled) return `${newDir}/${filled}.md`;
+    return autoName ? `${newDir}/${autoName}.md` : `${newDir}/（读不到自动名，请自己填）.md`;
+  });
+
+  let loading = $state(false);
+  let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  let notice = $state('');
+
+  // 顶部：发布后群发订阅
+  let notifySubscribers = $state(false);
+
+  // 新文章
+  let showNew = $state(false);
+  /** 左栏目录：打开一篇文章后自动收起，把宽度让给编辑区；顶部「目录」可以再展开 */
+  let listOpen = $state(true);
+  /** 文件列表的过滤词：文件名、路径、标题都能搜 */
+  let fileQuery = $state('');
+  /** 每篇文章的状态（草稿 / 隐藏），来自 /api/admin/posts；取不到就只有文件名可看 */
+  type PostMeta = { title: string; draft: boolean; hidden: boolean };
+  let postMeta = $state<Record<string, PostMeta>>({});
+  let newTitle = $state('');
+  let newSlug = $state('');
+  let newDir = $state('content/zh/posts');
+  /** 后台「设置 → 内容仓库 → 文章目录」的值；非空时新建文章默认落这里，不再猜语言段 */
+  let postsDirCfg = $state('');
+  /** 服务端数出来的「今天 + 当天序号」自动文件名；读不到就是空串，此时必须自己填 */
+  let autoName = $state('');
+
+  /**
+   * 向服务端要「今天这篇该叫什么」。序号是从仓库里那一天已有的文件名数出来的，
+   * 只有服务端数得了 —— 让浏览器自己拼日期就会出现「投稿那边是 20261021001、
+   * 后台这边是 2026-10-21-标题」两种形状并存（P3-7 站长定的口径：两处一致）。
+   */
+  async function loadAutoName() {
+    try {
+      const d = await get<{ data: { name: string | null } }>(`/api/admin/content/next-name?dir=${encodeURIComponent(newDir)}`);
+      autoName = d.data.name ?? '';
+    } catch {
+      autoName = '';
+    }
+  }
+
+  $effect(() => {
+    if (!showNew) return;
+    newDir;
+    void loadAutoName();
+  });
+
+  // 分类 / 标签输入
+  let catInput = $state('');  let tagInput = $state('');
+
+  // 封面图选择器
+  let showCover = $state(false);
+  // 正文「插入媒体」面板
+  let showInsertMedia = $state(false);
+
+  /* ---------------- 光标跟踪：短代码插到光标处，不改动 MarkdownEditor 本体 ---------------- */
+
+  let area = $state<HTMLTextAreaElement | null>(null);
+  let selStart = $state(0);
+  let selEnd = $state(0);
+
+  function capture(e: MouseEvent | KeyboardEvent) {
+    const t = e.target;
+    if (t instanceof HTMLTextAreaElement) {
+      area = t;
+      selStart = t.selectionStart;
+      selEnd = t.selectionEnd;
+    }
+  }
+
+  /** 当前活着的正文框：优先按 id 取（不依赖「先点过正文」才有的引用），拿不到才退回上一步的位置 */
+  /* 没存进仓库的改动，离开就没了：关标签页 / 刷新时让浏览器拦一下，站内跳转再问一句 */
+  $effect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  });
+  beforeNavigate((nav) => {
+    if (dirty && !confirm('这篇文章还有没保存的改动，确定离开？')) nav.cancel();
+  });
+
+  function bodyArea(): HTMLTextAreaElement | null {
+    const el = document.getElementById('bodyEditor');
+    if (el instanceof HTMLTextAreaElement && el.isConnected) return el;
+    return area && area.isConnected ? area : null;
+  }
+
+  function insertShortcode(sc: Shortcode) {
+    const live = bodyArea();
+    const from = live ? (document.activeElement === live ? live.selectionStart : selStart) : body.length;
+    const to = live ? (document.activeElement === live ? live.selectionEnd : selEnd) : body.length;
+    const scrollTop = live?.scrollTop ?? 0;
+    body = body.slice(0, from) + sc.text + body.slice(to);
+    const i = sc.pick ? sc.text.indexOf(sc.pick) : -1;
+    queueMicrotask(() => {
+      const el = live ?? area;
+      if (!el || !el.isConnected) return;
+      el.focus({ preventScroll: true });
+      const a = i >= 0 ? from + i : from + sc.text.length;
+      const b = i >= 0 ? a + sc.pick.length : a;
+      el.setSelectionRange(a, b);
+      el.scrollTop = scrollTop;
+      selStart = a;
+      selEnd = b;
+    });
+  }
+
+  /** 在光标处插入一段文本（图片 ![]()、音视频按短代码），并把光标停在插入内容之后 */
+  function insertFragment(text: string) {
+    const live = bodyArea();
+    const from = live ? (document.activeElement === live ? live.selectionStart : selStart) : body.length;
+    const to = live ? (document.activeElement === live ? live.selectionEnd : selEnd) : body.length;
+    const scrollTop = live?.scrollTop ?? 0;
+    body = body.slice(0, from) + text + body.slice(to);
+    queueMicrotask(() => {
+      const el = live ?? area;
+      if (!el || !el.isConnected) return;
+      el.focus({ preventScroll: true });
+      const caret = from + text.length;
+      el.setSelectionRange(caret, caret);
+      el.scrollTop = scrollTop;
+      selStart = caret;
+      selEnd = caret;
+    });
+  }
+
+  const IMG_RE = /\.(jpe?g|png|gif|webp|avif|svg)$/i;
+  const AUDIO_RE = /\.(mp3|wav|ogg|m4a|aac|flac)$/i;
+  const VIDEO_RE = /\.(mp4|webm|mov|m4v)$/i;
+
+  /** 媒体库选中的地址按类型转成 Markdown 片段：图片 ![](url)，音视频走主题短代码 */
+  function insertMedia(url: string) {
+    const u = url.trim();
+    if (!u) return;
+    let frag: string;
+    if (VIDEO_RE.test(u)) frag = `{{< video src="${u}" >}}\n`;
+    else if (AUDIO_RE.test(u)) frag = `{{< audio src="${u}" >}}\n`;
+    else if (IMG_RE.test(u)) frag = `![图片描述](${u})\n`;
+    else frag = `[${u.split('/').pop() || '文件'}](${u})\n`;
+    insertFragment(frag);
+  }
+
+  /* ---------------- 目录：只看文章，时刻目录整体屏蔽 ---------------- */
+
+  /** 时刻目录（content/**\/moments/…）不属于文章页，浏览与新建都不给入口 */
+  function isMomentPath(p: string): boolean {
+    return p.split('/').includes('moments');
+  }
+
+  async function browse(path: string) {
+    loading = true;
+    error = '';
+    try {
+      const d = await get<{ data: Entry[] }>(`/api/admin/content?path=${encodeURIComponent(path)}`);
+      entries = (d.data || []).filter((e) => !isMomentPath(e.path));
+      dir = path;
+      if (path === contentDir) {
+        langDirs = entries.filter((e) => e.type === 'dir').map((e) => e.name);
+        // 配了「文章目录」就以它为准，不再按语言段猜（扁平布局的站点没有 zh 这一层）
+        if (!postsDirCfg && !langDirs.includes(newDir.split('/')[1] ?? '')) newDir = `${contentDir}/zh/posts`;
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : '无法读取内容目录，请确认已在设置页配置 Git 仓库并部署 GITHUB_TOKEN';
+      entries = [];
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function openFile(entry: Entry) {
+    if (entry.type === 'dir') {
+      if (file && dirty && !confirm('当前文章有未保存的改动，确定离开？想留着就先点「保存本地」。')) return;
+      void browse(entry.path);
+      return;
+    }
+    if (dirty && !confirm('当前文章有未保存的改动。想留着就取消后点「保存本地」，确定则丢弃这些改动。')) return;
+    const seq = ++editorEpoch;
+    loading = true;
+    error = '';
+    try {
+      const d = await get<{ data: { exists: boolean; content: string; sha: string } }>(
+        `/api/admin/content/file?path=${encodeURIComponent(entry.path)}`,
+      );
+      if (seq !== editorEpoch) return;
+      const parts = splitFrontMatter(d.data.content);
+      file = entry.path;
+      doc = parseFront(parts.front);
+      form = formFromDoc(doc);
+      baseForm = { ...form };
+      body = parts.body;
+      baseBody = parts.body;
+      sha = d.data.sha;
+      notice = d.data.exists ? '' : '（新文件，保存后写入仓库）';
+      listOpen = false;
+    } catch (e) {
+      if (seq === editorEpoch) error = e instanceof Error ? e.message : '读取文件失败';
+    } finally {
+      if (seq === editorEpoch) loading = false;
+    }
+  }
+
+  /** 提交给后台的结构化字段：后端按 front + body 拼 Hugo 头 */
+  function frontPayload(f: PostForm): Record<string, unknown> {
+    const weight = String(f.weight ?? '').trim();
+    const payload: Record<string, unknown> = {
+      title: f.title.trim(),
+      subtitle: f.subtitle.trim(),
+      date: fromDateInput(f.date),
+      updated: fromDateInput(f.updated),
+      summary: f.summary.trim(),
+      description: f.description.trim(),
+      categories: f.categories,
+      tags: f.tags,
+      image: f.image.trim(),
+      draft: f.draft,
+      weight: weight === '' ? null : Number(weight),
+      pinned: f.pinned ? true : null,
+      author: f.author.trim(),
+      toc: f.toc,
+      math: f.math,
+    };
+    /* 关评论才写：没这个键就是允许评论 */
+    if (!f.comments) payload.comments = false;
+    /* 「只通过链接访问」：三件一起写，接口那边会把嵌套表序列化成 YAML 块 */
+    if (f.hidden) {
+      payload.build = { list: 'never', render: 'always' };
+      payload.sitemap = { disable: true };
+      payload.robots = 'noindex, nofollow';
+    }
+    return payload;
+  }
+
+  async function removeFile() {
+    const queuedHere = draftOf(drafts, file);
+    const extra = queuedHere ? '\n这篇还在草稿箱里，删除会一并移除（否则下次「保存到 Git」会把它又推回仓库）。' : '';
+    if (!file || !confirm(`确定删除 ${file}？${extra}`)) return;
+    editorEpoch++;
+    try {
+      const res = await del<{ data: { purge: PurgeOut | null } }>(
+        `/api/admin/content/file?path=${encodeURIComponent(file)}`,
+      );
+      if (queuedHere) {
+        drafts = drafts.filter((x) => x.path !== queuedHere.path);
+        void deleteDraft(queuedHere.path).catch(() => undefined);
+      }
+      notice = `文件已删除${purgeNote(res?.data?.purge)}`;
+      file = '';
+      body = '';
+      baseBody = '';
+      form = emptyForm();
+      baseForm = emptyForm();
+      void browse(dir);
+    } catch (e) {
+      error = e instanceof Error ? e.message : '删除失败';
+    }
+  }
+
+  async function newPost() {
+    if (!newTitle.trim()) {
+      error = '标题必填';
+      return;
+    }
+    if (isMomentPath(newDir)) {
+      error = '文章页只写 posts 目录';
+      return;
+    }
+    /** 填了文件名用填的；没填用服务端给的「今天 + 当天序号」，与投稿链路同一个口径 */
+    const filled = canonSlug(newSlug);
+    let slug = filled || autoName;
+    if (!slug) {
+      error = '读不到自动文件名（内容仓库列不出来），请在「文件名」框里自己填一个';
+      return;
+    }
+    /**
+     * 撞名保护：自动名是服务端按「仓库里今天已有几个」数出来的，
+     * 但本地暂存里那些**还没推上去**的稿子仓库看不见，同一天连建两篇就会拿到同一个名字，
+     * 而写接口对不带 sha 的新文件是直接覆盖 —— 所以在这儿自己让号。
+     * 作者手填的名字不自动让号（那是他有意起的），撞了就明确让他换一个。
+     */
+    /* 列表停留在 content 时 entries 只有 zh，看不到 posts 里的旧文件；创建前必须查目标目录 */
+    let targetEntries: Entry[] = [];
+    try {
+      const d = await get<{ data: Entry[] }>(`/api/admin/content?path=${encodeURIComponent(newDir)}`);
+      targetEntries = d.data ?? [];
+    } catch (e) {
+      error = `读取目标目录失败：${e instanceof Error ? e.message : '请求出错'}`;
+      return;
+    }
+    const taken = (p: string) =>
+      drafts.some((d) => d.path === p) || entries.some((e) => e.path === p) || targetEntries.some((e) => e.path === p);
+    let candidate = `${newDir}/${slug}.md`;
+    if (taken(candidate)) {
+      if (filled) {
+        error = `${candidate} 已经存在（或在本地暂存里等着推），换一个文件名再创建`;
+        return;
+      }
+      const day = slug.slice(0, 8);
+      let seq = Number(slug.slice(8)) + 1;
+      while (seq < 10000 && taken(candidate)) candidate = `${newDir}/${day}${String(seq++).padStart(3, '0')}.md`;
+      slug = candidate.split('/').pop()!.replace(/\.md$/, '');
+    }
+    const now = nowInput();
+    editorEpoch++;
+    loading = false;
+    file = candidate;
+    doc = parseFront('');
+    form = { ...emptyForm(), title: newTitle.trim(), date: now, updated: now };
+    baseForm = emptyForm();
+    body = '正文从这里开始。站内引用另一篇文章直接写 `[[slug]]`。\n';
+    baseBody = '';
+    sha = '';
+    notice = '新文件，保存后提交到仓库';
+    showNew = false;
+    error = '';
+  }
+
+  function addCat(raw: string) {
+    const v = raw.trim();
+    if (!v || form.categories.includes(v)) {
+      catInput = '';
+      return;
+    }
+    form.categories = [...form.categories, v];
+    catInput = '';
+  }
+
+  function addTag(raw: string) {
+    const v = raw.trim();
+    if (!v || form.tags.includes(v)) {
+      tagInput = '';
+      return;
+    }
+    form.tags = [...form.tags, v];
+    tagInput = '';
+  }
+
+  /** 先读配置拿内容目录，再打开目录树：只调一次，避免 $effect 反复触发 */
+  async function boot() {
+    try {
+      const d = await get<{ data: Record<string, string> }>('/api/admin/config');
+      contentDir = (d.data?.githubContentDir || 'content').replace(/\/+$/, '');
+      postsDirCfg = (d.data?.githubPostsDir || '').trim().replace(/\/+$/, '');
+    } catch {
+      contentDir = 'content';
+      postsDirCfg = '';
+    }
+    newDir = postsDirCfg || `${contentDir}/zh/posts`;
+    await browse(contentDir);
+    void loadPostMeta();
+    try {
+      drafts = await loadDrafts();
+    } catch {
+      drafts = [];
+    }
+    legacy = legacyDrafts();
+    void loadTranslate();
+  }
+
+  void boot();
+
+  const postDirs = $derived(langDirs.map((l) => `${contentDir}/${l}/posts`));
+  const crumbs = $derived(dir.split('/').filter(Boolean));
+
+  /* ---------------- 机器翻译：只出草稿，确认后才落进表单 ---------------- */
+
+  interface TrStatus {
+    provider: string;
+    model: string;
+    ready: boolean;
+    hint: string;
+    targets?: { code: string; label: string }[];
+  }
+
+  let tr = $state<TrStatus | null>(null);
+  let trBusy = $state(false);
+  let trDraft = $state('');
+  let trNote = $state('');
+  /** 编辑器里的机器翻译目标语言（默认中文），选项来自 /translate/status */
+  let trTarget = $state('zh');
+  const trTargets = $derived(tr?.targets ?? [{ code: 'zh', label: '简体中文' }]);
+  const trTargetName = $derived(trTargets.find((t) => t.code === trTarget)?.label ?? '简体中文');
+
+  async function loadTranslate() {
+    try {
+      const d = await get<{ data: TrStatus }>('/api/admin/translate/status');
+      tr = d.data;
+    } catch {
+      tr = null;
+    }
+  }
+
+  async function runTranslate() {
+    if (!body.trim()) {
+      trNote = '正文是空的，没什么可译。';
+      return;
+    }
+    trBusy = true;
+    trNote = '';
+    trDraft = '';
+    try {
+      const d = await post<{ data: { results: { ok: boolean; text: string; error?: string }[] } }>(
+        '/api/admin/translate',
+        { text: body, target: trTarget },
+      );
+      const r = d.data.results[0];
+      if (!r?.ok) trNote = r?.error || '翻译服务没返回内容';
+      else trDraft = r.text;
+    } catch (e) {
+      trNote = e instanceof Error ? e.message : '翻译失败';
+    } finally {
+      trBusy = false;
+    }
+  }
+
+  function appendDraft() {
+    body = `${body.replace(/\s+$/, '')}\n\n${trDraft}\n`;
+    trDraft = '';
+  }
+
+  function fillDescription() {
+    form.description = trDraft.replace(/\s+/g, ' ').trim().slice(0, 300);
+    trDraft = '';
+  }
+</script>
+
+<div class="row spread head">
+  <div class="row headleft">
+    <h2>文章</h2>
+    <button class="ghost sm" onclick={() => (listOpen = !listOpen)} aria-expanded={listOpen} title="展开 / 收起左侧目录">目录</button>
+    {#if file}<code class="path" title={file}>{file}</code>{/if}
+  </div>
+  <div class="row">
+    <button class="ghost" onclick={() => (showNew = !showNew)}>＋ 新文章</button>
+    <button class="ghost" onclick={() => (showDrafts = !showDrafts)} aria-expanded={showDrafts}>
+      草稿箱{queued ? ` ${queued}` : ''}
+    </button>
+    <button class="ghost sm" onclick={() => void browse(dir)} disabled={loading} title="刷新目录">{loading ? '…' : '⟳'}</button>
+    <button class="primary" onclick={() => void pushToGit()} disabled={pushing || !pushTargets.length} title="把本地暂存的文章一次全部推送到仓库；没有暂存时只推送正在编辑的这一篇">
+      {pushing ? '推送中…' : queued ? `保存到 Git（${queued}）` : '保存到 Git'}
+    </button>
+  </div>
+</div>
+
+{#if showDrafts}
+  <div class="card drafts">
+    <div class="row spread">
+      <h3>草稿箱（{queued} 篇）</h3>
+      <span class="muted small">存在服务端（登录同一账号在哪台设备都能看到），没有进内容仓库；推送成功即从这里删除。</span>
+    </div>
+    {#if legacy.length}
+      <p class="warn">
+        检测到这台浏览器里还有 {legacy.length} 篇旧版本地暂存（以前只存在浏览器里）。
+        <button class="sm" onclick={() => void importLegacy()}>导入草稿箱</button>
+      </p>
+    {/if}
+    {#if !queued}
+      <p class="muted">还没有草稿。编辑文章后点编辑器里的「存草稿」，可以一篇一篇改，最后一起推。</p>
+    {:else}
+      <div class="table-wrap">
+        <table class="stack">
+          <thead>
+            <tr><th>标题</th><th>文件</th><th>暂存于</th><th>群发</th><th></th></tr>
+          </thead>
+          <tbody>
+            {#each drafts as d (d.path)}
+              <tr>
+                <td data-label="标题">
+                  <button class="sm ghost" onclick={() => void openDraft(d)} title="用本地暂存的这份内容打开它">
+                    {d.title || '（无标题）'}
+                  </button>
+                </td>
+                <td data-label="文件" class="muted small">{d.path}</td>
+                <td data-label="暂存于" class="muted small">{formatSavedAt(d.savedAt)}</td>
+                <td data-label="群发" class="muted small">{d.notifySubscribers ? '推送后群发' : '—'}</td>
+                <td class="ops">
+                  <div class="row">
+                    {#if pushProblems.some((p) => p.path === d.path)}<span class="warn">未推上去</span>{/if}
+                    {#if d.path === file && dirty}<span class="muted small">编辑器里还有更新的改动</span>{/if}
+                    <button class="sm" onclick={() => void openDraft(d)}>打开</button>
+                    <button class="sm danger" onclick={() => dropDraft(d.path)}>移除</button>
+                  </div>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+    {#if pushProblems.length}
+      <p class="err">
+        这 {pushProblems.length} 篇没推上去，仍在暂存里：
+        {#each pushProblems as p (p.path)}<br />· {p.path} —— {p.error}{/each}
+        <br />冲突的那篇请先「打开」核对内容再推。
+      </p>
+    {/if}
+  </div>
+{/if}
+
+<div class="card topbar">
+  <label class="switch">
+    <input type="checkbox" bind:checked={notifySubscribers} />
+    <span>发布后群发订阅</span>
+  </label>
+  <span class="muted small">勾选后本次保存会推送给已确认的订阅者。</span>
+</div>
+
+{#if showNew}
+  <div class="card new">
+    <div class="row">
+      <input placeholder="标题" bind:value={newTitle} />
+      <input placeholder="文件名（选填，可中文；留空自动用「今天+序号」）" bind:value={newSlug} />
+      <select bind:value={newDir}>
+        {#each postDirs as d (d)}<option value={d}>{d}</option>{/each}
+        {#if !postDirs.includes(newDir)}<option value={newDir}>{newDir}</option>{/if}
+      </select>
+      <button class="primary" onclick={() => void newPost()}>创建</button>
+    </div>
+    <p class="muted">
+      将生成 {pathPreview}。文件名留空时按「发布日 + 序号」自动取；文章页只写 posts 目录，时刻请在「时刻」页发布。
+    </p>
+  </div>
+{/if}
+
+
+{#if buildBroken}
+  <p class="err">
+    内容已经写进仓库，但<strong>站点构建失败</strong>——前台还是上一版，这次发布的改动在页面上看不到。
+    {#if buildBroken.errors.length}
+      <br />按下面的文件改那一处，再保存一次：
+      {#each buildBroken.errors as line (line)}<br /><code>{line}</code>{/each}
+    {/if}
+    {#if buildBroken.note}<br />{buildBroken.note}{/if}
+    <br />最常见的是「发布时间」写成了 Hugo 认不了的样子（比如 <code>2026-10-25 12:00</code> 少秒）：要写 <code>2026-10-25</code> 或 <code>2026-10-25T12:00:00+08:00</code>。
+  </p>
+{/if}
+
+<div class="split" class:list-collapsed={!listOpen}>
+  <div class="card files">
+    <input class="fileq" type="search" placeholder="搜索标题 / 文件名" bind:value={fileQuery} aria-label="搜索文章" />
+    <div class="crumbs muted">
+      {#each crumbs as c, i}
+        {#if i > 0} / {/if}
+        <button class="crumb" onclick={() => void browse(crumbs.slice(0, i + 1).join('/'))}>{c}</button>
+      {/each}
+    </div>
+    {#if searchBusy}<p class="muted">正在搜索全部目录…</p>{/if}
+    {#if fileQuery && searchError && !searchBusy}<p class="err small">{searchError}</p>{/if}
+    {#if !shownEntries.length && !loading && !searchBusy && !searchError}<p class="muted">{fileQuery ? '没有匹配的文件' : '目录为空'}</p>{/if}
+    {#each shownEntries as e (e.path)}
+      <button class="entry" class:active={file === e.path} onclick={() => void openFile(e)}>
+        <span>{e.type === 'dir' ? '📁' : e.name.endsWith('.md') ? '📄' : '🗎'}</span>
+        <span class="nm">{e.name}</span>
+        {#if postMeta[e.path]?.draft}<span class="badge">草稿</span>{/if}
+        {#if postMeta[e.path]?.hidden}<span class="badge hid">隐藏</span>{/if}
+        {#if e.size}<span class="sz">{(e.size / 1024).toFixed(1)}KB</span>{/if}
+      </button>
+    {/each}
+  </div>
+
+  <div class="editor">
+    {#if file}
+      <div class="card pane">
+        <div class="row spread">
+          <span class="muted small">「存草稿」进草稿箱；右上角「保存到 Git」才会写进仓库</span>
+          <div class="row">
+            {#if dirty}<span class="warn">未保存</span>{/if}
+            {#if draftOf(drafts, file)}<span class="muted small">已在本地暂存</span>{/if}
+            <button class="sm" onclick={() => void saveLocal()} disabled={!file}>存草稿</button>
+            <button class="sm danger del" onclick={removeFile}>删除</button>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <label>标题<input bind:value={form.title} placeholder="文章标题" /></label>
+          <label>副标题<input bind:value={form.subtitle} placeholder="列表页展示的副标题，可留空" /></label>
+        </div>
+
+        <div class="grid2">
+          <label>发布时间<input type="datetime-local" bind:value={form.date} /></label>
+          <label>修改时间<input type="datetime-local" bind:value={form.updated} placeholder="留空则不写 lastmod" /></label>
+        </div>
+
+        <label>摘要（summary）<textarea rows="2" bind:value={form.summary} placeholder="主题列表页的简述，没有就留空"></textarea></label>
+        <label>描述（description）<textarea rows="2" bind:value={form.description} placeholder="SEO / OG 描述"></textarea></label>
+
+        <div class="grid2">
+          <div class="block">
+            <span class="lbl">分类（多个）</span>
+            <div class="chips">
+              {#each form.categories as c, i (c)}
+                <button class="chip on" title="点击移除" onclick={() => (form.categories = form.categories.filter((_, x) => x !== i))}>
+                  {c} ✕
+                </button>
+              {/each}
+            </div>
+            <div class="row addrow">
+              <input placeholder="回车或点添加" bind:value={catInput} onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addCat(catInput))} />
+              <button class="sm" onclick={() => addCat(catInput)}>添加分类</button>
+            </div>
+          </div>
+
+          <div class="block">
+            <span class="lbl">标签（多个）</span>
+            <div class="chips">
+              {#each form.tags as t, i (t)}
+                <button class="chip on" title="点击移除" onclick={() => (form.tags = form.tags.filter((_, x) => x !== i))}>
+                  {t} ✕
+                </button>
+              {/each}
+            </div>
+            <div class="row addrow">
+              <input placeholder="回车或点添加" bind:value={tagInput} onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addTag(tagInput))} />
+              <button class="sm" onclick={() => addTag(tagInput)}>添加标签</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="block">
+          <span class="lbl">封面图（image）</span>
+          <div class="row">
+            <input class="grow" placeholder="https://… 或从媒体库选择" bind:value={form.image} />
+            <button class="sm" onclick={() => (showCover = true)}>从媒体库选</button>
+            {#if form.image}<button class="sm ghost" onclick={() => (form.image = '')}>清除</button>{/if}
+          </div>
+          {#if form.image}<img class="cover" src={assetUrl(form.image) || form.image} alt="封面预览" loading="lazy" />{/if}
+        </div>
+
+        <div class="toggles">
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.draft} />
+            <span>草稿（选中为草稿，前端不显示）</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.pinned} />
+            <span>置顶（首页精选排在前）</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.hidden} />
+            <span>不在列表 / RSS / sitemap 里出现（只通过链接访问）</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.comments} />
+            <span>允许评论（取消则不加载评论组件）</span>
+          </label>
+        </div>
+        <div class="row toggles-extra">
+          <label class="wgt">
+            weight
+            <input
+              type="number"
+              value={form.weight}
+              oninput={(e) => (form.weight = e.currentTarget.value)}
+              placeholder="10"
+              title="Hugo 按 weight 升序排，越小越靠前；留空表示不写"
+            />
+          </label>
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.toc} />
+            <span>目录 toc</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" bind:checked={form.math} />
+            <span>公式 math</span>
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label>作者标识（author）<input bind:value={form.author} placeholder="与用户作者的 handle 一致" /></label>
+          <div class="block"></div>
+        </div>
+
+        <div class="body" role="presentation" onclick={capture} onkeyup={capture}>
+          <ShortcodeBar oninsert={insertShortcode} onmedia={() => (showInsertMedia = true)} />
+          <MarkdownEditor bind:value={body} rows={26} placeholder="Markdown 正文…" plainLinks shortBase={frontUrl('/posts/') || '/posts/'} />
+        </div>
+
+        {#if tr?.ready}
+          <div class="tr">
+            <div class="row">
+              <span class="muted small">机器翻译 · {tr.provider} {tr.model}</span>
+              <select bind:value={trTarget} aria-label="翻译目标语言">
+                {#each trTargets as t (t.code)}<option value={t.code}>译成{t.label}</option>{/each}
+              </select>
+              <button class="sm" onclick={() => void runTranslate()} disabled={trBusy}>
+                {trBusy ? '翻译中…' : `译成${trTargetName}草稿`}
+              </button>
+              {#if trDraft}
+                <button class="sm ghost" onclick={appendDraft}>追加到正文</button>
+                <button class="sm ghost" onclick={fillDescription}>填入描述</button>
+                <button class="sm ghost" onclick={() => (trDraft = '')}>丢弃</button>
+              {/if}
+              <a class="muted small" href="/translate">去「翻译」页做多段翻译 →</a>
+            </div>
+            {#if trNote}<p class="err small">{trNote}</p>{/if}
+            {#if trDraft}<textarea rows="5" bind:value={trDraft} placeholder="译稿"></textarea>{/if}
+          </div>
+        {:else if tr && tr.provider !== 'none' && tr.hint}
+          <p class="muted small">机器翻译暂不可用：{tr.hint}（到「设置 → AI 模型配置」调整）</p>
+        {/if}
+      </div>
+    {:else}
+      <div class="card placeholder">
+        <p class="muted">从左侧选择一个 .md 文件进行编辑，或点击「新文章」。</p>
+        <p class="muted">保存会写入内容仓库：线上走 GitHub Contents API 提交，推送后站点自动重建；本地开发走 repo bridge，直接写文件、不产生提交。</p>
+      </div>
+    {/if}
+  </div>
+</div>
+
+<MediaPicker bind:open={showCover} title="选择封面图" onpick={(url) => (form.image = url)} />
+<MediaPicker bind:open={showInsertMedia} title="插入媒体" kind="any" onpick={insertMedia} />
+{#if notice}<div class="toast" role="status" aria-live="polite">{notice}</div>{/if}
+
+<style>
+  .head {
+    margin-bottom: 0.8rem;
+  }
+  /* 本地暂存面板：表格式列表 + 结果提示，间距与其余卡片一致 */
+  .drafts {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.8rem;
+  }
+  .drafts h3 {
+    margin: 0;
+    font-size: 0.98rem;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.8rem;
+    padding: 0.6rem 0.9rem;
+  }
+  .new {
+    margin-bottom: 0.8rem;
+  }
+  .new .row {
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .new .row input,
+  .new .row select,
+  .new .row button {
+    height: var(--ctl-h);
+  }
+  .new .row input {
+    flex: 1 1 220px;
+  }
+  .new .row select {
+    flex: 0 1 190px;
+    min-width: 150px;
+  }
+  .new p {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+  }
+  .split {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 0.9rem;
+    align-items: start;
+  }
+  .headleft { flex: 1 1 auto; min-width: 0; }
+  .headleft .path { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fileq { margin: 0.1rem 0 0.4rem; width: 100%; }
+  .badge {
+    flex: none;
+    margin-left: 0.25rem;
+    padding: 0 0.3rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    font-size: 0.66rem;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .badge.hid { border-color: var(--warn-border); color: var(--warn); background: var(--warn-soft); }
+  .del { margin-left: 0.5rem; }
+  .toast {
+    position: fixed;
+    right: 1.2rem;
+    bottom: 1.2rem;
+    z-index: 60;
+    max-width: min(32rem, 80vw);
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    background: #1f2a24;
+    color: #f2f5f3;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+  /* 目录收起：编辑区吃满整行 */
+  .split.list-collapsed {
+    grid-template-columns: 1fr;
+  }
+  .split.list-collapsed .files {
+    display: none;
+  }
+  .files {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 74vh;
+    overflow: auto;
+    padding: 0.6rem;
+  }
+  .crumbs {
+    font-size: 0.8rem;
+    padding: 0.2rem 0.3rem 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    align-items: center;
+  }
+  .crumb {
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 0.8rem;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .entry {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+    border: none;
+    background: none;
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-radius: 6px;
+    font: inherit;
+    cursor: pointer;
+    width: 100%;
+  }
+  .entry:hover {
+    background: var(--accent-soft);
+    color: var(--fg);
+    border-color: transparent;
+  }
+  .entry.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .nm {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sz {
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .pane .row > input:not([type='checkbox']):not([type='radio']),
+  .pane .row > select,
+  .pane .row > button {
+    height: var(--ctl-h);
+    min-height: var(--ctl-h);
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem 0.8rem;
+    align-items: start;
+  }
+  .block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .lbl {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    min-height: 24px;
+  }
+  .chip {
+    padding: 0.1rem 0.55rem;
+    font-size: 0.76rem;
+    border-radius: 999px;
+  }
+  .chip.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .addrow input {
+    flex: 1;
+    min-width: 140px;
+  }
+  .grow {
+    flex: 1;
+    min-width: 220px;
+  }
+  .cover {
+    max-height: 148px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    object-fit: cover;
+    align-self: flex-start;
+  }
+  .toggles {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem 0.9rem;
+    align-items: center;
+    padding: 0.15rem 0;
+  }
+  .toggles-extra {
+    gap: 1.25rem;
+    align-items: center;
+  }
+  .switch {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 26px;
+    font-size: 0.86rem;
+    color: var(--fg);
+  }
+  .switch input {
+    width: 16px;
+    height: 16px;
+  }
+  .wgt {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+  }
+  .wgt input {
+    width: 88px;
+    height: var(--ctl-h-sm);
+    min-height: var(--ctl-h-sm);
+    padding: 0.2rem 0.4rem;
+  }
+  .small {
+    font-size: 0.76rem;
+  }
+  .path {
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .placeholder {
+    padding: 3rem 2rem;
+    text-align: center;
+  }
+  .tr {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 0.7rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--border);
+  }
+  .tr .row {
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .tr select {
+    min-width: 150px;
+  }
+  .tr textarea {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.84rem;
+    line-height: 1.6;
+  }
+  @media (max-width: 900px) {
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .grid2 {
+      grid-template-columns: 1fr;
+    }
+    .toggles {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

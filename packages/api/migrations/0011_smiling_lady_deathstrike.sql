@@ -1,0 +1,1 @@
+ALTER TABLE `friend_posts` ADD `image` text;

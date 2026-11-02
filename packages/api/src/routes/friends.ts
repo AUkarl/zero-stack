@@ -1,0 +1,142 @@
+import { Hono } from 'hono';
+import { desc, eq, ne, sql } from 'drizzle-orm';
+import { createDb } from '../db/client';
+import { friendPosts, friends } from '../db/schema';
+import { getConfigBool } from '../services/config';
+import { ok } from '../lib/errors';
+import { requireAdmin } from '../middleware/auth';
+import { clientIp } from '../lib/http';
+import { JOB_LABELS, runScheduledJobs } from '../services/scheduler';
+import {
+  createFriend,
+  deleteFriend,
+  groupFriends,
+  groupFriendsDetail,
+  loadFriends,
+  readLinkIcons,
+  reorderFriends,
+  updateFriend,
+} from '../services/friends-groups';
+import type { AppEnv } from '../lib/app';
+
+const app = new Hono<AppEnv>();
+
+/**
+ * 前台友链列表：按 kind 分成两组，各自按 sortOrder 升序、相同则按加入时间升序。
+ * 响应体固定是 { friends: [...], alliance: [...] }，friendsEnabled 关闭时两个数组都为空。
+ * 每项字段：id / name / url / description / avatar / rssUrl / kind / sortOrder / status。
+ * 存活原因不对外解释，前端按 status === 'active' 判断（原先的 alive 布尔已并入 status）。
+ */
+app.get('/', async (c) => {
+  const env = c.env;
+  if (!(await getConfigBool(env, 'friendsEnabled', true))) return ok({ friends: [], alliance: [] });
+  return ok(groupFriends(await loadFriends(env)));
+});
+
+/** 友链最新文章（RSS 聚合结果），首页或 /links 侧栏用；站点联盟只做存活检测，不进这里 */
+app.get('/posts', async (c) => {
+  const env = c.env;
+  const limit = Math.min(Number(c.req.query('limit') ?? '30') || 30, 100);
+  const db = createDb(env);
+  const rows = await db
+    .select({
+      id: friendPosts.id,
+      title: friendPosts.title,
+      link: friendPosts.link,
+      summary: friendPosts.summary,
+      pubDate: friendPosts.pubDate,
+      siteName: friends.name,
+      siteUrl: friends.url,
+    })
+    .from(friendPosts)
+    .innerJoin(friends, eq(friends.id, friendPosts.friendId))
+    .where(ne(friends.kind, 'alliance'))
+    .orderBy(desc(friendPosts.pubDate))
+    .limit(limit);
+  return ok(rows);
+});
+
+/* ------------------------------------------------ 后台（旧路径，仍可用） */
+
+/** 后台旧列表：保持扁平数组，顺带把 kind / sortOrder 给出去，CMS 不改也能读到分组信息。
+ *  用 detail 版：后台那行要显示「上次检测时间 / 失败次数 / 头像兜底」，公开那份故意不给这些。 */
+app.get('/all', async (c) => {
+  requireAdmin(c);
+  const grouped = groupFriendsDetail(await loadFriends(c.env), await readLinkIcons(c.env));
+  return ok([...grouped.friends, ...grouped.alliance]);
+});
+
+app.post('/', async (c) => {
+  const admin = requireAdmin(c);
+  // 原样回出去：只挑 {id, item} 会把 linksFile（那份 yaml 的写回结果 + 构建体检）丢了，
+  // 新增这一条就看不见「文件到底同步了没有」——改 / 删 / 排序都看得见，唯独这里看不见。
+  return ok(await createFriend(c.env, admin, await c.req.json().catch(() => null), { ip: clientIp(c) }));
+});
+
+app.patch('/:id', async (c) => {
+  const admin = requireAdmin(c);
+  const result = await updateFriend(c.env, admin, c.req.param('id'), await c.req.json().catch(() => null), { ip: clientIp(c) });
+  return ok(result);
+});
+
+app.delete('/:id', async (c) => {
+  const admin = requireAdmin(c);
+  return ok(await deleteFriend(c.env, admin, c.req.param('id'), { ip: clientIp(c) }));
+});
+
+/** 后台：整组保存顺序 / 在友链与站点联盟之间移动（旧路径，与 /api/admin/friends/reorder 同一实现） */
+app.post('/reorder', async (c) => {
+  const admin = requireAdmin(c);
+  return ok(await reorderFriends(c.env, admin, await c.req.json().catch(() => null), { ip: clientIp(c) }));
+});
+
+/** 手动触发检测 + 抓取，后台"立即检测"按钮用 */
+app.post('/check', async (c) => {
+  requireAdmin(c);
+  const outcomes = await runScheduledJobs(c.env, 'manual-friends-check');
+  /*
+   * 「立即检测」除了跑友链那几件，还可能改 links.yaml / 图标、于是触发一次站点重建。
+   * 以前这里只回 friends:*，那次构建的结论被滤掉 —— 点完按钮看不到「这次构建到底成没成」。
+   * 现在把 pages:build 一起回（带中文名）；这一轮没改任何文件时补一条"不需要重建"的说明，
+   * 让按钮的回执永远能回答「构建这一环怎么样」。
+   */
+  const picked = outcomes
+    .filter((o) => o.name.startsWith('friends:') || o.name === 'pages:build')
+    .map((o) => ({ ...o, label: JOB_LABELS[o.name] ?? o.name }));
+  if (!picked.some((o) => o.name === 'pages:build')) {
+    picked.push({ name: 'pages:build', label: JOB_LABELS['pages:build'] ?? 'pages:build', ok: true, detail: '这一轮没有任何文件改动，不需要重建站点' });
+  }
+  return ok(picked);
+});
+
+/** 后台：友链健康详情 */
+app.get('/status', async (c) => {
+  requireAdmin(c);
+  const rows = await createDb(c.env).select().from(friends).orderBy(desc(friends.lastCheckedAt));
+  return ok(
+    rows.map((f) => ({
+      id: f.id,
+      name: f.name,
+      url: f.url,
+      kind: f.kind,
+      sortOrder: f.sortOrder,
+      status: f.status,
+      failCount: f.failCount,
+      lastCheckedAt: f.lastCheckedAt,
+      cooldownUntil: f.cooldownUntil,
+    })),
+  );
+});
+
+/** 后台：聚合文章数（站点联盟不计入朋友动态） */
+app.get('/posts/count', async (c) => {
+  requireAdmin(c);
+  const rows = await createDb(c.env)
+    .select({ n: sql<number>`count(*)` })
+    .from(friendPosts)
+    .innerJoin(friends, eq(friends.id, friendPosts.friendId))
+    .where(ne(friends.kind, 'alliance'));
+  return ok({ count: Number(rows[0]?.n ?? 0) });
+});
+
+export default app;

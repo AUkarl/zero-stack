@@ -1,0 +1,657 @@
+<script lang="ts">
+  import { flash } from '#lib/toast.svelte';
+  import { fmtDate, get, post, siteOf } from '#lib/api';
+  import LineChart from '#lib/LineChart.svelte';
+
+  interface Summary {
+    totalViews: number;
+    totalVisitors: number;
+    todayViews: number;
+    todayVisitors: number;
+    onlineNow: number;
+    avgDurationSeconds: number;
+    /**
+     * 后端 summary 的按 IP 去重口径（analytics.ts 用 visits.ip_hash，老行退回 session_id）：
+     *   todayUniqueIpVisitors 今日独立访客、totalUniqueIpVisitors 建站以来累计独立访客、
+     *   allTimeViews 建站以来累计浏览量（后三项来自 site_config 计数器，analytics:prune 删明细也不影响）
+     * 缺字段就显示占位并在页面下方说明口径，绝不拿会话数冒充实人数。
+     */
+    todayUniqueIpVisitors?: number;
+    totalUniqueIpVisitors?: number;
+    allTimeViews?: number;
+    /** 明细保留天数，statsMeta() 生成 */
+    retentionDays?: number;
+    /** 本 isolate 这一小时里被 isBot() 判掉、没入库的 /beat 条数（冷启动清零，不是全站累计） */
+    botFilteredThisHour?: number;
+    botFilteredNote?: string;
+  }
+  interface Point {
+    day: string;
+    views: number;
+    /** 后端已改成按 ip_hash 去重；字段名沿用 visitors */
+    visitors: number;
+    /** 旧字段名，后端没回时退回 visitors */
+    uniqueIpVisitors?: number;
+  }
+  interface Devices {
+    device: { k: string; n: number }[];
+    browser: { k: string; n: number }[];
+    os: { k: string; n: number }[];
+    country: { k: string; n: number }[];
+  }
+  interface Top {
+    site?: string;
+    /** 后端窗口：含今天在内共 days 天，与趋势图同一个区间 */
+    days?: number;
+    pages: { path: string; views: number; visitors?: number }[];
+    referrers: { referrer: string; views: number; visitors?: number }[];
+  }
+  interface Biz {
+    posts?: number;
+    moments?: number;
+    comments: number;
+    pendingComments: number;
+    subscribers: number;
+    users: number;
+    email: Record<string, number>;
+    pendingDrafts?: number;
+  }
+  /** 按页面汇总的点赞 / 收藏：票数远大于 actors 就是刷出来的 */
+  interface ReactionRow {
+    slug: string;
+    likes: number;
+    stars: number;
+    actors: number;
+    lastAt: number;
+  }
+  interface ReactionStats {
+    rows: ReactionRow[];
+    reactionRows: number;
+    pages: number;
+  }
+  /** 按明细重算永久计数器的演习 / 应用结果 */
+  interface RecountResult {
+    applied: boolean;
+    current: { views: number; visitors: number };
+    computed: { views: number; visitors: number };
+    retentionDays: number;
+    note: string;
+  }
+
+  let summary = $state<Summary | null>(null);
+  let trend = $state<Point[]>([]);
+  let devices = $state<Devices | null>(null);
+  let top = $state<Top | null>(null);
+  let biz = $state<Biz | null>(null);
+  let reactions = $state<ReactionStats | null>(null);
+  /** 文章地址 → 标题：/api/admin/posts 是后端缓存过的那份，这里只做显示用，取不到就原样给地址 */
+  let titles = $state<Record<string, string>>({});
+  let days = $state(14);
+  let loading = $state(false);
+  let error = $state('');
+  /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
+  flash('err', () => error);
+  let enabled = $state(true);
+
+  async function load() {
+    loading = true;
+    error = '';
+    try {
+      const [s, t, dv, tp, bz, rx, ps, cfg, ct, ds] = await Promise.all([
+        get<{ data: Summary }>('/api/analytics/summary'),
+        get<{ data: Point[] }>(`/api/analytics/trend?days=${days}`),
+        get<{ data: Devices }>('/api/analytics/devices'),
+        get<{ data: Top }>('/api/analytics/top'),
+        get<{ data: Biz }>('/api/admin/stats'),
+        get<{ data: ReactionStats }>('/api/admin/stats/reactions?limit=30'),
+        get<{ data: { path: string; title: string }[] }>('/api/admin/posts'),
+        get<{ data: Record<string, string> }>('/api/admin/config'),
+        // 文章/时刻计数是独立的递归目录接口；它失败不能把整页统计带崩
+        get<{ data: { posts: number; moments: number } }>('/api/admin/stats/content').catch(() => null),
+        get<{ data: { pending?: number } }>('/api/admin/drafts/stats').catch(() => null),
+      ]);
+      summary = s.data;
+      trend = t.data;
+      devices = dv.data;
+      top = tp.data;
+      biz = { ...bz.data, posts: ct?.data?.posts, moments: ct?.data?.moments, pendingDrafts: ds?.data?.pending };
+      reactions = rx.data;
+      const map: Record<string, string> = {};
+      for (const p of ps.data ?? []) {
+        /* 两种布局都要认：扁平 `<名>.md` 直接用文件名，页面包 `<名>/index.md` 用上一层目录名。
+           以前只按 `.md` 文件名建键，页面包的文章在这页上就是一列「—」。 */
+        const segs = p.path.split('/').filter(Boolean);
+        const last = segs.pop() ?? '';
+        const stem = /^index\.mdx?$/i.test(last) ? (segs.pop() ?? '') : last.replace(/\.mdx?$/i, '');
+        if (stem && /(^|\/)posts\//.test(p.path)) map[`/posts/${stem}/`] = p.title;
+      }
+      titles = map;
+      enabled = cfg.data.analyticsEnabled !== 'false';
+    } catch (e) {
+      error = e instanceof Error ? e.message : '读取统计失败';
+    } finally {
+      loading = false;
+    }
+  }
+
+  const hasIp = $derived(summary ? typeof summary.todayUniqueIpVisitors === 'number' : false);
+  const hasIpTrend = $derived(trend.some((p) => typeof p.uniqueIpVisitors === 'number'));
+  const hasLifetime = $derived(
+    summary ? typeof summary.allTimeViews === 'number' && typeof summary.totalUniqueIpVisitors === 'number' : false,
+  );
+  const visitorName = $derived(
+    hasIp || hasIpTrend ? '独立访客（按 IP 去重）' : '访客数（按会话，后端待补 IP 去重字段）',
+  );
+
+  const series = $derived([
+    { name: '访问量', color: 'var(--accent)', values: trend.map((p) => p.views) },
+    { name: visitorName, color: 'var(--good)', values: trend.map((p) => p.uniqueIpVisitors ?? p.visitors) },
+  ]);
+  const labels = $derived(trend.map((p) => p.day));
+
+  const dims = $derived.by((): [string, { k: string; n: number }[]][] => {
+    if (!devices) return [];
+    return [
+      ['设备', devices.device],
+      ['浏览器', devices.browser],
+      ['系统', devices.os],
+      ['地区', devices.country],
+    ];
+  });
+
+  function pct(list: { k: string; n: number }[]): { k: string; n: number; p: number }[] {
+    const sum = list.reduce((a, b) => a + b.n, 0) || 1;
+    return list.map((x) => ({ ...x, p: Math.round((x.n / sum) * 100) }));
+  }
+
+  // 长路径 / 长来源中间省略，完整值留在 title，列宽固定不撑破表格
+  function mid(raw: string | null | undefined, head = 30, tail = 16): string {
+    const s = String(raw ?? '');
+    if (s.length <= head + tail + 1) return s;
+    return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
+  }
+
+  let exporting = $state(false);
+  let exportNote = $state('');
+  let recounting = $state(false);
+  let recountNote = $state('');
+
+  /**
+   * 立即把每篇的阅读 / 评论 / 点赞 / 收藏导出成站点 data/poststats.json。
+   * 定时任务每天跑一次，改完开关或刚发新文章时可以手点一次，首页精选与「最热」下一次构建就按新数据排。
+   */
+  async function exportStats() {
+    if (exporting) return;
+    exporting = true;
+    exportNote = '';
+    error = '';
+    try {
+      const res = await post<{ data: { detail: string } }>('/api/admin/poststats/export', {});
+      exportNote = res.data?.detail || '已导出';
+    } catch (e) {
+      error = e instanceof Error ? e.message : '导出失败';
+    } finally {
+      exporting = false;
+    }
+  }
+
+  /**
+   * 按明细重算「建站以来累计」：先演习（不写库），把当前值与重算值摆出来让站长确认，再应用。
+   * 每日对账只抬不降，所以导入旧站数据或误删明细后只能从这里人工校正。
+   */
+  async function recount() {
+    if (recounting) return;
+    recounting = true;
+    recountNote = '';
+    error = '';
+    try {
+      const dry = await post<{ data: RecountResult }>('/api/admin/stats/recount', {});
+      const d = dry.data;
+      const yes = window.confirm(
+        `当前累计：浏览 ${d.current.views} / 访客 ${d.current.visitors}\n` +
+          `按现有明细重算：浏览 ${d.computed.views} / 访客 ${d.computed.visitors}\n\n` +
+          `${d.note}\n\n确定写入吗？`,
+      );
+      if (!yes) {
+        recountNote = '已取消，累计值没有改动。';
+        return;
+      }
+      const res = await post<{ data: RecountResult }>('/api/admin/stats/recount', { apply: true });
+      recountNote = `已重算：浏览 ${res.data.computed.views} / 访客 ${res.data.computed.visitors}`;
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : '重算失败';
+    } finally {
+      recounting = false;
+    }
+  }
+
+  $effect(() => void load());
+</script>
+
+<div class="row spread head">
+  <h2>访问统计</h2>
+  <div class="toolbar">
+    <select bind:value={days} aria-label="统计时间范围">
+      <option value={7}>近 7 天</option>
+      <option value={14}>近 14 天</option>
+      <option value={30}>近 30 天</option>
+      <option value={90}>近 90 天</option>
+    </select>
+    <button class="sm" onclick={() => void exportStats()} disabled={exporting} title="导出 data/poststats.json，供首页精选与「最热」构建期排序">
+      {exporting ? '导出中…' : '导出文章统计'}
+    </button>
+    <button class="sm" onclick={() => void recount()} disabled={recounting} title="按现有明细重算「建站以来累计」；会先演习并让你确认">
+      {recounting ? '重算中…' : '按明细重算累计'}
+    </button>
+    <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
+  </div>
+</div>
+
+{#if exportNote}<p class="ok small">统计导出：{exportNote}</p>{/if}
+{#if recountNote}<p class="ok small">{recountNote}</p>{/if}
+
+{#if !enabled}<p class="warn">统计开关当前是关闭的（设置 - 访问统计），前台不再上报页面浏览。</p>{/if}
+
+<div class="kpis">
+  {#each [
+      { label: '今日访问', value: summary?.todayViews ?? '—', tip: '今日页面浏览次数' },
+      {
+        label: '独立访客（按 IP 去重）',
+        value: summary?.todayUniqueIpVisitors ?? '—',
+        tip: hasIp ? '今日按访客 IP 哈希去重的人数' : '后端 analytics/summary 未返回 todayUniqueIpVisitors，暂无法统计',
+      },
+      { label: '当前在线', value: summary?.onlineNow ?? '—', tip: '最近 5 分钟活跃访客（同样按 IP 去重）' },
+      {
+        label: '建站以来累计访问人数',
+        value: summary?.totalUniqueIpVisitors ?? '—',
+        tip: hasLifetime
+          ? '全站历史按 IP 去重的访客总数；记在 site_config 计数器里，明细到保留期被清理也不会变小'
+          : '后端 analytics/summary 未返回 totalUniqueIpVisitors，暂无法统计',
+      },
+      {
+        label: '累计访问量',
+        value: summary?.allTimeViews ?? summary?.totalViews ?? '—',
+        tip: hasLifetime ? '建站以来的页面浏览总次数，不受到期清理影响' : '后端未返回 allTimeViews，这里显示的是现存明细的浏览总数',
+      },
+      { label: '平均停留', value: summary ? `${Math.round(summary.avgDurationSeconds)} 秒` : '—', tip: '近 7 天会话平均停留' },
+    ] as k (k.label)}
+    <div class="card kpi" title={k.tip}>
+      <span class="v">{k.value}</span>
+      <span class="muted l">{k.label}</span>
+    </div>
+  {/each}
+</div>
+
+{#if summary}
+  <p class="muted small ipnote">
+    访客数据按 IP 去重。总访问量与独立访客是永久计数器，其余数据保留 {summary.retentionDays ?? 365} 天，用于按天/按页的趋势与排行。
+  </p>
+{/if}
+
+<section class="card">
+  <h3>趋势</h3>
+  {#if labels.length}
+    <LineChart {series} {labels} height={190} label="访问量与访客按天趋势折线图" />
+  {:else}
+    <p class="muted small">还没有数据。</p>
+  {/if}
+</section>
+
+<div class="cols">
+  <section class="card fixed-card">
+    <h3>热门页面</h3>
+    {#if top?.pages?.length}
+    <div class="list-scroll table-scroll">
+        <table>
+          <thead><tr><th>页面</th><th class="num">浏览</th><th class="num">访客</th></tr></thead>
+          <tbody>
+            {#each top.pages as p (p.path)}
+              <tr>
+                <td class="path">
+                  {#if siteOf(top.site, p.path)}
+                    <a href={siteOf(top.site, p.path)} target="_blank" rel="noreferrer" title={p.path}>{mid(p.path)}</a>
+                  {:else}
+                    <span class="muted" title={p.path}>{mid(p.path)}</span>
+                  {/if}
+                </td>
+                <td class="num">{p.views}</td>
+                <td class="num">{p.visitors ?? '—'}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+    </div>
+    {:else}<p class="muted small">暂无页面记录。</p>{/if}
+  </section>
+
+  <section class="card fixed-card">
+    <h3>来源</h3>
+    {#if top?.referrers?.length}
+    <div class="list-scroll table-scroll">
+        <table>
+          <thead><tr><th>来源</th><th class="num">浏览</th><th class="num">访客</th></tr></thead>
+          <tbody>
+            {#each top.referrers as r (r.referrer)}
+              <tr>
+                <td class="path" title={r.referrer}>{mid(r.referrer) || '直接访问'}</td>
+                <td class="num">{r.views}</td>
+                <td class="num">{r.visitors ?? '—'}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+    </div>
+    {:else}<p class="muted small">全部是直接访问。</p>{/if}
+  </section>
+
+  {#each dims as [title, list] (title)}
+    <section class="card fixed-card">
+      <h3>{title}</h3>
+      {#if list.length}
+        <div class="list-scroll rows-scroll">
+          {#each pct(list) as x (x.k)}
+            <div class="bar">
+              <span class="bl">{x.k || '未知'}</span>
+              <span class="track"><span class="fill" style="width:{x.p}%"></span></span>
+              <span class="bn">{x.n}</span>
+            </div>
+          {/each}
+        </div>
+      {:else}<p class="muted small">暂无。</p>{/if}
+    </section>
+  {/each}
+</div>
+
+<section class="card biz">
+  <h3>站点数据</h3>
+  {#if biz}
+    <div class="kpis">
+      {#each [
+          { label: '文章', value: biz.posts ?? '—' },
+          { label: '时刻', value: biz.moments ?? '—' },
+          { label: '评论总数', value: biz.comments },
+          { label: '待审评论', value: biz.pendingComments },
+          { label: '投稿待审', value: biz.pendingDrafts ?? '—' },
+          { label: '点赞 / 收藏', value: reactions?.reactionRows ?? '—' },
+          { label: '订阅者', value: biz.subscribers },
+          { label: '注册用户', value: biz.users },
+          { label: '邮件已发', value: biz.email?.sent ?? 0 },
+          { label: '邮件失败', value: biz.email?.failed ?? 0 },
+        ] as k (k.label)}
+        <div class="kpi plain">
+          <span class="v">{k.value}</span>
+          <span class="muted l">{k.label}</span>
+        </div>
+      {/each}
+    </div>
+  {:else}
+    <p class="muted small">读取中…</p>
+  {/if}
+</section>
+
+<section class="card fixed-card reactions-card">
+  <h3>点赞与收藏（按页面，票数最多的前 30 页）</h3>
+  {#if reactions}
+    <p class="muted small">
+      全站 {reactions.reactionRows} 条点赞 / 收藏记录，分布在 {reactions.pages} 个地址上。「按IP和账号去重」。
+    </p>
+    <div class="list-scroll table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>页面</th>
+            <th>点赞</th>
+            <th>收藏</th>
+            <th>不同来源</th>
+            <th>最近一次</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each reactions.rows as r (r.slug)}
+            <tr>
+              <td class="small">
+                {titles[r.slug] ?? '—'}
+                <span class="muted mono"> {r.slug}</span>
+              </td>
+              <td>{r.likes}</td>
+              <td>{r.stars}</td>
+              <td class={r.likes + r.stars > r.actors * 3 + 5 ? 'err' : ''}>{r.actors}</td>
+              <td class="small muted">{r.lastAt ? fmtDate(r.lastAt) : '—'}</td>
+            </tr>
+          {:else}
+            <tr><td colspan="5" class="muted">还没有人点过赞或收藏。</td></tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <p class="muted small">读取中…</p>
+  {/if}
+</section>
+
+<style>
+  .head {
+    margin-bottom: 0.8rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .toolbar select,
+  .toolbar button {
+    height: var(--ctl-btn);
+    min-height: var(--ctl-btn);
+  }
+  .toolbar select {
+    width: auto;
+    min-width: 110px;
+  }
+  .mono {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    word-break: break-all;
+  }
+  .small {
+    font-size: 0.76rem;
+  }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 0.8rem;
+  }
+  /* 手机 / pad 竖屏：六张卡固定成「两行三列」。auto-fit 在窄屏会掉成两列（3 行），
+     卡片宽窄忽大忽小（第十轮第 8 条）。 */
+  @media (max-width: 1200px) {
+    .kpis {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  /* 站点数据固定两行、每行五个；侧栏展开/折叠都不改变这个排布 */
+  .biz .kpis {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .kpi {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.8rem 0.9rem;
+  }
+  .kpi.plain {
+    background: transparent;
+    border-style: dashed;
+  }
+  .kpi .v {
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+  .kpi .l {
+    font-size: 0.78rem;
+  }
+  .ipnote {
+    margin: 0 0 0.8rem;
+    line-height: 1.7;
+  }
+  .ok.small,
+  .warn {
+    margin: 0 0 0.8rem;
+  }
+  section.card {
+    margin: 0 0 0.8rem;
+  }
+  .cols > section.card {
+    margin: 0;
+  }
+  .reactions-card {
+    margin-bottom: 0;
+  }
+  .cols {
+    display: grid;
+    /* 固定三列（两行三列）：侧栏折叠把内容区拉宽也不许变成「第一行四个第二行两个」 */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin: 0 0 0.8rem;
+    align-items: start;
+  }
+  /* 分析卡片统一定高，卡片里最多显示 10 行，其余在卡片内部滚动。
+     用户要求隐藏滚动条，但保留 hover 时的细条，避免鼠标用户不知道还能往下看。 */
+  .fixed-card {
+    height: 26.5rem;
+    display: flex;
+    flex-direction: column;
+  }
+  .fixed-card > h3 {
+    flex: 0 0 auto;
+    margin-bottom: 0.55rem;
+  }
+  .fixed-card.reactions-card {
+    height: 30rem;
+  }
+  .list-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .list-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .list-scroll:hover {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .list-scroll:hover::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+  .list-scroll:hover::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 3px;
+  }
+  .table-scroll table {
+    width: 100%;
+    table-layout: fixed;
+  }
+  .table-scroll th,
+  .table-scroll td {
+    padding: 0.45rem 0.4rem;
+  }
+  .reactions-card td:first-child {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .reactions-card td:first-child .mono {
+    display: inline;
+    white-space: nowrap;
+  }
+  .reactions-card th:last-child,
+  .reactions-card td:last-child {
+    width: 122px;
+    white-space: nowrap;
+  }
+  .table-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--panel);
+  }
+  .table-scroll th:not(:first-child),
+  .table-scroll td:not(:first-child) {
+    width: 64px;
+  }
+  .table-scroll .path {
+    max-width: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .biz {
+    margin: 0 0 0.8rem;
+  }
+  table {
+    font-size: 0.85rem;
+  }
+  .path {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  td {
+    padding: 0.32rem 0.4rem;
+  }
+  .num {
+    text-align: right;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .bar {
+    display: grid;
+    grid-template-columns: 74px 1fr 38px;
+    align-items: center;
+    gap: 0.5rem;
+    height: 2.1875rem;
+    padding: 0;
+    font-size: 0.82rem;
+  }
+  .track {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    overflow: hidden;
+  }
+  .fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+  .bn {
+    text-align: right;
+    color: var(--muted);
+  }
+  /* 平板宽度：六张分析卡先降成两列，手机一列 —— 只有响应式才允许变列数 */
+  @media (max-width: 1100px) {
+    .cols {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 720px) {
+    .cols {
+      grid-template-columns: 1fr;
+    }
+    .biz .kpis {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .toolbar select,
+    .toolbar button {
+      flex: 1 1 auto;
+    }
+  }
+</style>
