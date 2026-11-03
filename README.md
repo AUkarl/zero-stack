@@ -193,6 +193,10 @@ hugo server --disableFastRender --port 1315 --bind 127.0.0.1
   后台新发的文章要重启才看得见；也别用 `--renderToMemory`，删掉的页面会继续留在内存缓存里能打开。
 - 主题改了要重新同步进 `themes/zero` 并**重启 hugo**：同步是整目录替换，
   跑着的服务会留着旧的 shortcode 注册表，轻则 500，重则直接退出。
+- **后台写 `data/` 后本地也要重启 hugo**：`hugo server` 对 `data/links.yaml`、`data/*.json`
+  的写入不一定触发热重建，典型表现是后台说“已同步站点数据文件”，`/links/` 或前端管理的改动
+  却要重启后才出现（`--disableFastRender` 也一样）。重启一次再看；线上 Pages 每次 Git 提交
+  都会全新构建，不受这条本地预览限制影响。
 
 ### 5. 两个本地替身（`repo:bridge` 是**必选**，不是可选）
 
