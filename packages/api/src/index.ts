@@ -19,6 +19,8 @@ import translate from './routes/translate';
 import buildReport from './routes/build-report';
 import backup from './routes/backup';
 import frontendAdmin from './routes/frontend';
+import petAdmin from './routes/pet';
+import petAi from './routes/pet-ai';
 import publicMedia from './routes/media';
 import account, { deletionsAdmin } from './routes/account';
 import security from './routes/security';
@@ -246,6 +248,7 @@ app.route('/api/friends', publicApply);
 app.route('/api/authors', authorsPublic);
 app.route('/api/analytics', analytics);
 app.route('/api/media', publicMedia);
+app.route('/api/ai', petAi);
 
 /**
  * 整站公开配置：显式写死「不缓存」。
@@ -283,6 +286,7 @@ app.route('/api/admin/applications', applications);
 app.route('/api/admin/translate', translate);
 app.route('/api/admin/backup', backup);
 app.route('/api/admin/frontend', frontendAdmin);
+app.route('/api/admin/pet', petAdmin);
 app.route('/api/admin/drafts', draftsAdmin);
 app.route('/api/admin/author-requests', authorsAdmin);
 

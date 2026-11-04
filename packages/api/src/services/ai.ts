@@ -221,7 +221,7 @@ interface ChatOptions {
  * 一次 chat/completions 调用；失败一律 throw，由调用方决定 fail-open 还是报错。
  * fetchWithTimeout 在超时时返回 504 Response（不抛），这里统一转成可读错误。
  */
-async function chat(env: Env, cfg: AiConfig, messages: { role: 'system' | 'user'; content: string }[], opts: ChatOptions = {}): Promise<string> {
+async function chat(env: Env, cfg: AiConfig, messages: { role: 'system' | 'user' | 'assistant'; content: string }[], opts: ChatOptions = {}): Promise<string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (cfg.key) headers.Authorization = `Bearer ${cfg.key}`;
   const res = await fetchWithTimeout(
@@ -257,7 +257,7 @@ export interface AiChatOptions {
 /** 供翻译等其它功能复用的通用 chat 入口（共用同一份 AI 模型配置） */
 export async function aiChat(
   env: Env,
-  messages: { role: 'system' | 'user'; content: string }[],
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
   opts: AiChatOptions = {},
 ): Promise<string> {
   const cfg = await aiConfig(env);

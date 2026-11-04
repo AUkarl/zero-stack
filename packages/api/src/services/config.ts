@@ -850,6 +850,10 @@ export const PUBLIC_KEYS: ConfigKey[] = [
   'analyticsEnabled',
   'cmsAdminUrl',
   'translateProvider',
+  // 桌宠和评论里的 AI 是同一身份：昵称/头像/身份组给前台显示，人设提示词仍只在后台。
+  'aiReplyName',
+  'aiReplyImageUrl',
+  'aiReplyGroup',
 ];
 
 /**

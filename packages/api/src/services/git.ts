@@ -95,7 +95,7 @@ export function buildReceipt(
   if (!build) return `${savedText}，没请求站点重建（前台要等下次自动构建）`;
   if (build.triggered) return `${savedText}，已请求站点重建`;
   if (build.backend === 'local') {
-    return `${savedText}，已写入本地目录（本地后端不产生 Git 提交；站点由 hugo server 按文件变化重建）`;
+    return `${savedText}，已写入本地目录（本地后端不产生 Git 提交；站点由本地构建监听按文件变化重建）`;
   }
   if (build.viaCommit) {
     return `${savedText}，站点按 Git 集成随这次提交重建（若前台几分钟内没变，说明你的 Pages 不是 Git 集成构建，需在后台填「Pages 构建 Hook」）`;

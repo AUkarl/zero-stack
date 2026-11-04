@@ -240,7 +240,7 @@
       placeholder={'例如：称呼读者为「朋友」；语气温和；不要用感叹号；不要承诺具体时间；可以邀请对方继续讨论。'}
       value={prompt}
       oninput={(e) => (prompt = e.currentTarget.value)}></textarea>
-    <span class="muted hint">会追加到系统提示词里，只影响自动回复，不影响审核判定。留空就用默认口吻。</span>
+    <span class="muted hint">会追加到系统提示词里，自动回复和 AI PET 聊天共用；不影响审核判定。留空就用默认口吻。</span>
   </label>
 
   <h3 class="sub">AI 身份设置（选填）</h3>
@@ -251,7 +251,7 @@
     {:else}
       三格都留空时，AI 回复就是<strong>站长本人</strong>那一份身份（昵称、头像、「站长」牌都一样）。
     {/if}
-    只影响 AI 自动回复的那一条，不影响你自己手写的评论。
+    自动回复和 AI PET 聊天共用这组身份；不影响你自己手写的评论。
   </p>
   <div class="fields">
     <label>
