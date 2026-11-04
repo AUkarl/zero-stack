@@ -56,7 +56,7 @@
   let filePath = $state('data/pet.json');
   let backend = $state('');
 
-  const preview = $derived('http://127.0.0.1:1423/home/');
+  const preview = $derived(frontUrl('/home/'));
 
   async function load() {
     loading = true;
