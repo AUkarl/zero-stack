@@ -621,6 +621,14 @@ function siteHeaders(apiBase: string): string {
 /fa/*
   Cache-Control: public, max-age=2678400
 
+# 桌宠素材：精灵表单张约 1MB、透明视频约 0.5MB，地址一律带 ?v=<版本>
+# （主题 static/whale-pet/site-pet.js 里的 PET_VER / SPRITE_VER），换素材必然换地址，
+# 所以浏览器和 CDN 都可以存一年。不写这条的话只有 Cloudflare 控制台的浏览器缓存档兜着，
+# CDN 侧每次都回源校验，而 manifest.json 还会被当成动态文件 —— 每开一页都要先等它一个来回
+# 才出第一帧。代价说清楚：改了素材却忘了升那两个版本号，老访客一年都拿旧文件。
+/whale-pet/*
+  Cache-Control: public, max-age=31536000, immutable, s-maxage=31536000
+
 # RSS 三份 feed：浏览器仍然每次回源校验（新文章不能晚出现），但允许 CDN 存 5 分钟、
 # 过期后先给旧的再后台刷新。订阅器每分钟轮询时不必再各打穿源站一次
 # （/posts/index.xml 实测 412KB，源站直取要 300ms+）。5 分钟是上限，重建站点会立刻换掉。
