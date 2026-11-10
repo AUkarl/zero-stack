@@ -21,6 +21,7 @@ import backup from './routes/backup';
 import frontendAdmin from './routes/frontend';
 import petAdmin from './routes/pet';
 import petAi from './routes/pet-ai';
+import petStateApi from './routes/pet-state';
 import publicMedia from './routes/media';
 import account, { deletionsAdmin } from './routes/account';
 import security from './routes/security';
@@ -249,6 +250,7 @@ app.route('/api/authors', authorsPublic);
 app.route('/api/analytics', analytics);
 app.route('/api/media', publicMedia);
 app.route('/api/ai', petAi);
+app.route('/api/pet', petStateApi);
 
 /**
  * 整站公开配置：显式写死「不缓存」。

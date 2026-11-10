@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 import { sql } from 'drizzle-orm';
 
@@ -613,3 +613,22 @@ export const auditLogs = sqliteTable(
   },
   (t) => [index('audit_logs_time_idx').on(t.createdAt), index('audit_logs_action_idx').on(t.action, t.createdAt)],
 );
+
+/* ------------------------------------------------------------------
+ * 桌宠：全站共用一份状态（站长口径：不按访客区分）
+ * ----------------------------------------------------------------*/
+
+export const petState = sqliteTable('pet_state', {
+  /** 固定 'global'：整站只有这一行 */
+  id: text('id').primaryKey(),
+  mood: text('mood').notNull().default('平静'),
+  energy: real('energy').notNull().default(84),
+  satiety: real('satiety').notNull().default(76),
+  boredom: real('boredom').notNull().default(16),
+  interactions: integer('interactions').notNull().default(0),
+  pets: integer('pets').notNull().default(0),
+  asleep: integer('asleep').notNull().default(0),
+  asleepSince: integer('asleep_since').notNull().default(0),
+  lastInteraction: integer('last_interaction').notNull().default(0),
+  updatedAt: integer('updated_at').notNull().default(0),
+});
