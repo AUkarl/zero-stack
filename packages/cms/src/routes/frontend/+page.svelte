@@ -14,6 +14,7 @@
   import RepoPanel from './RepoPanel.svelte';
   import SectionBar from './SectionBar.svelte';
   import SitePanel from './SitePanel.svelte';
+  import SubscribePanel from './SubscribePanel.svelte';
   import WorksPanel from './WorksPanel.svelte';
   import { navOverwriteDiff, notesOf, validateSection } from './validate';
   import {
@@ -116,6 +117,7 @@
     { key: 'friendsEnabled', label: '友链页 /links/' },
     { key: 'archiveEnabled', label: '归档页 /archive/' },
     { key: 'searchEnabled', label: '搜索页 /search/' },
+    { key: 'subscribeEnabled', label: '订阅页 /subscribe/' },
   ] as const;
   const FRIEND_SWITCH_KEYS = [
     { key: 'friendFeedEnabled', label: '朋友动态' },
@@ -128,6 +130,7 @@
     friendsEnabled: true,
     archiveEnabled: true,
     searchEnabled: true,
+    subscribeEnabled: true,
     friendFeedEnabled: true,
     friendApplyEnabled: true,
   });
@@ -136,6 +139,9 @@
   let pageSwBusy = $state(false);
   let pageSwNotice = $state('');
   const pageSwDirty = $derived([...PAGE_SWITCH_KEYS, ...FRIEND_SWITCH_KEYS].some((x) => pageSw[x.key] !== pageSwSaved[x.key]));
+  let subCfg = $state({ doubleOptIn: true, pushEnabled: true, feedUrl: '' });
+  let subCfgSaved = $state({ doubleOptIn: true, pushEnabled: true, feedUrl: '' });
+  const subCfgDirty = $derived(JSON.stringify(subCfg) !== JSON.stringify(subCfgSaved));
 
   async function loadPageSwitches() {
     try {
@@ -144,6 +150,12 @@
       for (const x of [...PAGE_SWITCH_KEYS, ...FRIEND_SWITCH_KEYS]) next[x.key] = String(d.data?.[x.key] ?? 'true') === 'true';
       pageSw = next;
       pageSwSaved = { ...next };
+      subCfg = {
+        doubleOptIn: String(d.data?.subscribeDoubleOptIn ?? 'true') === 'true',
+        pushEnabled: String(d.data?.subscribePushEnabled ?? 'true') === 'true',
+        feedUrl: String(d.data?.subscribeFeedUrl ?? ''),
+      };
+      subCfgSaved = { ...subCfg };
     } catch (e) {
       /* 读不到时保持默认全开，但必须让人看见：否则复选框的状态是假的，保存还会把配置改成全开 */
       pageSwNotice = `页面开关读取失败：${e instanceof Error ? e.message : '请求失败'}`;
@@ -393,7 +405,7 @@ async function save() {
       saveError = `有 ${found.length} 处内容不合法，已经拦下没有提交（清单见上方红框）`;
       return;
     }
-    if (!pendingKeys.length) {
+    if (!pendingKeys.length && !subCfgDirty) {
       saveError = '没有需要保存的改动：内容没变的段不会重复写入，也不会触发构建';
       return;
     }
@@ -408,17 +420,30 @@ async function save() {
 
     saving = true;
     try {
-      const res = await post<{ data: SaveResult }>('/api/admin/frontend', body);
-      const d = res.data;
-      saveMessage = d.message || '已保存';
-      saveWritten = d.written ?? [];
-      const notes: string[] = [];
-      if (d.build?.triggered) notes.push('已请求 Cloudflare Pages 重新构建，前台几分钟内更新。');
-      else if (d.build && d.build.triggered === false) notes.push(buildNote(d.build.error));
-      else if (triggerBuild) notes.push('后端没有返回构建结果，按未触发处理；前台没更新就手动重建一次。');
-      saveNote = notes;
-      if (d.notice) saveError = d.notice;
-      await load();
+      let message = '';
+      if (pendingKeys.length) {
+        const res = await post<{ data: SaveResult }>('/api/admin/frontend', body);
+        const d = res.data;
+        message = d.message || '已保存';
+        saveWritten = d.written ?? [];
+        const notes: string[] = [];
+        if (d.build?.triggered) notes.push('已请求 Cloudflare Pages 重新构建，前台几分钟内更新。');
+        else if (d.build && d.build.triggered === false) notes.push(buildNote(d.build.error));
+        else if (triggerBuild) notes.push('后端没有返回构建结果，按未触发处理；前台没更新就手动重建一次。');
+        saveNote = notes;
+        if (d.notice) saveError = d.notice;
+        await load();
+      }
+      if (subCfgDirty) {
+        await patch('/api/admin/config', {
+          subscribeDoubleOptIn: subCfg.doubleOptIn,
+          subscribePushEnabled: subCfg.pushEnabled,
+          subscribeFeedUrl: subCfg.feedUrl,
+        });
+        subCfgSaved = { ...subCfg };
+        message = message ? `${message}；订阅设置已保存` : '订阅设置已保存';
+      }
+      saveMessage = message || '已保存';
     } catch (e) {
       // 后端 400 / 502 的中文 message 原样显示
       saveError = errText(e);
@@ -568,7 +593,7 @@ async function save() {
     {:else if sec === 'search'}
       <PageHeaderPanel bind:section={forms.search} page="搜索页" />
     {:else if sec === 'subscribe'}
-      <PageHeaderPanel bind:section={forms.subscribe} page="订阅页" />
+      <SubscribePanel bind:section={forms.subscribe} bind:doubleOptIn={subCfg.doubleOptIn} bind:pushEnabled={subCfg.pushEnabled} bind:feedUrl={subCfg.feedUrl} />
     {:else}
       <SeoPanel seo={forms.seo} />
     {/if}
@@ -593,9 +618,9 @@ async function save() {
         {:else if saving}
           <span class="badge pending">保存中…</span>
           <span class="muted small">{progressText}</span>
-        {:else if pendingKeys.length}
-          <span class="badge">{pendingKeys.length} 段待保存</span>
-          <span class="muted small">{pendingKeys.map((k) => `${SECTION_META[k].label}${pendingMap[k] === 'delete' ? '（删除）' : ''}`).join('、')}</span>
+        {:else if pendingKeys.length || subCfgDirty}
+          <span class="badge">{pendingKeys.length + (subCfgDirty ? 1 : 0)} 处待保存</span>
+          <span class="muted small">{[...pendingKeys.map((k) => `${SECTION_META[k].label}${pendingMap[k] === 'delete' ? '（删除）' : ''}`), subCfgDirty ? '订阅设置' : ''].filter(Boolean).join('、')}</span>
           {#if liveIssues.length}
             <span class="badge bad">{liveIssues.length} 处待修正</span>
           {/if}

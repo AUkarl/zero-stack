@@ -494,14 +494,16 @@
           <img src={mediaLink(selected, it.key)} alt={it.key} loading="lazy" />
         </button>
       {:else}
-        <div class="file">🗎 {it.name.split('/').pop()}</div>
+        <button class="file" onclick={() => openPreview(it)} aria-label="预览">
+          <span class="ext">{extName(it.key).replace('.', '').toUpperCase() || 'FILE'}</span>
+          <span class="fname">{it.name.split('/').pop()}</span>
+        </button>
       {/if}
       <div class="meta">
         <span class="nm" title={it.key}>{it.name.split('/').pop()}</span>
         <span class="muted">{fmtTime(it.uploaded)} · {fmtSize(it.size)} · {KIND_LABEL[it.kind] ?? '其他'}</span>
         <div class="ops">
-          <button class="sm" onclick={() => openPreview(it)}>预览</button>
-          <button class="sm" onclick={() => void copy(it.key)}>复制链接</button>
+          <button class="sm" onclick={() => void copy(it.key)} title="复制链接">复制</button>
           <button class="sm danger" onclick={() => void remove(it.key)}>删除</button>
         </div>
       </div>
@@ -725,27 +727,56 @@
     border-radius: 6px;
     background: var(--panel-2);
   }
+  .tile:has(.thumb:hover),
+  .tile:has(.file:hover) {
+    border-color: var(--accent);
+  }
   .file {
     aspect-ratio: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 0.35rem;
     background: var(--accent-soft);
+    border: 0;
     border-radius: 6px;
     font-size: 0.78rem;
-    padding: 0.4rem;
-    word-break: break-all;
-    text-align: center;
+    padding: 0.5rem;
+    cursor: zoom-in;
+    color: var(--fg);
+  }
+  .file .ext {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+  }
+  .file .fname {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
   }
   .meta {
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
     font-size: 0.78rem;
+    min-width: 0;
+  }
+  .nm {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .ops {
     display: flex;
     gap: 0.3rem;
+  }
+  .ops button {
+    flex: 1;
   }
   .scrim {
     position: fixed;

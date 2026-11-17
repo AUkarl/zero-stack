@@ -94,6 +94,7 @@ export interface ContactItem {
 export interface AboutSection {
   showTitle: boolean;
   title: string;
+  showDesc: boolean;
   desc: string;
   tagline: string;
   bio: string[];
@@ -111,6 +112,7 @@ export interface WorkItem {
 export interface WorksSection {
   showTitle: boolean;
   title: string;
+  showDesc: boolean;
   desc: string;
   items: WorkItem[];
 }
@@ -127,6 +129,7 @@ export interface ApplyRow {
 export interface ApplySection {
   showTitle: boolean;
   title: string;
+  showDesc: boolean;
   desc: string;
   intro: string;
   requirements: string[];
@@ -137,6 +140,7 @@ export interface ApplySection {
 export interface MomentsSection {
   showTitle: boolean;
   title: string;
+  showDesc: boolean;
   desc: string;
   paginate: number;
   showLocation: boolean;
@@ -157,6 +161,7 @@ export interface MomentsSection {
 export interface PageHeaderSection {
   showTitle: boolean;
   title: string;
+  showDesc: boolean;
   desc: string;
 }
 
@@ -331,11 +336,12 @@ export const blankForms = (): Forms => ({
   nav: { items: [blankNavItem()] },
   home: { layout: 'bento', showTitle: true, title: '', desc: '', showDesc: true },
   footer: { copyrightText: '', showPoweredBy: true, poweredByText: '', poweredByLink: '', icpItems: [], showServiceName: true, services: [], socialRow1: [], socialRow2: [] },
-  about: { showTitle: true, title: '', desc: '', tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
-  works: { showTitle: true, title: '', desc: '', items: [{ title: '', desc: '', status: '', url: '' }] },
+  about: { showTitle: true, title: '', showDesc: true, desc: '', tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
+  works: { showTitle: true, title: '', showDesc: true, desc: '', items: [{ title: '', desc: '', status: '', url: '' }] },
   moments: {
     showTitle: true,
     title: '',
+    showDesc: true,
     desc: '',
     paginate: 10,
     showLocation: true,
@@ -351,15 +357,16 @@ export const blankForms = (): Forms => ({
   apply: {
     showTitle: true,
     title: '',
+    showDesc: true,
     desc: '',
     intro: '',
     requirements: [''],
     myInfo: [{ label: '', value: '' }],
     submitExample: [{ label: '', value: '' }],
   },
-  archive: { showTitle: true, title: '', desc: '' },
-  search: { showTitle: true, title: '', desc: '' },
-  subscribe: { showTitle: true, title: '', desc: '' },
+  archive: { showTitle: true, title: '', showDesc: true, desc: '' },
+  search: { showTitle: true, title: '', showDesc: true, desc: '' },
+  subscribe: { showTitle: true, title: '', showDesc: true, desc: '' },
   // 空白模板 = params.toml 里 [seo] 的那一份默认值，主题不依赖这一层也能跑
   seo: {
     defaultDescription: '',
@@ -416,7 +423,7 @@ export function normNav(raw: unknown): NavSection {
 
 export function normHome(raw: unknown): HomeSection {
   const o = rec(raw);
-  return { layout: o.layout === 'grid' ? 'grid' : 'bento', showTitle: bool(o.showTitle, true), title: str(o.title), desc: str(o.desc), showDesc: bool(o.showDesc) };
+  return { layout: o.layout === 'grid' ? 'grid' : 'bento', showTitle: bool(o.showTitle, true), title: str(o.title), desc: str(o.desc), showDesc: bool(o.showDesc, true) };
 }
 
 const normFooterIcon = (x: unknown): FooterIconItem => {
@@ -451,6 +458,7 @@ export function normAbout(raw: unknown): AboutSection {
   return {
     showTitle: bool(o.showTitle, true),
     title: str(o.title),
+    showDesc: bool(o.showDesc, true),
     desc: str(o.desc),
     tagline: str(o.tagline),
     bio: arr(o.bio).map(str),
@@ -468,6 +476,7 @@ export function normWorks(raw: unknown): WorksSection {
   return {
     showTitle: bool(o.showTitle, true),
     title: str(o.title),
+    showDesc: bool(o.showDesc, true),
     desc: str(o.desc),
     items: arr(o.items).map((x) => {
       const w = rec(x);
@@ -482,6 +491,7 @@ export function normApply(raw: unknown): ApplySection {
   return {
     showTitle: bool(o.showTitle, true),
     title: str(o.title),
+    showDesc: bool(o.showDesc, true),
     desc: str(o.desc),
     intro: str(o.intro),
     requirements: arr(o.requirements).map(str),
@@ -492,7 +502,7 @@ export function normApply(raw: unknown): ApplySection {
 
 export function normPageHeader(raw: unknown): PageHeaderSection {
   const o = rec(raw);
-  return { showTitle: bool(o.showTitle, true), title: str(o.title), desc: str(o.desc) };
+  return { showTitle: bool(o.showTitle, true), title: str(o.title), showDesc: bool(o.showDesc, true), desc: str(o.desc) };
 }
 
 export function normSite(raw: unknown): SiteSection {
@@ -517,6 +527,7 @@ export function normMoments(raw: unknown): MomentsSection {
   return {
     showTitle: bool(o.showTitle, true),
     title: str(o.title),
+    showDesc: bool(o.showDesc, true),
     desc: str(o.desc),
     paginate: Math.min(100, Math.max(1, int(o.paginate, 10) || 10)),
     showLocation: bool(o.showLocation, true),
@@ -648,6 +659,7 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
     return {
       showTitle: !!f.showTitle,
       title: f.title.trim(),
+      showDesc: !!f.showDesc,
       desc: f.desc.trim(),
       paginate: Math.min(100, Math.max(1, int(f.paginate, 10) || 10)),
       showLocation: !!f.showLocation,
@@ -741,6 +753,7 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
     return {
       showTitle: !!f.showTitle,
       title: f.title.trim(),
+      showDesc: !!f.showDesc,
       desc: f.desc.trim(),
       tagline: f.tagline.trim(),
       bio: f.bio.map((x) => x.trim()).filter(Boolean),
@@ -753,7 +766,7 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
   }
   if (key === 'archive' || key === 'search' || key === 'subscribe') {
     const f = form as PageHeaderSection;
-    return { showTitle: !!f.showTitle, title: f.title.trim(), desc: f.desc.trim() };
+    return { showTitle: !!f.showTitle, title: f.title.trim(), showDesc: !!f.showDesc, desc: f.desc.trim() };
   }
   if (key === 'apply') {
     const f = form as ApplySection;
@@ -765,6 +778,7 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
     return {
       showTitle: !!f.showTitle,
       title: f.title.trim(),
+      showDesc: !!f.showDesc,
       desc: f.desc.trim(),
       intro: f.intro.trim(),
       requirements: f.requirements.map((x) => x.trim()).filter(Boolean),
@@ -776,6 +790,7 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
   return {
     showTitle: !!f.showTitle,
     title: f.title.trim(),
+    showDesc: !!f.showDesc,
     desc: f.desc.trim(),
     items: f.items.map((x) => ({ title: x.title.trim(), desc: x.desc.trim(), status: x.status.trim(), url: x.url.trim() })),
   };

@@ -870,6 +870,7 @@ async function finishContentWrite(
   if (!changed) return { build: null, buildHealth: null };
   await kvDelete(env, POSTS_CACHE_KEY);
   await kvDelete(env, ALL_POSTS_CACHE_KEY);
+  await kvDelete(env, 'zero:admin:stats:content');
   /* 提醒信里的标题也缓存过，改了这一篇就得连那一格一起清（见 content-title 的 purgeContentTitleCache） */
   await purgeContentTitleCache(env, paths);
   return finishRepoWrites(env, changed, triggerBuild);
@@ -2199,7 +2200,7 @@ interface PostOption {
 
 const POSTS_CACHE_KEY = 'zero:admin:posts';
 const ALL_POSTS_CACHE_KEY = 'zero:admin:posts:all';
-const POSTS_CACHE_TTL = 300;
+const POSTS_CACHE_TTL = 1800;
 
 
 /* 内容仓构建结果的回报口在 routes/build-report.ts（挂在 /api/build-report）。
@@ -2252,16 +2253,23 @@ app.get('/posts', async (c) => {
     }
   }
   const seenStem = new Set<string>();
-  for (const { path, stem } of candidates) {
-    if (seenStem.has(stem)) continue;
-    let file;
+  const readOne = async ({ path, stem }: { path: string; stem: string }) => {
     try {
-      file = await readRepoFile(env, path);
+      const file = await readRepoFile(env, path);
+      if (!file) return null;
+      const { front } = parseFrontMatter(file.content);
+      return { path, stem, front };
     } catch {
-      continue; // 单篇读失败不影响其它
+      return null;
     }
-    if (!file) continue;
-    const { front } = parseFrontMatter(file.content);
+  };
+  const loaded: Awaited<ReturnType<typeof readOne>>[] = [];
+  for (let i = 0; i < candidates.length; i += 6) {
+    loaded.push(...(await Promise.all(candidates.slice(i, i + 6).map(readOne))));
+  }
+  for (const hit of loaded) {
+    if (!hit || seenStem.has(hit.stem)) continue;
+    const { path, stem, front } = hit;
     const isDraft = front.draft === true || String(front.draft).toLowerCase() === 'true';
     if (isDraft && !all) continue;
     seenStem.add(stem);
@@ -2729,17 +2737,13 @@ app.get('/health-detail', async (c) => {
 app.get('/stats', async (c) => {
   requireAdmin(c);
   const db = createDb(c.env);
-  const [commentCount] = await db.select({ n: sql<number>`count(*)` }).from(comments);
-  const [pendingCount] = await db
-    .select({ n: sql<number>`count(*)` })
-    .from(comments)
-    .where(eq(comments.status, 'pending'));
-  const [subscriberCount] = await db.select({ n: sql<number>`count(*)` }).from(subscribers).where(eq(subscribers.status, 'confirmed'));
-  const [userCount] = await db.select({ n: sql<number>`count(*)` }).from(users);
-  const emails = await db
-    .select({ status: emailLogs.status, n: sql<number>`count(*)` })
-    .from(emailLogs)
-    .groupBy(emailLogs.status);
+  const [[commentCount], [pendingCount], [subscriberCount], [userCount], emails] = await Promise.all([
+    db.select({ n: sql<number>`count(*)` }).from(comments),
+    db.select({ n: sql<number>`count(*)` }).from(comments).where(eq(comments.status, 'pending')),
+    db.select({ n: sql<number>`count(*)` }).from(subscribers).where(eq(subscribers.status, 'confirmed')),
+    db.select({ n: sql<number>`count(*)` }).from(users),
+    db.select({ status: emailLogs.status, n: sql<number>`count(*)` }).from(emailLogs).groupBy(emailLogs.status),
+  ]);
   return ok({
     comments: Number(commentCount?.n ?? 0),
     pendingComments: Number(pendingCount?.n ?? 0),
@@ -2786,19 +2790,26 @@ app.get('/stats/content', async (c) => {
   const postsDir = (await getConfig(c.env, 'githubPostsDir'))?.trim() || 'content/zh/posts';
   const momentsDir = (await getConfig(c.env, 'githubMomentsDir'))?.trim() || 'content/zh/moments';
   const isPage = (p: string) => !(p.split('/').pop() ?? '').startsWith('_');
+  const cacheKey = 'zero:admin:stats:content';
+  const cached = (await kvGet(c.env, cacheKey)) as { postsDir?: string; momentsDir?: string; posts: number; moments: number; capped?: boolean } | null;
+  if (cached && cached.postsDir === postsDir && cached.momentsDir === momentsDir) return ok(cached);
   try {
     const target = await repoTarget(c.env);
-    const [posts, moments] = await Promise.all([
-      (await walkFiles(target, postsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP })).filter(isPage),
-      (await walkFiles(target, momentsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP })).filter(isPage),
+    const [postFiles, momentFiles] = await Promise.all([
+      walkFiles(target, postsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP }),
+      walkFiles(target, momentsDir, { exts: ['.md'], cap: CONTENT_COUNT_CAP }),
     ]);
-    return ok({
+    const posts = postFiles.filter(isPage);
+    const moments = momentFiles.filter(isPage);
+    const payload = {
       postsDir,
       momentsDir,
       posts: posts.length,
       moments: moments.length,
       capped: posts.length >= CONTENT_COUNT_CAP || moments.length >= CONTENT_COUNT_CAP,
-    });
+    };
+    await kvPut(c.env, cacheKey, payload, 120);
+    return ok(payload);
   } catch (e) {
     return ok({ postsDir, momentsDir, posts: 0, moments: 0, capped: false, error: errorMessage(e) });
   }

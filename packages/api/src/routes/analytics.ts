@@ -176,19 +176,21 @@ app.get('/summary', async (c) => {
        *   按默认 365 天留存，一年就是上百万行，开一次后台就把当天的 D1 读额度烧掉一大截，
        *   而清理只删明细不动计数器，累计值本来也不会倒退。
        */
-      const [today] = await db
-        .select({ n: sql<number>`count(*)`, s: visitorDistinctSql() })
-        .from(visits)
-        .where(and(gte(visits.createdAt, todayStart)));
-      const online = await db
-        .select({ s: visitorDistinctSql() })
-        .from(visits)
-        .where(and(gte(visits.createdAt, onlineWindow)));
-      const avg = await db
-        .select({ d: sql<number>`coalesce(avg(duration), 0)` })
-        .from(visits)
-        .where(and(gte(visits.createdAt, todayStart - 7 * 86400)));
-      const [lifetime, meta] = await Promise.all([lifetimeStats(env), statsMeta(env)]);
+      const [[today], online, avg, [lifetime, meta]] = await Promise.all([
+        db
+          .select({ n: sql<number>`count(*)`, s: visitorDistinctSql() })
+          .from(visits)
+          .where(and(gte(visits.createdAt, todayStart))),
+        db
+          .select({ s: visitorDistinctSql() })
+          .from(visits)
+          .where(and(gte(visits.createdAt, onlineWindow))),
+        db
+          .select({ d: sql<number>`coalesce(avg(duration), 0)` })
+          .from(visits)
+          .where(and(gte(visits.createdAt, todayStart - 7 * 86400))),
+        Promise.all([lifetimeStats(env), statsMeta(env)]),
+      ]);
 
       return {
         // ↓ 建站以来累计（site_config 计数器，不受到期清理影响）
@@ -262,12 +264,13 @@ app.get('/devices', async (c) => {
           .where(and(gte(visits.createdAt, since)))
           .groupBy(visits[field])
           .orderBy(desc(sql`count(*)`));
-      return {
-        device: await groupBy('device'),
-        browser: await groupBy('browser'),
-        os: await groupBy('os'),
-        country: (await groupBy('country')).slice(0, 20),
-      };
+      const [device, browser, os, country] = await Promise.all([
+        groupBy('device'),
+        groupBy('browser'),
+        groupBy('os'),
+        groupBy('country'),
+      ]);
+      return { device, browser, os, country: country.slice(0, 20) };
     }),
   );
 });
@@ -281,7 +284,7 @@ app.get('/top', async (c) => {
       // 与 /trend 同一个窗口：含今天在内共 days 天（原来这里是 days 整，比趋势多算一天）
       const since = localStartOfDay(offset) - (days - 1) * 86400;
       const db = createDb(c.env);
-      const pathRows = await db
+      const pathQuery = db
         .select({
           path: visits.path,
           views: sql<number>`count(*)`,
@@ -290,6 +293,15 @@ app.get('/top', async (c) => {
         .from(visits)
         .where(and(gte(visits.createdAt, since)))
         .groupBy(visits.path);
+      const refsQuery = db
+        .select({ referrer: visits.referrer, n: sql<number>`count(*)`, s: visitorDistinctSql() })
+        .from(visits)
+        .where(and(gte(visits.createdAt, since), sql`${visits.referrer} <> ''`))
+        .groupBy(visits.referrer)
+        .orderBy(desc(sql`count(*)`))
+        .limit(50);
+      const siteQuery = getConfig(c.env, 'siteUrl');
+      const [pathRows, refs, siteRaw] = await Promise.all([pathQuery, refsQuery, siteQuery]);
       // 同一篇文章在早期数据里可能存成 /x 与 /x/ 两行（normalizePath 之前没有强制尾斜杠），
       // 读的时候并成一条；去重访客不能相加，取两边上界，宁可少报也不虚报。
       const merged = new Map<string, { views: number; visitors: number }>();
@@ -305,16 +317,9 @@ app.get('/top', async (c) => {
         .map(([path, v]) => ({ path, views: v.views, visitors: v.visitors }))
         .sort((a, b) => b.views - a.views || b.visitors - a.visitors)
         .slice(0, 50);
-      const refs = await db
-        .select({ referrer: visits.referrer, n: sql<number>`count(*)`, s: visitorDistinctSql() })
-        .from(visits)
-        .where(and(gte(visits.createdAt, since), sql`${visits.referrer} <> ''`))
-        .groupBy(visits.referrer)
-        .orderBy(desc(sql`count(*)`))
-        .limit(50);
       // siteUrl 给后台拼「点开就是站点页面」的绝对链接：后台和站点常常不同源，
       // 直接用站内相对路径会在后台自己的域名下 404
-      const site = ((await getConfig(c.env, 'siteUrl')) ?? c.env.SITE_URL ?? '').replace(/\/+$/, '');
+      const site = (siteRaw ?? c.env.SITE_URL ?? '').replace(/\/+$/, '');
       return {
         site,
         days,

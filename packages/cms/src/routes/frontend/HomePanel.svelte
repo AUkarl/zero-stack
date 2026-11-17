@@ -1,6 +1,6 @@
 <script lang="ts">
   import { LIMIT, type HomeSection } from './types';
-  import PageTitleFields from './PageTitleFields.svelte';
+  import PageHeaderFields from './PageHeaderFields.svelte';
 
   let { home }: { home: HomeSection } = $props();
 
@@ -12,7 +12,7 @@
 
 <section class="card blk">
   <h3>页面标题</h3>
-  <PageTitleFields bind:showTitle={home.showTitle} bind:title={home.title} defaultTitle="主页" />
+  <PageHeaderFields bind:showTitle={home.showTitle} bind:title={home.title} bind:showDesc={home.showDesc} bind:desc={home.desc} defaultTitle="主页" />
 </section>
 
 <section class="card blk">
@@ -27,25 +27,7 @@
   </div>
 </section>
 
-<section class="card blk">
-  <h3>首页描述</h3>
-  <label class="switch">
-    <input type="checkbox" bind:checked={home.showDesc} />
-    <span>显示描述</span>
-  </label>
-  <label>
-    描述文字
-    <textarea rows="2" bind:value={home.desc} maxlength={LIMIT.short} placeholder="这里永远有一摩尔的不确定性"></textarea>
-    <span class="muted small cnt">{home.desc.length}/{LIMIT.short} 字{home.desc.length >= LIMIT.short ? '（已到上限）' : ''}</span>
-  </label>
-  <div class="pv">
-    {#if home.showDesc && home.desc.trim()}
-      <span class="pvtext">{home.desc.trim()}</span>
-    {:else}
-      <span class="muted small">（不显示）</span>
-    {/if}
-  </div>
-</section>
+
 
 <style>
   .blk {
@@ -86,25 +68,4 @@
   .od {
     line-height: 1.5;
   }
-  .switch {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.45rem;
-    font-size: 0.88rem;
-    color: var(--fg);
-  }
-  .cnt {
-    font-size: 0.72rem;
-  }
-  .pv {
-    border-top: 1px dashed var(--border);
-    padding-top: 0.45rem;
-    display: flex;
-    align-items: baseline;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-  }
-  .pvtext {
-    font-size: 0.9rem;
-  }
-</style>
+        </style>

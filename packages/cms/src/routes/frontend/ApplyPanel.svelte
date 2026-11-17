@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CAP, LIMIT, type ApplyRow, type ApplySection } from './types';
-  import PageTitleFields from './PageTitleFields.svelte';
+  import PageHeaderFields from './PageHeaderFields.svelte';
 
   let { apply }: { apply: ApplySection } = $props();
 
@@ -76,8 +76,7 @@
 
 <section class="card blk">
   <h3>友链页头部</h3>
-  <PageTitleFields bind:showTitle={apply.showTitle} bind:title={apply.title} defaultTitle="友链" />
-  <label>标题下的描述<input bind:value={apply.desc} maxlength={LIMIT.short} /></label>
+  <PageHeaderFields bind:showTitle={apply.showTitle} bind:title={apply.title} bind:showDesc={apply.showDesc} bind:desc={apply.desc} defaultTitle="友链" />
 </section>
 
 <section class="card blk">

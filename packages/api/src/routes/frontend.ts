@@ -173,6 +173,7 @@ const footerSchema = z.object({
 const aboutSchema = z.object({
   showTitle: z.boolean().default(true),
   title: short.default(''),
+  showDesc: z.boolean().default(true),
   desc: short,
   tagline: short,
   bio: z.array(long).max(60),
@@ -187,6 +188,7 @@ const aboutSchema = z.object({
 const worksSchema = z.object({
   showTitle: z.boolean().default(true),
   title: short.default(''),
+  showDesc: z.boolean().default(true),
   desc: short,
   items: z
     .array(z.object({ title: short, desc: long, status: short, url: linkUrl }))
@@ -208,6 +210,7 @@ const infoRow = z.object({ label: short, value: short });
 const applySchema = z.object({
   showTitle: z.boolean().default(true),
   title: short.default(''),
+  showDesc: z.boolean().default(true),
   desc: short.default(''),
   /** 「友链要求」标题下那段引导语 */
   intro: long.default(''),
@@ -269,6 +272,7 @@ const siteSchema = z.object({
 const momentsSchema = z.object({
   showTitle: z.boolean().default(true),
   title: short.default(''),
+  showDesc: z.boolean().default(true),
   desc: short.default(''),
   paginate: z.number().int().min(1).max(100).default(10),
   showLocation: z.boolean().default(true),
@@ -290,6 +294,7 @@ const momentsSchema = z.object({
 const pageHeaderSchema = z.object({
   showTitle: z.boolean().default(true),
   title: short.default(''),
+  showDesc: z.boolean().default(true),
   desc: short.default(''),
 });
 
@@ -673,8 +678,9 @@ app.get('/', async (c) => {
   const dir = await dataDir(c.env);
   const out: Record<string, unknown> = {};
   const notices: string[] = [];
-  for (const key of Object.keys(SECTIONS) as SectionKey[]) {
-    const hit = await readSection(c.env, dir, key);
+  const keys = Object.keys(SECTIONS) as SectionKey[];
+  const hits = await Promise.all(keys.map(async (key) => ({ key, hit: await readSection(c.env, dir, key) })));
+  for (const { key, hit } of hits) {
     out[key] = hit?.value ?? null;
     if (hit?.notice) notices.push(hit.notice);
   }

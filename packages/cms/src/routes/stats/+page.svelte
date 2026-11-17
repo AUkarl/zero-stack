@@ -97,36 +97,45 @@
     loading = true;
     error = '';
     try {
-      const [s, t, dv, tp, bz, rx, ps, cfg, ct, ds] = await Promise.all([
+      const [s, t, dv, tp, bz, rx, cfg] = await Promise.all([
         get<{ data: Summary }>('/api/analytics/summary'),
         get<{ data: Point[] }>(`/api/analytics/trend?days=${days}`),
         get<{ data: Devices }>('/api/analytics/devices'),
         get<{ data: Top }>('/api/analytics/top'),
         get<{ data: Biz }>('/api/admin/stats'),
         get<{ data: ReactionStats }>('/api/admin/stats/reactions?limit=30'),
-        get<{ data: { path: string; title: string }[] }>('/api/admin/posts'),
         get<{ data: Record<string, string> }>('/api/admin/config'),
-        // 文章/时刻计数是独立的递归目录接口；它失败不能把整页统计带崩
-        get<{ data: { posts: number; moments: number } }>('/api/admin/stats/content').catch(() => null),
-        get<{ data: { pending?: number } }>('/api/admin/drafts/stats').catch(() => null),
       ]);
       summary = s.data;
       trend = t.data;
       devices = dv.data;
       top = tp.data;
-      biz = { ...bz.data, posts: ct?.data?.posts, moments: ct?.data?.moments, pendingDrafts: ds?.data?.pending };
+      biz = { ...bz.data };
       reactions = rx.data;
-      const map: Record<string, string> = {};
-      for (const p of ps.data ?? []) {
-        /* 两种布局都要认：扁平 `<名>.md` 直接用文件名，页面包 `<名>/index.md` 用上一层目录名。
-           以前只按 `.md` 文件名建键，页面包的文章在这页上就是一列「—」。 */
-        const segs = p.path.split('/').filter(Boolean);
-        const last = segs.pop() ?? '';
-        const stem = /^index\.mdx?$/i.test(last) ? (segs.pop() ?? '') : last.replace(/\.mdx?$/i, '');
-        if (stem && /(^|\/)posts\//.test(p.path)) map[`/posts/${stem}/`] = p.title;
-      }
-      titles = map;
       enabled = cfg.data.analyticsEnabled !== 'false';
+      /* 标题与内容计数依赖仓库，可能慢；不挡整页，到了再补 */
+      void get<{ data: { path: string; title: string }[] }>('/api/admin/posts')
+        .then((ps) => {
+          const map: Record<string, string> = {};
+          for (const p of ps.data ?? []) {
+            const segs = p.path.split('/').filter(Boolean);
+            const last = segs.pop() ?? '';
+            const stem = /^index\.mdx?$/i.test(last) ? (segs.pop() ?? '') : last.replace(/\.mdx?$/i, '');
+            if (stem && /(^|\/)posts\//.test(p.path)) map[`/posts/${stem}/`] = p.title;
+          }
+          titles = map;
+        })
+        .catch(() => undefined);
+      void get<{ data: { posts: number; moments: number } }>('/api/admin/stats/content')
+        .then((ct) => {
+          biz = biz ? { ...biz, posts: ct.data.posts, moments: ct.data.moments } : biz;
+        })
+        .catch(() => undefined);
+      void get<{ data: { pending?: number } }>('/api/admin/drafts/stats')
+        .then((ds) => {
+          biz = biz ? { ...biz, pendingDrafts: ds.data.pending } : biz;
+        })
+        .catch(() => undefined);
     } catch (e) {
       error = e instanceof Error ? e.message : '读取统计失败';
     } finally {

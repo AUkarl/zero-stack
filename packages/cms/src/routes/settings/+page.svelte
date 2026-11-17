@@ -157,17 +157,8 @@
       title: '点赞与收藏',
       fields: [
         { key: 'likeEnabled', label: '开启点赞', kind: 'bool' },
-        { key: 'likeAllowAnonymous', label: '允许游客点赞', kind: 'bool', hint: '按设备指纹去重' },
+        { key: 'likeAllowAnonymous', label: '允许游客点赞', kind: 'bool' },
         { key: 'starEnabled', label: '开启收藏', kind: 'bool' },
-      ],
-    },
-    {
-      title: '邮件订阅',
-      fields: [
-        { key: 'subscribeEnabled', label: '开启订阅', kind: 'bool' },
-        { key: 'subscribeDoubleOptIn', label: '双重确认', kind: 'bool' },
-        { key: 'subscribePushEnabled', label: '新文章自动推送', kind: 'bool', hint: '每天一次，只发已确认订阅者' },
-        { key: 'subscribeFeedUrl', label: '用于比对的 RSS 地址' },
       ],
     },
     {

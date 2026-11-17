@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CAP, LIMIT, type AboutSection, type ContactItem } from './types';
-  import PageTitleFields from './PageTitleFields.svelte';
+  import PageHeaderFields from './PageHeaderFields.svelte';
 
   let { about }: { about: AboutSection } = $props();
 
@@ -67,19 +67,12 @@
 
 <section class="card blk">
   <h3>关于页头部</h3>
-  <PageTitleFields bind:showTitle={about.showTitle} bind:title={about.title} defaultTitle="关于" />
-  <div class="grid">
-    <label>
-      描述
-      <input bind:value={about.desc} maxlength={LIMIT.short} placeholder="云朵会散，但摩尔永恒" />
-      <span class="muted small cnt">{about.desc.length}/{LIMIT.short}</span>
-    </label>
-    <label>
-      个性签名
-      <input bind:value={about.tagline} maxlength={LIMIT.short} placeholder="日上三竿我独眠，谁是神仙，我是神仙" />
-      <span class="muted small cnt">{about.tagline.length}/{LIMIT.short}</span>
-    </label>
-  </div>
+  <PageHeaderFields bind:showTitle={about.showTitle} bind:title={about.title} bind:showDesc={about.showDesc} bind:desc={about.desc} defaultTitle="关于" />
+  <label>
+    个性签名
+    <input bind:value={about.tagline} maxlength={LIMIT.short} placeholder="日上三竿我独眠，谁是神仙，我是神仙" />
+    <span class="muted small cnt">{about.tagline.length}/{LIMIT.short}</span>
+  </label>
 </section>
 
 {#each PARA_BLOCKS as b (b.field)}

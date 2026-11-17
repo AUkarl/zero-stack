@@ -1,14 +1,13 @@
 <script lang="ts">
-  import { LIMIT, type PageHeaderSection } from './types';
-  import PageTitleFields from './PageTitleFields.svelte';
+  import type { PageHeaderSection } from './types';
+  import PageHeaderFields from './PageHeaderFields.svelte';
 
   let { section = $bindable(), page }: { section: PageHeaderSection; page: string } = $props();
 </script>
 
 <section class="card blk">
   <h3>{page}标题</h3>
-  <PageTitleFields bind:showTitle={section.showTitle} bind:title={section.title} defaultTitle={page.replace(/页$/, '')} />
-  <label>标题下的描述<textarea rows="2" bind:value={section.desc} maxlength={LIMIT.short}></textarea></label>
+  <PageHeaderFields bind:showTitle={section.showTitle} bind:title={section.title} bind:showDesc={section.showDesc} bind:desc={section.desc} defaultTitle={page.replace(/页$/, '')} />
 </section>
 
 <style>
