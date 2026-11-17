@@ -63,7 +63,8 @@
     renameName = f ? (f.split('/').pop() ?? '').replace(/\.mdx?$/i, '') : '';
   });
   const fileStem = $derived((file.split('/').pop() ?? '').replace(/\.mdx?$/i, ''));
-  const canRename = $derived(!!sha && !!renameName.trim() && renameName.trim().replace(/\.mdx?$/i, '') !== fileStem);
+  const renamable = $derived(!!sha && /(^|\/)posts\//.test(file) && !/^_?index\.mdx?$/i.test(file.split('/').pop() ?? ''));
+  const canRename = $derived(renamable && !!renameName.trim() && renameName.trim().replace(/\.mdx?$/i, '') !== fileStem);
 
   const dirty = $derived(JSON.stringify(form) !== JSON.stringify(baseForm) || body !== baseBody);
 
@@ -1006,7 +1007,7 @@
     {#if file}
       <div class="card pane">
         <div class="row spread">
-          {#if sha}
+          {#if renamable}
             <div class="row rename">
               <span class="lbl">文件名</span>
               <input class="rn" bind:value={renameName} onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), void renameFile())} aria-label="文件名" />

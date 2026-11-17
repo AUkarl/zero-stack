@@ -1095,6 +1095,7 @@ app.post('/content/rename', async (c) => {
   const admin = requireAdmin(c);
   const body = (await c.req.json().catch(() => null)) as { path?: string; name?: string } | null;
   const oldPath = safePath(body?.path ?? '');
+  if (!isPostPath(oldPath)) fail(400, '只有文章支持改名');
   const oldName = oldPath.split('/').pop() ?? '';
   if (/^_?index\.mdx?$/i.test(oldName)) fail(400, 'index / _index 文件对应目录地址，不能直接改名');
 
