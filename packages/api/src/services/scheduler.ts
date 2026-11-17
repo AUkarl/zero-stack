@@ -193,8 +193,7 @@ async function checkFriends(env: Env): Promise<string> {
   const candidates = await db
     .select()
     .from(friends)
-    .where(eligible(now))
-    .limit(100);
+    .where(eligible(now));
   const due = (f: (typeof candidates)[number]) => !f.lastCheckedAt || now - f.lastCheckedAt >= intervalH * 3600;
   const rows = candidates.filter(due);
 
@@ -241,7 +240,7 @@ async function checkFriends(env: Env): Promise<string> {
  */
 async function fetchFriendFeeds(env: Env, feedWindow?: Map<string, Set<string>>): Promise<string> {
   const db = createDb(env);
-  const all = await db.select().from(friends).where(eligible(Math.floor(Date.now() / 1000))).limit(100);
+  const all = await db.select().from(friends).where(eligible(Math.floor(Date.now() / 1000)));
   /*
    * 朋友动态只收「友链」，站点联盟不参与：联盟条目是互挂的站，抓它的旧文章上动态页
    * 既没意义也会挤掉真朋友。kind 为空的老数据按友链处理。
@@ -320,7 +319,7 @@ async function syncFriendFiles(
   const rows = await db.select().from(friends).orderBy(asc(friends.sortOrder), asc(friends.createdAt));
   /* 友链表为空也要往下走：links.yaml 里可能还留着站（还没导入 D1），而 D1 派生出来的
      friendfeed/linksstatus 必须写成空结构。以前这里早退，删光最后一条友链后旧动态永久留在文件里。 */
-  const posts = await db.select().from(friendPosts).orderBy(desc(friendPosts.pubDate)).limit(200);
+  const posts = await db.select().from(friendPosts).orderBy(desc(friendPosts.pubDate));
 
   const byId = new Map(rows.map((f) => [f.id, f]));
   const now = Math.floor(Date.now() / 1000);
@@ -338,21 +337,21 @@ async function syncFriendFiles(
    */
   const allianceUrls = new Set(rows.filter((f) => f.kind === 'alliance').map((f) => normalizeFriendUrl(f.url)));
   let dropped = 0;
+  /* 每个友链最多保留最新 10 条；总条数不设上限。
+     posts 已按发布时间倒序，这里按 friendId 计数就是各站最新的十条。 */
+  const perFriend = new Map<string, number>();
   const mine = posts.filter((p) => {
     const owner = byId.get(p.friendId);
-    /* 友链已从 D1 删除时，它的历史文章也不该再冒出来（删除接口会清 friend_posts，
-       这里再兜一层：老库或异常中断留下的孤儿行不能在「朋友动态」里复活）。 */
     if (!owner) return false;
     if (owner.kind === 'alliance') return false;
-    /* 站主定的口径：动态只留「这一轮对方 RSS 里还在的」文章，不在的就删掉，不留旧数据 ——
-       那些已经掉出对方 feed 窗口的老条目再也补不到封面，会一直顶着一个网站图标。
-       这一轮没抓到这个站的（没开自动抓取，或者抓取失败）不参与裁剪，
-       否则对方站点抖一下就把那个站的动态整片清空。 */
     const seen = feedWindow?.get(p.friendId);
     if (seen && !seen.has(p.link)) {
       dropped++;
       return false;
     }
+    const n = perFriend.get(p.friendId) ?? 0;
+    if (n >= 10) return false;
+    perFriend.set(p.friendId, n + 1);
     return true;
   });
 
@@ -392,7 +391,7 @@ async function syncFriendFiles(
     // 没有新内容时这份文件就该一个字节都不变，否则每次都算「有改动」，白触发一次 Pages 构建
     updated: mine.length ? new Date((mine[0]!.pubDate ?? mine[0]!.fetchedAt) * 1000).toISOString() : '',
     count: mine.length,
-    items: mine.slice(0, 60).map((p) => {
+    items: mine.map((p) => {
       const owner = byId.get(p.friendId);
       return {
         title: p.title,
@@ -434,9 +433,18 @@ async function syncFriendFiles(
   const kept = (oldFeed?.items ?? []).filter(
     (it) => !inDb.has(norm(it.siteurl ?? '')) && listed.has(norm(it.siteurl ?? '')) && !allianceUrls.has(norm(it.siteurl ?? '')),
   );
-  const items = [...feed.items, ...kept]
-    .sort((a, b) => String((b as { date?: string }).date ?? '').localeCompare(String((a as { date?: string }).date ?? '')))
-    .slice(0, 80);
+  const sorted = [...feed.items, ...kept].sort((a, b) =>
+    String((b as { date?: string }).date ?? '').localeCompare(String((a as { date?: string }).date ?? '')),
+  );
+  /* 合并旧文件时也按站截到 10 条；总数不截。 */
+  const perSite = new Map<string, number>();
+  const items = sorted.filter((it) => {
+    const key = norm(it.siteurl ?? '');
+    const n = perSite.get(key) ?? 0;
+    if (n >= 10) return false;
+    perSite.set(key, n + 1);
+    return true;
+  });
   const mergedFeed = { updated: feed.updated, count: items.length, items };
 
   const files: [string, string][] = [
