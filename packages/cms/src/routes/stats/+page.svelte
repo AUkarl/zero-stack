@@ -149,7 +149,7 @@
     summary ? typeof summary.allTimeViews === 'number' && typeof summary.totalUniqueIpVisitors === 'number' : false,
   );
   const visitorName = $derived(
-    hasIp || hasIpTrend ? '独立访客（按 IP 去重）' : '访客数（按会话，后端待补 IP 去重字段）',
+    hasIp || hasIpTrend ? '独立访客' : '访客',
   );
 
   const series = $derived([
@@ -266,20 +266,20 @@
   {#each [
       { label: '今日访问', value: summary?.todayViews ?? '—', tip: '今日页面浏览次数' },
       {
-        label: '独立访客（按 IP 去重）',
+        label: '独立访客',
         value: summary?.todayUniqueIpVisitors ?? '—',
         tip: hasIp ? '今日按访客 IP 哈希去重的人数' : '后端 analytics/summary 未返回 todayUniqueIpVisitors，暂无法统计',
       },
-      { label: '当前在线', value: summary?.onlineNow ?? '—', tip: '最近 5 分钟活跃访客（同样按 IP 去重）' },
+      { label: '在线', value: summary?.onlineNow ?? '—', tip: '最近 5 分钟活跃访客（按 IP 去重）' },
       {
-        label: '建站以来累计访问人数',
+        label: '累计访客',
         value: summary?.totalUniqueIpVisitors ?? '—',
         tip: hasLifetime
           ? '全站历史按 IP 去重的访客总数；记在 site_config 计数器里，明细到保留期被清理也不会变小'
           : '后端 analytics/summary 未返回 totalUniqueIpVisitors，暂无法统计',
       },
       {
-        label: '累计访问量',
+        label: '累计浏览',
         value: summary?.allTimeViews ?? summary?.totalViews ?? '—',
         tip: hasLifetime ? '建站以来的页面浏览总次数，不受到期清理影响' : '后端未返回 allTimeViews，这里显示的是现存明细的浏览总数',
       },
@@ -291,12 +291,6 @@
     </div>
   {/each}
 </div>
-
-{#if summary}
-  <p class="muted small ipnote">
-    访客数据按 IP 去重。总访问量与独立访客是永久计数器，其余数据保留 {summary.retentionDays ?? 365} 天，用于按天/按页的趋势与排行。
-  </p>
-{/if}
 
 <section class="card">
   <h3>趋势</h3>
@@ -500,10 +494,6 @@
   }
   .kpi .l {
     font-size: 0.78rem;
-  }
-  .ipnote {
-    margin: 0 0 0.8rem;
-    line-height: 1.7;
   }
   .ok.small,
   .warn {

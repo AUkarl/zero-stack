@@ -802,4 +802,9 @@ async function save() {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
+  @media (max-width: 480px) {
+    .swgrid {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>

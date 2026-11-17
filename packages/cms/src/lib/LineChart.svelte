@@ -14,7 +14,7 @@
 
   const W = 600;
   const H = $derived(height);
-  const PAD = { l: 34, r: 8, t: 10, b: 20 };
+  const PAD = { l: 34, r: 30, t: 10, b: 20 };
 
   const max = $derived(Math.max(1, ...series.flatMap((s) => s.values)));
   const n = $derived(labels.length);

@@ -459,10 +459,7 @@
   {/if}
   {#if !bucketsFromApi}<span class="warn"> · 未读到 /api/admin/media/buckets，暂用配置 mediaBuckets 渲染。</span>{/if}
   {#if selected && linkKind !== 'direct'}
-    <span class="warn">
-      · 这个桶没有公开域名，「复制链接」给的是 Worker 代理地址。
-      {#if linkKind === 'relative'}接口域名也没读到，这条现在还是站内相对路径 —— 站点与接口不同源时放进正文访客看不到。{/if}
-    </span>
+    <span class="warn">· 无公开域名，复制的是代理地址{#if linkKind === 'relative'}（相对路径）{/if}</span>
   {/if}
 </p>
 
