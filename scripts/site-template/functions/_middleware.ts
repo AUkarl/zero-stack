@@ -185,7 +185,7 @@ function applySecurityHeaders(res: Response): Response {
     res.headers.set('X-Content-Type-Options', 'nosniff');
     res.headers.set('X-Frame-Options', 'SAMEORIGIN');
     res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
+    res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self), web-share=(self)');
     res.headers.set('Content-Security-Policy', CSP);
     return res;
   } catch {
@@ -193,7 +193,7 @@ function applySecurityHeaders(res: Response): Response {
     headers.set('X-Content-Type-Options', 'nosniff');
     headers.set('X-Frame-Options', 'SAMEORIGIN');
     headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-    headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self)');
+    headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), fullscreen=(self), web-share=(self)');
     headers.set('Content-Security-Policy', CSP);
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   }

@@ -12,7 +12,7 @@
 
 <section class="card blk">
   <h3>页面标题</h3>
-  <PageHeaderFields bind:showTitle={home.showTitle} bind:title={home.title} bind:showDesc={home.showDesc} bind:desc={home.desc} defaultTitle="站点名" />
+  <PageHeaderFields bind:showTitle={home.showTitle} bind:title={home.title} bind:showDesc={home.showDesc} bind:desc={home.desc} defaultTitle="主页" />
 </section>
 
 <section class="card blk">
