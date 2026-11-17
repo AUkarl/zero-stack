@@ -415,10 +415,6 @@
   </div>
 </div>
 
-<p class="muted small">
-  发布即写仓库 <code>{momentsDir}/&lt;slug&gt;.md</code>，目录取自设置页 githubMomentsDir。
-</p>
-
 <section class="card form">
   <div class="row spread">
     <h3>{editing ? '编辑时刻' : '发一条时刻'}</h3>

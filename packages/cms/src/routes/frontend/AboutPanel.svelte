@@ -68,21 +68,16 @@
   <h3>关于页头部</h3>
   <div class="grid">
     <label>
-      描述 desc（标题下方那一行）
+      描述
       <input bind:value={about.desc} maxlength={LIMIT.short} placeholder="云朵会散，但摩尔永恒" />
       <span class="muted small cnt">{about.desc.length}/{LIMIT.short}</span>
     </label>
     <label>
-      个性签名 tagline（显示在名字下方）
+      个性签名
       <input bind:value={about.tagline} maxlength={LIMIT.short} placeholder="日上三竿我独眠，谁是神仙，我是神仙" />
       <span class="muted small cnt">{about.tagline.length}/{LIMIT.short}</span>
     </label>
   </div>
-  <p class="muted small">
-    头像、名字、以及各个区块要不要显示（<code>show_bio</code> / <code>show_site</code> / <code>show_declaration</code> 等开关）
-    仍然读 params.toml 的 <code>[about]</code>；这里存的是区块正文本身。
-  </p>
-  <p class="muted small">支持 Markdown 与 <code>[[文章标识符]]</code> 短链。</p>
 </section>
 
 {#each PARA_BLOCKS as b (b.field)}
@@ -91,12 +86,12 @@
     <div class="row spread">
       <div>
         <h3>{b.title}</h3>
-        <p class="muted small">{b.hint}；每段上限 {LIMIT.long} 字，最多 {CAP.paragraph} 段（空白段保存时会自动丢掉）。</p>
+        <p class="muted small">{b.hint}；每段上限 {LIMIT.long} 字，最多 {CAP.paragraph} 段。</p>
       </div>
       <button class="sm primary" onclick={() => addPara(b.field)} disabled={list.length >= CAP.paragraph}>＋ 添加一段</button>
     </div>
     {#if !list.length}
-      <p class="muted small">还没有内容，保存后这一区在前台是空的。</p>
+      <p class="muted small">暂无内容。</p>
     {/if}
     {#each list as text, i (i)}
       <div class="para">
@@ -112,7 +107,7 @@
           rows="4"
           bind:value={about[b.field][i]}
           maxlength={LIMIT.long}
-          placeholder="一段正文，支持换行"
+          placeholder="正文"
           class:over={text.length > LIMIT.long - 200}
         ></textarea>
       </div>
@@ -123,11 +118,8 @@
 <section class="card blk">
   <div class="row spread">
     <div>
-      <h3>找到我（contacts）</h3>
-      <p class="muted small">
-        相同「分组名」的条目会归到同一组下面显示，例如都写 <code>邮件-Email</code>。最多 {CAP.contacts} 条；
-        文字和链接都留空的条目保存时会被丢掉。
-      </p>
+      <h3>找到我</h3>
+      <p class="muted small">相同「分组名」的条目归到同一组；最多 {CAP.contacts} 条。</p>
     </div>
     <button class="sm primary" onclick={addContact} disabled={about.contacts.length >= CAP.contacts}>＋ 添加联系方式</button>
   </div>
@@ -135,7 +127,7 @@
     <p class="err" role="alert">{contactWarning}</p>
   {/if}
   {#if !about.contacts.length}
-    <p class="muted small">还没有联系方式。</p>
+    <p class="muted small">暂无联系方式。</p>
   {/if}
   {#each about.contacts as c, i (c)}
     <div class="ctc">
@@ -153,23 +145,20 @@
       </div>
       <div class="grid">
         <label>
-          分组名 label
+          分组名
           <input bind:value={c.label} maxlength={LIMIT.short} placeholder="社交-Social Media" />
         </label>
         <label>
-          显示文字 text
+          显示文字
           <input bind:value={c.text} maxlength={LIMIT.short} placeholder="GitHub" />
         </label>
         <label>
-          链接 url
+          链接
           <input bind:value={c.url} maxlength={LIMIT.href} placeholder="https://github.com/… 或 mailto:x@example.com" />
         </label>
       </div>
     </div>
   {/each}
-  <p class="muted small">
-    分组标题就用上面填的 label；params.toml 里 <code>[[aboutContacts]]</code> 那个 <code>labelKey</code> 字段本页不编辑，也不用管。
-  </p>
 </section>
 
 <style>

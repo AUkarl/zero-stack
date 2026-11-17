@@ -797,10 +797,7 @@
     {/each}
   </div>
 {:else if tab === 'invites'}
-  <p class="muted small">
-    生效中 {activeInvites} 个 / 共 {invites.length} 个。只有在「设置 - 注册与邀请码」里打开「注册需邀请码」时才会校验；
-    关闭开关后所有人可凭邮箱注册。
-  </p>
+  <p class="muted small">生效中 {activeInvites} 个 / 共 {invites.length} 个。</p>
   {#if invError}<p class="err">{invError}</p>{/if}
   {#if invNotice}<p class="ok">{invNotice}</p>{/if}
   {#if copied}<p class="ok small">已复制 {copied}</p>{/if}
@@ -897,10 +894,7 @@
     </div>
   </div>
 {:else}
-  <p class="muted small">
-    用户在个人中心提交的注销申请。「通过注销」= 立刻级联删除该账号的全部数据（会话、评论、投稿、认证申请、友链申请、邀请码消费记录）
-    并移除账号，<em>不可撤销</em>；「驳回」只把申请标为已驳回，账号保持不变，备注会显示给用户。
-  </p>
+  <p class="muted small">通过注销会立即删除该账号的全部数据，不可撤销。</p>
   {#if delError}<p class="err">{delError}</p>{/if}
   {#if delNotice}<p class="ok">{delNotice}</p>{/if}
 

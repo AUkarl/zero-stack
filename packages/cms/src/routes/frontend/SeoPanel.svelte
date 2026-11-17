@@ -47,15 +47,6 @@
 </script>
 
 <section class="card blk">
-  <h3>SEO 专属项</h3>
-  <p class="muted small">
-    站点简介、关键词、分享图与 Logo 已合并到上面的「基本信息」，这里只保留 SEO 专属项。
-    保存仍写进站点 <code>data/seo.json</code>，主题按「data 优先、<code>params.toml</code> 的 <code>[seo]</code> 兜底」取；
-    想让某一项回到 params 的默认值，就删掉那一项再保存，或者用页面底部的「删除覆盖」。改动要等下一次站点构建才生效。
-  </p>
-</section>
-
-<section class="card blk">
   <h3>标题与描述长度</h3>
   <div class="grid2">
     <label>
@@ -67,21 +58,14 @@
       <input bind:value={seo.titleSeparator} maxlength="4" placeholder="·" />
     </label>
   </div>
-  <p class="muted small">
-    拼出来的标题形如：<strong>文章标题{seo.titleSeparator || '·'}站点名</strong>
-  </p>
 </section>
 
 <section class="card blk">
   <h3>作者兜底与 Twitter</h3>
-  <p class="muted small">分享图、出版方 Logo 统一使用「基本信息」里的分享图与站点 Logo。</p>
   <label>
-    默认作者（留空退回「基本信息」里的署名）
+    默认作者
     <input bind:value={seo.siteAuthor} maxlength={LIMIT.short} />
   </label>
-  <p class="muted small">
-    Twitter 站点与创作者账号一般写成 <code>@username</code>，只在开启 Twitter Card 时才会输出。
-  </p>
   <div class="grid2">
     <label>站点 Twitter 账号<input bind:value={seo.twitterSite} maxlength={LIMIT.short} placeholder="@你的账号" /></label>
     <label>创作者 Twitter 账号<input bind:value={seo.twitterCreator} maxlength={LIMIT.short} placeholder="@zhizhi" /></label>
@@ -90,7 +74,6 @@
 
 <section class="card blk">
   <h3>输出哪些标签</h3>
-  <p class="muted small">关掉只是不再输出那一段标签，页面本身不受影响。</p>
   <div class="row sws">
     <label class="switch"><input type="checkbox" bind:checked={seo.enableCanonical} /><span>canonical 规范链接</span></label>
     <label class="switch"><input type="checkbox" bind:checked={seo.enableKeywords} /><span>keywords meta</span></label>
@@ -162,12 +145,9 @@ Host: {seo.robotsHost.trim()}{/if}</pre>
       <input bind:value={seo.colorScheme} maxlength={LIMIT.short} placeholder="light dark" />
     </label>
   </div>
-  <p class="muted small">
-    两个色值都要写成 <code>#fff</code> 或 <code>#ffffff</code>；填错会被下面的校验拦住。
-    {#if !HEX.test(seo.themeColorLight.trim()) || !HEX.test(seo.themeColorDark.trim())}
-      <span class="err">当前有不是十六进制的值。</span>
-    {/if}
-  </p>
+  {#if !HEX.test(seo.themeColorLight.trim()) || !HEX.test(seo.themeColorDark.trim())}
+    <p class="err">当前有不是十六进制的值。</p>
+  {/if}
 </section>
 
 

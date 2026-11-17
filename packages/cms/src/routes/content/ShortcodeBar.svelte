@@ -36,7 +36,6 @@
   {#if onmedia}
     <button type="button" class="sm" onclick={onmedia}>插入媒体</button>
   {/if}
-  <span class="muted small">插入位置跟随光标；短代码名与参数取自主题 shortcodes 目录</span>
 </div>
 
 <style>

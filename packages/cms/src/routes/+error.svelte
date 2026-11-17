@@ -23,15 +23,11 @@
 <div class="wrap">
   <h1>{is404 ? '后台没有这个页面' : `后台这一页出错了（${status}）`}</h1>
   {#if is404}
-    <p class="muted">
-      地址 <code>{path}</code> 在后台里不存在。要看文章本身请去站点前台；
-      后台的功能都在左侧菜单里，或者回首页。
-    </p>
+    <p class="muted">地址 <code>{path}</code> 不存在。</p>
   {:else}
     <p class="muted">
-      访问 <code>{path}</code> 时后端或页面本身报了 <code>{status}</code>。
+      访问 <code>{path}</code> 时报了 <code>{status}</code>。
       {#if message}原因：<code>{message}</code>{/if}
-      刚重新部署过后台的话，先点下面那个「绕开缓存重新载入」——旧页面手里那份代码清单可能已经对不上新的文件了。
     </p>
   {/if}
   <p class="row">

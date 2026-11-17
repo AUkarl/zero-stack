@@ -71,7 +71,6 @@
       idGroup !== savedIdGroup,
   );
   /** 三格都空着时前台那条回复就是站长本人的样子 */
-  const identityOn = $derived(Boolean(idName.trim() || idImage.trim() || idGroup.trim()));
   const providerInfo = $derived(status?.providers.find((p) => p.kind === status?.provider) ?? null);
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : '请求失败');
@@ -159,7 +158,6 @@
 <div class="row spread head">
   <div>
     <h2>AI 回复</h2>
-    <p class="muted small">读者在你文章下留言后，让大模型以站长身份回一条；按回复范围处理顶层和楼中楼，AI 不会回复自己。</p>
   </div>
   <div class="row">
     <a class="sm linkbtn" href="/spam">AI 审核设置</a>
@@ -192,7 +190,6 @@
       <button class="sm" onclick={() => void testConnection()} disabled={testing || !status.ready}>
         {testing ? '测试中…' : '测试连接'}
       </button>
-      <span class="muted small">会真发一次极短的请求，成功只代表端点、模型与密钥能用。</span>
     </div>
     {#if testResult}<p class="small {testResult.ok ? 'ok' : 'err'}">{testResult.text}</p>{/if}
   {:else if loading}
@@ -214,10 +211,6 @@
   {#if !status?.ready && !replyEnabled}
     <p class="warn small">先把上面的连接配好（服务商、密钥、模型），才能开启自动回复。</p>
   {/if}
-  <p class="muted small">
-    只在评论审核通过后触发；以站长账号发布，并走正常的「被回复」提醒邮件。
-    模型超时、报错或额度用完时这条回复就不发，评论本身不受影响。
-  </p>
   <label>
     回复范围
     <select value={scope} onchange={(e) => (scope = replyScopeOf(e.currentTarget.value))}>
@@ -227,9 +220,7 @@
       <option value="every">全部回复（顶层 + 所有层级）</option>
     </select>
     <span class="muted hint">
-      「谢谢」「路过」这类留言在「只回复疑问问题」下不会触发模型，省额度。「对话式」会续接直接回复 AI 的评论；「全部回复」会回到所有层级。
-      AI 永不回复自己；站长/管理员的顶层留言不触发，只有直接回复 AI 时才续聊。
-      当前最大层级：{maxDepth} 层（<a href="/settings">设置 → 评论</a> 可调，2 以上不设上限；到最后一层 AI 会自然收尾，不再追问）。
+      当前最大层级：{maxDepth} 层（<a href="/settings">设置 → 评论</a> 可调）。
     </span>
   </label>
   <label>
@@ -240,34 +231,21 @@
       placeholder={'例如：称呼读者为「朋友」；语气温和；不要用感叹号；不要承诺具体时间；可以邀请对方继续讨论。'}
       value={prompt}
       oninput={(e) => (prompt = e.currentTarget.value)}></textarea>
-    <span class="muted hint">会追加到系统提示词里，自动回复和 AI PET 聊天共用；不影响审核判定。留空就用默认口吻。</span>
   </label>
 
   <h3 class="sub">AI 身份设置（选填）</h3>
-  <p class="muted small">
-    {#if identityOn}
-      现在这条回复会以 <strong>{idName.trim() || '（沿用站长昵称）'}</strong>
-      {#if idGroup.trim()}· 组牌「{idGroup.trim()}」{/if} 出现；头像{#if idImage.trim()}用你填的那张{:else}仍走站长邮箱那张{/if}。
-    {:else}
-      三格都留空时，AI 回复就是<strong>站长本人</strong>那一份身份（昵称、头像、「站长」牌都一样）。
-    {/if}
-    自动回复和 AI PET 聊天共用这组身份；不影响你自己手写的评论。
-  </p>
   <div class="fields">
     <label>
       昵称
       <input type="text" maxlength="40" value={idName} oninput={(e) => (idName = e.currentTarget.value)} placeholder={status?.ready ? '留空 = 用你的昵称' : '留空 = 用你的昵称'} />
-      <span class="muted hint">显示在这条回复的名字位置，最长 40 字。</span>
     </label>
     <label>
       头像地址
       <input type="text" maxlength="500" value={idImage} oninput={(e) => (idImage = e.currentTarget.value)} placeholder="https://…/ai.png（留空 = 用站长头像）" />
-      <span class="muted hint">填了就只用这一张；留空则照旧按你的邮箱走 Gravatar → Cravatar → QQ 那条链。</span>
     </label>
     <label>
       用户组标识
       <input type="text" maxlength="20" value={idGroup} oninput={(e) => (idGroup = e.currentTarget.value)} placeholder="例如「AI 助手」，留空用默认那四个字" />
-      <span class="muted hint">昵称旁边那块小牌的文字，最长 20 字。</span>
     </label>
   </div>
   <div class="row">
@@ -282,7 +260,7 @@
     <span class="muted small">最新 20 条</span>
   </div>
   {#if replies.length === 0}
-    <p class="muted small">还没有 AI 回复。开启后收到符合回复范围的新评论就会出现在这里。</p>
+    <p class="muted small">暂无。</p>
   {:else}
     <div class="replies">
       {#each replies as r (r.id)}
@@ -302,14 +280,6 @@
       {/each}
     </div>
   {/if}
-</section>
-
-<section class="card note">
-  <h3>AI 审核</h3>
-  <p class="muted small">
-    AI 审核的开关、模型状态和逐条「AI 复核」在 <a href="/spam">评论审核</a> 页；
-    与自动回复共用这里的服务商、模型与密钥，但两个开关互不影响。
-  </p>
 </section>
 
 <style>

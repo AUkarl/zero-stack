@@ -108,12 +108,7 @@
 <div class="row spread head">
   <div>
     <h2>AI PET</h2>
-    <p class="muted small">
-      控制全站 AI 桌宠的默认行为。设置写入内容仓库的 <code>{filePath}</code>，刷新前台生效；本地构建监听会自动重建，线上保存后会触发构建。首页（<code>/</code>）、账号页、分类/标签/作者页与 404 永远不显示。
-    </p>
-    <p class="muted small">
-      昵称、头像、身份组沿用 <a href="/ai">AI 回复 → AI 身份设置</a>；这里只控制行为和外观。
-    </p>
+    <p class="muted small">昵称与头像沿用 <a href="/ai">AI 身份设置</a>。</p>
   </div>
   <div class="row">
     {#if preview}
@@ -269,9 +264,6 @@
     margin: 0;
     max-width: 60rem;
     line-height: 1.7;
-  }
-  .head p + p {
-    margin-top: 0.25rem;
   }
   .card {
     display: flex;

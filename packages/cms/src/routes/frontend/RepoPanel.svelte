@@ -198,14 +198,6 @@
 </script>
 
 <div class="wrap">
-  <p class="muted small intro">
-    这里改的是<em>仓库里的源配置文件</em>，不是「设置」页的运行时开关：整份文本原样写回 Git，注释、空行、顺序都不会被重排。
-    前台主题的取值优先级是 <code>data/*.json</code>（上面几个子标签保存的覆盖文件）&gt; 站点的
-    <code>config/_default/params.toml</code> &gt; 主题的 <code>config/_default/params.toml</code>（全部默认值与逐项注释）。
-    站点那份只写与默认值不同的那几项就行，要改别的项从主题那份里把键名抄过来；
-    在「前端管理」里配过的项，改 params 也不会生效，要先删掉对应的覆盖文件。
-  </p>
-
   <div class="card box">
     <div class="row controls">
       <label class="pick">
@@ -239,7 +231,6 @@
         {#if dirty}<span class="badge pending">有未保存改动</span>{/if}
       {:else}
         <span class="badge bad">未读取</span>
-        <span class="muted small">点「读取」把仓库里的内容拿进来；未读取时不能保存。</span>
       {/if}
     </div>
 
@@ -254,15 +245,10 @@
       class="mono"
       rows="24"
       spellcheck="false"
-      placeholder="选好文件后点「读取」，仓库里的完整文本会出现在这里"
+      placeholder="点「读取」载入内容"
       bind:value={content}
       disabled={!loaded}
     ></textarea>
-
-    <p class="muted small tips">
-      改错了就用「读取」把仓库内容拉回来（未保存的改动会丢）；想回到上一个版本请看仓库的提交历史。
-      TOML 里字符串要带引号、布尔用 true/false，YAML 靠缩进分层级，改完建议先读一遍再保存。
-    </p>
   </div>
 </div>
 
@@ -331,9 +317,5 @@
   }
   .small {
     font-size: 0.76rem;
-  }
-  .tips {
-    margin: 0;
-    line-height: 1.7;
   }
 </style>

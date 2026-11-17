@@ -33,21 +33,17 @@
 <section class="card blk">
   <h3>工坊页描述</h3>
   <label>
-    desc（标题下方那一行）
+    描述
     <input bind:value={works.desc} maxlength={LIMIT.short} placeholder="每一朵云都由思想摩尔组成" />
     <span class="muted small cnt">{works.desc.length}/{LIMIT.short}</span>
   </label>
-  <p class="muted small">
-    工坊页开不开（<code>[work] enable</code>）以及描述显不显示（<code>show_desc</code>）仍然读 params.toml，这里只存正文和项目列表。
-    说明与项目描述支持 Markdown 与 <code>[[文章标识符]]</code> 短链。
-  </p>
 </section>
 
 <section class="card blk">
   <div class="row spread">
     <div>
-      <h3>项目列表（items）</h3>
-      <p class="muted small">按列表顺序显示；标题必填，链接留空就是不带链接的一项。最多 {CAP.works} 个。</p>
+      <h3>项目列表</h3>
+      <p class="muted small">最多 {CAP.works} 个。</p>
     </div>
     <button class="sm primary" onclick={addItem} disabled={works.items.length >= CAP.works}>＋ 添加项目</button>
   </div>
@@ -55,7 +51,7 @@
     <p class="err" role="alert">{warning}</p>
   {/if}
   {#if !works.items.length}
-    <p class="muted small">还没有项目，保存后前台工坊页是空的。</p>
+    <p class="muted small">暂无项目。</p>
   {/if}
   {#each works.items as w, i (w)}
     <div class="wid" class:noname={!w.title.trim()}>
@@ -87,7 +83,7 @@
         <span class="muted small cnt">{w.desc.length}/{LIMIT.long}</span>
       </label>
       {#if !w.title.trim()}
-        <p class="warn small">这一项还没填标题，保存会被拦下来（要么填上，要么删掉）。</p>
+        <p class="warn small">标题必填。</p>
       {/if}
     </div>
   {/each}

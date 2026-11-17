@@ -161,12 +161,7 @@
   <button class="sm" onclick={() => void load()} disabled={loading}>{loading ? '读取中…' : '刷新'}</button>
 </div>
 
-<p class="muted small">
-  通过后账号会拿到认证徽章，笔名与简介同时写入该账号；用户也可以在后台「用户」页单独勾选权限。
-  「作者标识」是文章 front matter 里 author 写的那个值，也是作者页地址 /author/标识/ 的一段，只能用英文、数字和短横线；通过后该用户的投稿发布时会自动用它署名。
-  已经通过的人想改笔名、简介、头像或联系方式：点开那份申请，按「退回改资料」——认证徽章、作者标识、已发文章的署名都不受影响，
-  只是把申请单退回给他，他改完重新提交会回到「待核验」，再点一次通过就生效。
-</p>
+<p class="muted small">通过后写入账号资料；作者标识用于文章署名与 /author/&lt;标识&gt;/。</p>
 
 <div class="tabs">
   {#each TABS as [key, label] (key)}

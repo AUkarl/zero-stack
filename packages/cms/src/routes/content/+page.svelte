@@ -55,6 +55,15 @@
   let sha = $state('');
   /** 编辑器身份代号：切换/新建/删除时自增，迟到的异步响应不得覆盖新编辑器 */
   let editorEpoch = $state(0);
+  /** 文件名编辑：文章地址由文件名决定，改名时旧地址自动 301 */
+  let renameName = $state('');
+  let renameBusy = $state(false);
+  $effect(() => {
+    const f = file;
+    renameName = f ? (f.split('/').pop() ?? '').replace(/\.mdx?$/i, '') : '';
+  });
+  const fileStem = $derived((file.split('/').pop() ?? '').replace(/\.mdx?$/i, ''));
+  const canRename = $derived(!!sha && !!renameName.trim() && renameName.trim().replace(/\.mdx?$/i, '') !== fileStem);
 
   const dirty = $derived(JSON.stringify(form) !== JSON.stringify(baseForm) || body !== baseBody);
 
@@ -78,9 +87,9 @@
 
   async function loadPostMeta() {
     try {
-      const d = await get<{ data: { path: string; title?: string; draft?: boolean; hidden?: boolean }[] }>('/api/admin/posts?all=1');
+      const d = await get<{ data: { path: string; title?: string; draft?: boolean; hidden?: boolean; date?: string }[] }>('/api/admin/posts?all=1');
       const map: Record<string, PostMeta> = {};
-      for (const p of d.data ?? []) map[p.path] = { title: p.title ?? '', draft: Boolean(p.draft), hidden: Boolean(p.hidden) };
+      for (const p of d.data ?? []) map[p.path] = { title: p.title ?? '', draft: Boolean(p.draft), hidden: Boolean(p.hidden), date: p.date ?? '' };
       postMeta = map;
     } catch {
       postMeta = {};
@@ -147,17 +156,31 @@
     };
   });
 
+  /** 目录树内文件按发布时间倒序（最新在上）；目录项仍在文件之前 */
+  function byPostDate(a: Entry, b: Entry): number {
+    const at = Date.parse(postMeta[a.path]?.date ?? '') || 0;
+    const bt = Date.parse(postMeta[b.path]?.date ?? '') || 0;
+    if (at !== bt) return bt - at;
+    return a.name.localeCompare(b.name, 'zh-CN');
+  }
+
   /** 过滤后的文件列表：无搜索词时只显示当前目录；搜索时用整棵树，结果显示相对路径 */
   const shownEntries = $derived.by(() => {
     const q = fileQuery.trim().toLowerCase();
-    if (!q) return entries;
+    const sorted = (list: Entry[]) => {
+      const dirs = list.filter((e) => e.type === 'dir').sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+      const files = list.filter((e) => e.type !== 'dir').sort(byPostDate);
+      return [...dirs, ...files];
+    };
+    if (!q) return sorted(entries);
     const rel = (p: string) => (p.startsWith(`${contentDir}/`) ? p.slice(contentDir.length + 1) : p);
-    return (searchEntries ?? [])
+    const matches = (searchEntries ?? [])
       .filter((e) => {
         const meta = postMeta[e.path];
         return (e.name + ' ' + e.path + ' ' + (meta?.title ?? '')).toLowerCase().includes(q);
       })
       .map((e) => ({ ...e, name: rel(e.path) }));
+    return sorted(matches);
   });
 
   const queued = $derived(drafts.length);
@@ -399,7 +422,7 @@
   /** 文件列表的过滤词：文件名、路径、标题都能搜 */
   let fileQuery = $state('');
   /** 每篇文章的状态（草稿 / 隐藏），来自 /api/admin/posts；取不到就只有文件名可看 */
-  type PostMeta = { title: string; draft: boolean; hidden: boolean };
+  type PostMeta = { title: string; draft: boolean; hidden: boolean; date: string };
   let postMeta = $state<Record<string, PostMeta>>({});
   let newTitle = $state('');
   let newSlug = $state('');
@@ -618,6 +641,44 @@
     return payload;
   }
 
+  async function renameFile() {
+    if (!file || !sha) {
+      error = '先保存到 Git 之后才能改名';
+      return;
+    }
+    const name = renameName.trim().replace(/\.mdx?$/i, '').trim();
+    if (!name) {
+      error = '文件名不能为空';
+      return;
+    }
+    const oldName = file.split('/').pop()!.replace(/\.mdx?$/i, '');
+    if (name === oldName) return;
+    if (dirty) {
+      error = '有未保存的修改，先保存到 Git 再改名';
+      return;
+    }
+    if (draftOf(drafts, file)) {
+      error = '这篇还有本地暂存，先推送或移除草稿再改名';
+      return;
+    }
+    if (!confirm(`文件名就是文章地址，改名后旧地址会 301 到新地址，评论与点赞一并迁移。\n\n${oldName}.md → ${name}.md`)) return;
+    renameBusy = true;
+    error = '';
+    try {
+      const res = await post<{ data: { path: string; sha: string; url: { from: string; to: string } } }>('/api/admin/content/rename', { path: file, name });
+      file = res.data.path;
+      sha = res.data.sha;
+      notice = `已改名，旧地址 301 到 ${res.data.url.to}`;
+      setTimeout(() => (notice = ''), 6000);
+      void browse(dir);
+      void loadPostMeta();
+    } catch (e) {
+      error = e instanceof Error ? e.message : '改名失败';
+    } finally {
+      renameBusy = false;
+    }
+  }
+
   async function removeFile() {
     const queuedHere = draftOf(drafts, file);
     const extra = queuedHere ? '\n这篇还在草稿箱里，删除会一并移除（否则下次「保存到 Git」会把它又推回仓库）。' : '';
@@ -833,7 +894,6 @@
   <div class="card drafts">
     <div class="row spread">
       <h3>草稿箱（{queued} 篇）</h3>
-      <span class="muted small">存在服务端（登录同一账号在哪台设备都能看到），没有进内容仓库；推送成功即从这里删除。</span>
     </div>
     {#if legacy.length}
       <p class="warn">
@@ -842,7 +902,7 @@
       </p>
     {/if}
     {#if !queued}
-      <p class="muted">还没有草稿。编辑文章后点编辑器里的「存草稿」，可以一篇一篇改，最后一起推。</p>
+      <p class="muted">还没有草稿。</p>
     {:else}
       <div class="table-wrap">
         <table class="stack">
@@ -889,23 +949,20 @@
     <input type="checkbox" bind:checked={notifySubscribers} />
     <span>发布后群发订阅</span>
   </label>
-  <span class="muted small">勾选后本次保存会推送给已确认的订阅者。</span>
 </div>
 
 {#if showNew}
   <div class="card new">
     <div class="row">
       <input placeholder="标题" bind:value={newTitle} />
-      <input placeholder="文件名（选填，可中文；留空自动用「今天+序号」）" bind:value={newSlug} />
+      <input placeholder="文件名（选填）" bind:value={newSlug} />
       <select bind:value={newDir}>
         {#each postDirs as d (d)}<option value={d}>{d}</option>{/each}
         {#if !postDirs.includes(newDir)}<option value={newDir}>{newDir}</option>{/if}
       </select>
       <button class="primary" onclick={() => void newPost()}>创建</button>
     </div>
-    <p class="muted">
-      将生成 {pathPreview}。文件名留空时按「发布日 + 序号」自动取；文章页只写 posts 目录，时刻请在「时刻」页发布。
-    </p>
+    <p class="muted">将生成 {pathPreview}</p>
   </div>
 {/if}
 
@@ -949,7 +1006,16 @@
     {#if file}
       <div class="card pane">
         <div class="row spread">
-          <span class="muted small">「存草稿」进草稿箱；右上角「保存到 Git」才会写进仓库</span>
+          {#if sha}
+            <div class="row rename">
+              <span class="lbl">文件名</span>
+              <input class="rn" bind:value={renameName} onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), void renameFile())} aria-label="文件名" />
+              <span class="muted small">.md</span>
+              <button class="sm" onclick={() => void renameFile()} disabled={renameBusy || !canRename}>{renameBusy ? '改名中…' : '改名'}</button>
+            </div>
+          {:else}
+            <span></span>
+          {/if}
           <div class="row">
             {#if dirty}<span class="warn">未保存</span>{/if}
             {#if draftOf(drafts, file)}<span class="muted small">已在本地暂存</span>{/if}
@@ -960,20 +1026,20 @@
 
         <div class="grid2">
           <label>标题<input bind:value={form.title} placeholder="文章标题" /></label>
-          <label>副标题<input bind:value={form.subtitle} placeholder="列表页展示的副标题，可留空" /></label>
+          <label>副标题<input bind:value={form.subtitle} /></label>
         </div>
 
         <div class="grid2">
           <label>发布时间<input type="datetime-local" bind:value={form.date} /></label>
-          <label>修改时间<input type="datetime-local" bind:value={form.updated} placeholder="留空则不写 lastmod" /></label>
+          <label>修改时间<input type="datetime-local" bind:value={form.updated} /></label>
         </div>
 
-        <label>摘要（summary）<textarea rows="2" bind:value={form.summary} placeholder="主题列表页的简述，没有就留空"></textarea></label>
-        <label>描述（description）<textarea rows="2" bind:value={form.description} placeholder="SEO / OG 描述"></textarea></label>
+        <label>摘要<textarea rows="2" bind:value={form.summary}></textarea></label>
+        <label>描述<textarea rows="2" bind:value={form.description}></textarea></label>
 
         <div class="grid2">
           <div class="block">
-            <span class="lbl">分类（多个）</span>
+            <span class="lbl">分类</span>
             <div class="chips">
               {#each form.categories as c, i (c)}
                 <button class="chip on" title="点击移除" onclick={() => (form.categories = form.categories.filter((_, x) => x !== i))}>
@@ -988,7 +1054,7 @@
           </div>
 
           <div class="block">
-            <span class="lbl">标签（多个）</span>
+            <span class="lbl">标签</span>
             <div class="chips">
               {#each form.tags as t, i (t)}
                 <button class="chip on" title="点击移除" onclick={() => (form.tags = form.tags.filter((_, x) => x !== i))}>
@@ -1004,9 +1070,9 @@
         </div>
 
         <div class="block">
-          <span class="lbl">封面图（image）</span>
+          <span class="lbl">封面图</span>
           <div class="row">
-            <input class="grow" placeholder="https://… 或从媒体库选择" bind:value={form.image} />
+            <input class="grow" placeholder="https://…" bind:value={form.image} />
             <button class="sm" onclick={() => (showCover = true)}>从媒体库选</button>
             {#if form.image}<button class="sm ghost" onclick={() => (form.image = '')}>清除</button>{/if}
           </div>
@@ -1016,19 +1082,19 @@
         <div class="toggles">
           <label class="switch">
             <input type="checkbox" bind:checked={form.draft} />
-            <span>草稿（选中为草稿，前端不显示）</span>
+            <span>草稿</span>
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.pinned} />
-            <span>置顶（首页精选排在前）</span>
+            <span>置顶</span>
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.hidden} />
-            <span>不在列表 / RSS / sitemap 里出现（只通过链接访问）</span>
+            <span>仅链接可见</span>
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.comments} />
-            <span>允许评论（取消则不加载评论组件）</span>
+            <span>允许评论</span>
           </label>
         </div>
         <div class="row toggles-extra">
@@ -1039,27 +1105,26 @@
               value={form.weight}
               oninput={(e) => (form.weight = e.currentTarget.value)}
               placeholder="10"
-              title="Hugo 按 weight 升序排，越小越靠前；留空表示不写"
             />
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.toc} />
-            <span>目录 toc</span>
+            <span>目录</span>
           </label>
           <label class="switch">
             <input type="checkbox" bind:checked={form.math} />
-            <span>公式 math</span>
+            <span>公式</span>
           </label>
         </div>
 
         <div class="grid2">
-          <label>作者标识（author）<input bind:value={form.author} placeholder="与用户作者的 handle 一致" /></label>
+          <label>作者标识<input bind:value={form.author} /></label>
           <div class="block"></div>
         </div>
 
         <div class="body" role="presentation" onclick={capture} onkeyup={capture}>
           <ShortcodeBar oninsert={insertShortcode} onmedia={() => (showInsertMedia = true)} />
-          <MarkdownEditor bind:value={body} rows={26} placeholder="Markdown 正文…" plainLinks shortBase={frontUrl('/posts/') || '/posts/'} />
+          <MarkdownEditor bind:value={body} rows={26} placeholder="Markdown 正文…" plainLinks showTip={false} shortBase={frontUrl('/posts/') || '/posts/'} />
         </div>
 
         {#if tr?.ready}
@@ -1089,7 +1154,6 @@
     {:else}
       <div class="card placeholder">
         <p class="muted">从左侧选择一个 .md 文件进行编辑，或点击「新文章」。</p>
-        <p class="muted">保存会写入内容仓库：线上走 GitHub Contents API 提交，推送后站点自动重建；本地开发走 repo bridge，直接写文件、不产生提交。</p>
       </div>
     {/if}
   </div>
@@ -1339,6 +1403,17 @@
     height: var(--ctl-h-sm);
     min-height: var(--ctl-h-sm);
     padding: 0.2rem 0.4rem;
+  }
+  .rename {
+    gap: 0.3rem;
+    align-items: center;
+  }
+  .rename .rn {
+    width: 190px;
+    height: var(--ctl-h-sm);
+    min-height: var(--ctl-h-sm);
+    padding: 0.2rem 0.45rem;
+    font-size: 0.82rem;
   }
   .small {
     font-size: 0.76rem;

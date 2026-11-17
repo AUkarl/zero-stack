@@ -126,16 +126,12 @@
 <div class="wrap">
   <form class="card" onsubmit={(e) => { e.preventDefault(); submit(); }}>
     <h2>Zero 管理后台</h2>
-    <p class="muted sub">{pending ? '站点还没有任何账号：先建站长账号，这一步只有第一次会看到' : '登录后管理文章、评论、时刻、友链与站点配置'}</p>
+    {#if pending}<p class="muted sub">站点还没有任何账号：先建站长账号</p>{/if}
 
     <label>
-      <span>API 地址（只有本地开发能留空 —— Pages 上没有 /api 代理，留空就是 404）</span>
+      <span>API 地址</span>
       <input placeholder="https://zero-api.xxx.workers.dev" bind:value={api} autocomplete="off" onchange={checkPending} />
     </label>
-    <p class="muted sub">
-      部署版必填 worker 域名（保存在浏览器本地，只需填一次）。
-      <code>*.workers.dev</code> 在部分网络不可达时，给 worker 绑一个自定义域名再填那个地址。
-    </p>
     {#if staleApi}
       <p class="warn">
         这一格现在是浏览器里存着的旧地址 <code>{api}</code>，而这次部署内置的是
@@ -169,19 +165,14 @@
         <input type="password" bind:value={confirm} required autocomplete="new-password" />
       </label>
       <label>
-        <span>昵称（可留空，默认 admin）</span>
+        <span>昵称（选填）</span>
         <input bind:value={nickname} maxlength="64" autocomplete="nickname" />
       </label>
-      <p class="muted tip">
-        库里第一个账号会自动成为管理员并跳过邮箱验证，之后注册的都是普通读者；
-        这个表单在建完账号后就消失了。
-      </p>
     {:else if need === 'totp'}
       <label>
         <span>身份验证器动态码（6 位）</span>
         <input inputmode="numeric" maxlength="8" placeholder="000000" bind:value={totp} autocomplete="one-time-code" />
       </label>
-      <p class="muted tip">账号开启了两步验证：密码通过后还要交验证器上当前的 6 位码。</p>
     {:else if need === 'email-code'}
       <label>
         <span>邮箱验证码（6 位）</span>
@@ -197,9 +188,6 @@
     <button class="primary go" type="submit" disabled={busy || !email || !password || (pending && !confirm)}>
       {busy ? (pending ? '创建中…' : '登录中…') : pending ? '建为站长并登录' : '登 录'}
     </button>
-    {#if !pending}
-      <p class="muted tip">这一页只有登录，没有注册；站点还没有账号时它会自动变成初始化表单（改完上面「API 地址」会重新探测）。「邮箱不存在」与「密码错误」提示的是同一句话（防账号枚举）。</p>
-    {/if}
   </form>
 </div>
 

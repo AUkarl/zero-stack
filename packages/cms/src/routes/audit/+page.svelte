@@ -104,12 +104,6 @@
   </div>
 </div>
 
-<p class="muted small">
-  后台每一次写操作都留一笔：谁、什么时候、动了哪一类、对象是什么。设置类还记了改前改后的值（密钥只记「有没有值」，原文绝不落这张表）。
-  这张表不进备份，也不自动清理，站跑久了会一直长。
-</p>
-
-
 <div class="tabs">
   <button class="sm {action === '' ? 'primary' : ''}" onclick={() => pick('')}>全部</button>
   {#each ORDER as k}

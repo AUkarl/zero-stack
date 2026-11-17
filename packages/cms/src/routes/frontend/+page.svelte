@@ -281,13 +281,6 @@
 
   const notesOfActive = $derived(tab !== 'repo' && pendingMap[tab] === 'write' ? notesOf(tab, forms[tab]) : []);
 
-  /** 空白条目会被 payloadOf 丢掉，保存前说一句，免得以为写进去了 */
-  const droppedActive = $derived(
-    tab !== 'repo' &&
-      pendingMap[tab] === 'write' &&
-      JSON.stringify(forms[tab]) !== JSON.stringify(payloadOf(tab, forms[tab])),
-  );
-
   function chipText(key: SectionKey): string {
     const n = issueCountOf(key);
     if (n) return `${n} 处错误`;
@@ -445,23 +438,13 @@ async function save() {
 <div class="row spread head">
   <h2>前端管理</h2>
   <div class="row">
-    <span class="muted small">写入位置：<code>{dataDir}/</code></span>
     <button class="sm" onclick={() => void reload()} disabled={loading || saving}>{loading ? '读取中…' : '重新读取'}</button>
   </div>
 </div>
 
-<p class="muted small intro">
-  前端管理，保存会写进站点 <code>{dataDir}/</code> 目录下的 json 文件，读不到会回落到 <code>params.toml</code>
-  （只有「友链申请」回落的是友链页自己的正文）；「主题配置文件」子标签是直改仓库源文件（<code>params.toml</code> 等）的入口，
-  它有自己的读取与保存，不走下面的统一按钮。不想用本页功能，就把「设置 → 内容仓库」的 owner / repo 留空即可。
-</p>
-
 <section class="card pagesw">
   <div class="row spread">
-    <div>
-      <h3>页面开关</h3>
-      <p class="muted small">关闭后前台导航隐藏该入口；带 functions/_middleware.ts 的站会由边缘直接返回 404，不收录、不搜索。</p>
-    </div>
+    <h3>页面开关</h3>
     <button class="primary" onclick={() => void savePageSwitches()} disabled={pageSwBusy || !pageSwDirty}>
       {pageSwBusy ? '保存中…' : pageSwDirty ? '保存页面开关' : '页面开关已保存'}
     </button>
@@ -482,7 +465,6 @@ async function save() {
         <span>{x.label}</span>
       </label>
     {/each}
-    <span class="muted small">关闭朋友动态/申请后，对应标签和接口一起不可用。</span>
   </div>
   {#if pageSwNotice}<p class="ok small">{pageSwNotice}</p>{/if}
 </section>
@@ -522,7 +504,7 @@ async function save() {
   {#if loading && !ready}
     <p class="muted">正在读取站点 data 目录里的前端配置…</p>
   {:else if !ready}
-    <p class="muted">读不到现有配置，原因见上面的提示；修好后点「重新读取」。想直接改仓库里的 params.toml，用最后那个「主题配置文件」子标签。</p>
+    <p class="muted">读取失败，点「重新读取」重试。</p>
   {:else}
     {#if shownIssues.length}
       <div class="card issues">
@@ -537,11 +519,6 @@ async function save() {
             <button class="link" onclick={() => (tab = x.section === 'seo' ? 'site' : x.section)}>【{SECTION_META[x.section].label}】</button>{x.message}
           </p>
         {/each}
-        <p class="muted small">
-          规则和后端一致：短文本 ≤{LIMIT.short}、链接 ≤{LIMIT.href}、长文本 ≤{LIMIT.long}；导航 ≤{CAP.nav} 项、备案 ≤{CAP.icp} 条、
-          关于页三组段落各 ≤{CAP.paragraph} 段、联系方式 ≤{CAP.contacts} 条、工坊 ≤{CAP.works} 个、
-          友链要求 ≤{CAP.requirements} 条、「我的信息 / 提交示例」各 ≤{CAP.infoRow} 行。
-        </p>
       </div>
     {/if}
 
@@ -598,24 +575,19 @@ async function save() {
       <div class="row summ">
         {#if !ready && loadError}
           <span class="badge bad">还没读到配置</span>
-          <span class="muted small">先修好上面的读取错误，点「重新读取」成功后再编辑保存。</span>
         {:else if !ready}
           <span class="badge pending">正在读取配置…</span>
-          <span class="muted small">读取完成后即可编辑保存</span>
         {:else if saving}
           <span class="badge pending">保存中…</span>
-          <span class="muted small">{progressText}（一次请求，最多一次构建）</span>
+          <span class="muted small">{progressText}</span>
         {:else if pendingKeys.length}
           <span class="badge">{pendingKeys.length} 段待保存</span>
           <span class="muted small">{pendingKeys.map((k) => `${SECTION_META[k].label}${pendingMap[k] === 'delete' ? '（删除）' : ''}`).join('、')}</span>
           {#if liveIssues.length}
             <span class="badge bad">{liveIssues.length} 处待修正</span>
-          {:else}
-            <span class="muted small">内容没变的段不会重复写入</span>
           {/if}
         {:else}
           <span class="badge good">没有待保存的改动</span>
-          <span class="muted small">改了某一段内容，或点了某一段的「从空白开始填写」，这里就会列出要写的段</span>
         {/if}
       </div>
       <div class="row acts">
@@ -634,22 +606,12 @@ async function save() {
     {#if saveMessage}<p class="ok small">{saveMessage}</p>{/if}
     {#if saveWritten.length}<p class="muted small">本次写入 / 删除的文件：{saveWritten.join('、')}</p>{/if}
     {#each saveNote as n (n)}<p class="muted small">{n}</p>{/each}
-    {#if droppedActive}<p class="muted small">这一段里有整行空白的条目，保存时会自动丢掉（主题本来也不显示空条目）。</p>{/if}
   </footer>
 {/if}
 
 <style>
   .head {
     margin-bottom: 0.5rem;
-  }
-  .intro {
-    margin: 0 0 0.7rem;
-    line-height: 1.75;
-  }
-  .intro code {
-    background: var(--panel-2);
-    border-radius: 4px;
-    padding: 0 0.22rem;
   }
   .small {
     font-size: 0.78rem;

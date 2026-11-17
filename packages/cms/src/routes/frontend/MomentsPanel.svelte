@@ -58,12 +58,8 @@
 
 <section class="card blk">
   <h3>时刻页开关与列表</h3>
-  <p class="muted small">
-    这一份写进站点 <code>data/moments.json</code>，主题读它优先、读不到才回落到 <code>params.toml</code> 的 <code>[moment]</code>。
-    每条时刻自己的正文、配图、位置在 <code>content/zh/moments/*.md</code> 里，去「时刻」那页发。
-  </p>
   <label class="num">
-    每批加载几条（无限滚动，一次拉一批）
+    每批加载几条
     <input type="number" min="1" max="100" bind:value={moments.paginate} />
   </label>
 </section>
@@ -72,10 +68,10 @@
   <h3>位置</h3>
   <label class="switch">
     <input type="checkbox" bind:checked={moments.showLocation} />
-    <span>卡片底栏显示位置（发布时刻时填的「地点」）</span>
+    <span>显示位置</span>
   </label>
   <label>
-    没填地点时的兜底文案（留空就只显示填了的）
+    默认地点
     <input bind:value={moments.defaultLocation} maxlength={LIMIT.short} placeholder="线上" />
   </label>
 </section>
@@ -84,7 +80,7 @@
   <h3>顶部横幅</h3>
   <label class="switch">
     <input type="checkbox" bind:checked={moments.bannerShowBackground} />
-    <span>显示横幅背景图（关掉就压成一条紧凑的浅色身份栏；下面的头像、昵称也一起关掉时，整块横幅不再出现）</span>
+    <span>显示横幅背景图</span>
   </label>
   <label>
     背景图地址
@@ -103,7 +99,7 @@
   </div>
   <div class="grid2">
     <label>
-      昵称（卡片右上角的署名也用这一个）
+      昵称
       <input bind:value={moments.nickname} maxlength={LIMIT.short} placeholder="站长昵称" />
     </label>
   </div>
@@ -114,9 +110,6 @@
       <button class="sm ghost" onclick={() => (pickAvatar = true)}>选媒体</button>
     </div>
   </label>
-  <p class="muted small">
-    这一页前面的改动写进 <code>data/moments.json</code>，要等下一次站点构建才生效；只有下面「时刻评论区」那项是运行时配置，保存就生效。
-  </p>
 </section>
 
 <section class="card blk">
@@ -134,10 +127,6 @@
       >{providerBusy ? '保存中…' : providerLoaded && provider === providerSaved ? '已保存' : '保存这一项'}</button>
     </div>
   </label>
-  <p class="muted small">
-    它存的是后台配置（<code>momentCommentProvider</code>），不参与底部那个统一按钮；文章评论区在「设置 → 评论」里选，
-    选第三方时它的参数也在那一页的「第三方评论参数（JSON）」里填。
-  </p>
   {#if providerNote}<p class="muted small">{providerNote}</p>{/if}
 </section>
 

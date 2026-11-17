@@ -349,7 +349,7 @@
                 </div>
 
                 <p class="bodylabel">正文 Markdown</p>
-                <MarkdownEditor bind:value={edit.content} rows={12} placeholder="投稿正文" plainLinks shortBase={frontUrl('/posts/') || '/posts/'} />
+                <MarkdownEditor bind:value={edit.content} rows={12} placeholder="投稿正文" plainLinks showTip={false} shortBase={frontUrl('/posts/') || '/posts/'} />
 
                 <div class="row acts">
                   <button class="sm primary" onclick={() => void saveEdit()} disabled={savingEdit || busy === r.id}>

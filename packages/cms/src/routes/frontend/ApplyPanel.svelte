@@ -71,26 +71,13 @@
       .filter((r) => r.label || r.value)
       .map((r) => (r.label ? `${r.label}：${r.value}` : r.value))
       .join('\n');
-
-  const reqCount = $derived(apply.requirements.filter((x) => x.trim()).length);
 </script>
-
-<section class="card blk">
-  <h3>这三块写在哪里</h3>
-  <p class="muted small">
-    保存写进站点 <code>data/apply.json</code>，主题按「data 优先、页面正文兜底」渲染：
-    这里填了任何一段，前台「申请友链」就整栏用下面的内容；三段全空（或删掉那份文件）时，
-    才回落到 <code>content/links/_index.md</code> 里手写的 <code>.apply-col</code>。
-    名单本身（左邻右舍 / 站点联盟）不在这一页，那是「友链」页维护的 <code>data/links.yaml</code>。
-  </p>
-</section>
 
 <section class="card blk">
   <div class="row spread">
     <div>
       <h3>友链要求</h3>
-      <p class="muted small">引导语一段 + 条目若干，前台排成有序列表（1. 2. 3.）。条目最多 {CAP.requirements} 条，空白条目保存时自动丢掉。</p>
-      <p class="muted small">支持 Markdown 与 <code>[[文章标识符]]</code> 短链。</p>
+      <p class="muted small">最多 {CAP.requirements} 条。</p>
     </div>
     <button class="sm primary" onclick={addReq} disabled={apply.requirements.length >= CAP.requirements}>＋ 添加一条</button>
   </div>
@@ -98,12 +85,12 @@
     <p class="err" role="alert">{warning}</p>
   {/if}
   <label>
-    引导语（写在标题下方、条目上面）
+    引导语
     <textarea rows="2" bind:value={apply.intro} maxlength={LIMIT.long} placeholder="若你愿与这片自留地建立链接，请先确认符合以下要求："></textarea>
     <span class="muted small cnt">{apply.intro.length}/{LIMIT.long} 字</span>
   </label>
   {#if !apply.requirements.length}
-    <p class="muted small">还没有条目。</p>
+    <p class="muted small">暂无。</p>
   {/if}
   {#each apply.requirements as t, i (i)}
     <div class="para">
@@ -127,15 +114,12 @@
     <div class="row spread">
       <div>
         <h3>{ROW_LABEL[field]}</h3>
-        <p class="muted small">
-          一行一条「标签 + 内容」，前台一行显示一条、卡片右上角带「复制」按钮，
-          <strong>复制到剪贴板的就是下面预览那几行</strong>。行最多 {CAP.infoRow} 行，标签和内容都空的行保存时自动丢掉。
-        </p>
+        <p class="muted small">最多 {CAP.infoRow} 行。</p>
       </div>
       <button class="sm primary" onclick={() => addRow(field)} disabled={list.length >= CAP.infoRow}>＋ 添加一行</button>
     </div>
     {#if !list.length}
-      <p class="muted small">还没有行 —— 这一块在前台不会出现。</p>
+      <p class="muted small">暂无。</p>
     {/if}
     {#each list as r, i (r)}
       <div class="ctc">
@@ -160,20 +144,14 @@
       </div>
     {/each}
     <div class="pv">
-      <span class="muted small">复制出来的内容：</span>
       {#if text}
         <pre class="pvtext">{text}</pre>
       {:else}
-        <span class="muted small">（还没有有效内容，这一块不会出现）</span>
+        <span class="muted small">暂无内容。</span>
       {/if}
     </div>
   </section>
 {/each}
-
-<p class="muted small note">
-  三个小标题（友链要求 / 我的信息 / 提交示例）和「复制」按钮是主题固定写的，不在这一页改；
-  「申请友链」这一栏开不开、在线表单收不收，在「设置 → 友情链接」。当前有效条目：{reqCount} 条。
-</p>
 
 <style>
   .blk {

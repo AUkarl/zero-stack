@@ -626,11 +626,6 @@
 <!-- ---------------------------------------------------------- 资料编辑 -->
 <section class="card blk">
   <h3>账号资料</h3>
-  <p class="muted small">
-    保存到 PATCH {EP.profile}，后端接受 name / bio / website / image。
-    站长的这一份还会同步进内容仓库的 <code>data/owner.json</code>：前台关于页顶部的头像与昵称读的就是它
-    （没填头像时按邮箱取 Gravatar→Cravatar→QQ），保存后会提示同步结果与是否已触发站点构建。
-  </p>
   {#if profile}
     <div class="grid2">
       <label>昵称<input bind:value={name} maxlength="64" /></label>
@@ -658,11 +653,7 @@
 <!-- --------------------------------------- 站长作者资料（写 data/authors.yaml） -->
 <section class="card blk">
   <h3>站长作者资料</h3>
-  <p class="muted small">
-    这里改的是<em>作者身份</em>：写进站点 <code>data/authors.yaml</code> 里 <code>{authorHandle || '（无作者标识）'}</code>
-    那一条。文章 front matter 的 <code>author:</code> 写这个标识，前台署名、作者卡片、赞赏入口、SEO 里的作者就都取这份；
-    文章没写作者时同样回落到它。账号资料（上一卡）与登录凭据不受这里影响。
-  </p>
+  <p class="muted small">文章 front matter 的 <code>author</code> 写这个标识。</p>
   {#if authorHandle}
     <div class="grid2">
       <label>作者昵称 *<input bind:value={authorName} maxlength="64" /></label>
@@ -762,13 +753,12 @@
 <!-- ---------------------------------------------------------- 身份验证器 -->
 <section class="card blk">
   <h3>身份验证器（TOTP）绑定状态</h3>
-  <p class="muted small">这一块只控制管理员账号有没有绑定验证器，不决定登录要不要动态码。</p>
   <p class="totpstate">
     <strong>状态：{sec?.totpEnabled ? '已绑定' : '未绑定'}</strong>
     <span>签发方（totpIssuer）：<code>{issuer}</code></span>
   </p>
   {#if sec?.totpEnabled}
-    <p class="muted small">关闭需要「当前密码」或「6 位动态码」任一（后端二选一）。</p>
+    <p class="muted small">关闭需要当前密码或 6 位动态码任一。</p>
     <div class="row">
       <input type="password" placeholder="当前密码" bind:value={offByPassword} autocomplete="current-password" />
       <input class="code" placeholder="或 6 位动态码" inputmode="numeric" maxlength="6" bind:value={offByCode} />

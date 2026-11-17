@@ -38,14 +38,10 @@
 <section class="card blk">
   <h3>版权文字</h3>
   <label>
-    copyrightText
+    版权文字
     <input bind:value={footer.copyrightText} maxlength={LIMIT.short} placeholder="2025-{'{year}'} 你的站点名" />
-    <span class="muted small">
-      写 <code>{'{year}'}</code> 会被主题换成当前年份（今年就是 {nowYear}）；整段留空则前台不显示版权行。{LIMIT.short} 字上限。
-    </span>
   </label>
   <div class="pv">
-    <span class="muted small">前台效果：</span>
     <span class="pvtext">©{copyrightPreview}</span>
   </div>
 </section>
@@ -67,11 +63,10 @@
     </label>
   </div>
   <div class="pv">
-    <span class="muted small">预览：</span>
     {#if !footer.showPoweredBy}
-      <span class="muted small">（开关关着，这一行不显示）</span>
+      <span class="muted small">（不显示）</span>
     {:else if !footer.poweredByText.trim()}
-      <span class="muted small">（文字为空，这一行也不显示）</span>
+      <span class="muted small">（不显示）</span>
     {:else if footer.poweredByLink.trim()}
       <span class="pvtext">{footer.poweredByText.trim()} ↗</span>
       <span class="muted small url">{footer.poweredByLink.trim()}</span>
@@ -83,15 +78,12 @@
 
 <section class="card blk">
   <div class="row spread">
-    <h3>备案条目（icpItems）</h3>
+    <h3>备案条目</h3>
     <button class="sm primary" onclick={addIcp} disabled={footer.icpItems.length >= CAP.icp}>＋ 添加一条</button>
   </div>
   {#if warning}
     <p class="err" role="alert">{warning}</p>
   {/if}
-  <p class="muted small">
-    多条会自动排成一行、条目之间加竖线分隔；最多 {CAP.icp} 条。
-  </p>
   {#each footer.icpItems as x, i (x)}
     <div class="icp">
       <span class="ord">{i + 1}</span>
@@ -110,42 +102,33 @@
       </div>
     </div>
   {:else}
-    <p class="muted small">还没有备案条目。</p>
+    <p class="muted small">暂无。</p>
   {/each}
 </section>
-
-{#if footer.services.length || footer.socialRow1.length || footer.socialRow2.length}
-    <p class="muted small note">
-      下面三组图标写进 <code>data/footer.json</code>，优先级高于 params.toml 的
-      <code>[[footer.services]]</code> / <code>social_row1</code> / <code>social_row2</code>；
-      三组都清空时主题仍会回落到 params.toml 里的那套。地址留空的条目主题不会渲染（免得出现点了没反应的图标）。
-      名称是必填的 —— 它同时是这条链接给读屏软件的唯一可读名，只挂图不写名字，读屏用户听到的就只有「链接」两个字。
-    </p>
-  {/if}
 
 <section class="card blk">
   <h3>「支持服务」那一排</h3>
   <label class="switch">
     <input type="checkbox" bind:checked={footer.showServiceName} />
-    <span>默认在图标旁边显示名称（单条想例外，就在下面那条上选「显示 / 只留图标」）</span>
+    <span>默认显示名称</span>
   </label>
 </section>
 
 <FooterIconList
   title="支持服务图标（services）"
-  hint="页脚中栏的一排图标，站点联盟、打赏之类的入口。名称必填、地址必填；图标类名和图片路径都填时优先使用图片路径。"
+  hint="页脚中栏图标；名称与地址必填。"
   bind:items={footer.services}
 />
 
 <FooterIconList
   title="社交链接 第一排（socialRow1）"
-  hint="页脚右栏上面那排。站内地址（如 /index.xml）也可以填，会自动当普通链接打开。图标类名和图片路径都填时优先使用图片路径。"
+  hint="页脚右栏上排。"
   bind:items={footer.socialRow1}
 />
 
 <FooterIconList
   title="社交链接 第二排（socialRow2）"
-  hint="页脚右栏下面那排。两排都为空时右栏只剩回到顶部按钮。图标类名和图片路径都填时优先使用图片路径。"
+  hint="页脚右栏下排。"
   bind:items={footer.socialRow2}
 />
 

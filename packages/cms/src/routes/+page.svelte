@@ -160,7 +160,6 @@
 <div class="head row spread">
   <h2>仪表盘</h2>
   <div class="row">
-    <span class="muted">60 秒内数据为缓存</span>
     <button onclick={() => void loadAll()} disabled={loading}>{loading ? '刷新中…' : '刷新'}</button>
   </div>
 </div>
@@ -171,7 +170,7 @@
     ['总访问量', summary?.totalViews, ''],
     ['今日访问', summary?.todayViews, ''],
     ['独立访客', summary?.totalVisitors, ''],
-    ['实时在线', summary?.onlineNow, '5 分钟窗口'],
+    ['实时在线', summary?.onlineNow, ''],
     ['平均停留', summary ? fmtDur(summary.avgDurationSeconds) : ''],
   ] as [label, v, note] (label)}
     <div class="card stat"><span class="v">{v ?? '—'}</span><span class="l">{label}</span>{#if note}<span class="n">{note}</span>{/if}</div>
@@ -188,7 +187,6 @@
     <a class="card stat todo" href={t.href}>
       <span class="v">{t.value}</span>
       <span class="l">{t.label}</span>
-      <span class="n">{t.value > 0 ? '去处理' : '暂无'}</span>
     </a>
   {/each}
 </div>
@@ -252,7 +250,7 @@
       <p class="err">
         最近一次内容仓构建<strong>失败</strong>（{sinceText(buildReport.at)}，提交
         {buildReport.sha?.slice(0, 7) || '未知'}{buildReport.branch ? ` / ${buildReport.branch}` : ''}）。
-        Pages 构建失败就不换部署，<strong>前台现在停在上一版</strong>，后台的保存与群发看起来都仍然正常。
+        <strong>前台现在停在上一版。</strong>
         {#if buildReport.error}
           <br />构建日志末尾：<code class="log">{buildReport.error.slice(0, 800)}</code>
         {/if}
@@ -269,10 +267,8 @@
         <!-- 站主第十轮第 5 条：「最近构建很频繁，这里却显示五天前」。数字没错 —— 这是**回报**的时间，
              不是构建的时间；回报断了就会停在这个值上，所以这里必须说清楚去看什么。 -->
         <p class="warn small">
-          这份结果已经 {staleDays} 天没更新：内容仓每次推送都会跑一遍构建并把结果报回来，超过两天没变说明
-          <strong>回报没送到</strong>（不是构建没发生）{buildAttempt ? `；最近一次尝试是 ${sinceText(buildAttempt.at)}${buildAttempt.ok ? '（请求通过、但结果没落库）' : '（被拒绝，见下一条）'}` : '，而且这些天连一次回报请求都没收到'}。
-          到内容仓的 Actions 看 Deploy 是否在跑、Settings → Secrets 里的 <code>BUILD_REPORT_TOKEN</code> 与 Worker 的是否一致。
-          另外后台保存触发的 Pages 重建走部署钩子，本来就不回传结果 —— 这里只看内容仓 CI 报上来的那一次。
+          这份结果已经 {staleDays} 天没更新：去内容仓 Actions 看 Deploy 是否在跑，并核对
+          <code>BUILD_REPORT_TOKEN</code>。
         </p>
       {/if}
       {#if buildAttempt && buildAttempt.at > buildReport.at}
@@ -280,8 +276,7 @@
              比让站长自己去翻 Actions 日志强（第十一轮追问「是 token 错还是功能问题」）。 -->
         <p class="warn small">
           最近一次回报尝试：{sinceText(buildAttempt.at)} · <strong>被拒绝</strong>（{buildAttempt.code}
-          {buildAttempt.reason}）。说明回报请求确实打到了接口、只是没通过 —— 拿内容仓 Secrets 里的
-          <code>BUILD_REPORT_TOKEN</code> 和 Worker 的那份逐字对一遍通常就能解决。
+          {buildAttempt.reason}）。核对内容仓与 Worker 的 <code>BUILD_REPORT_TOKEN</code>。
         </p>
       {/if}
     </div>
@@ -351,7 +346,7 @@
         </div>
       {:else}
         <p class="muted">
-          还没有任何一次定时任务记录。Cron 在世界时 02:00（北京 10:00）跑一次；也可以在「设置」页底部手动触发。
+          还没有定时任务记录。可在「设置」页手动触发。
         </p>
       {/if}
     {:else}

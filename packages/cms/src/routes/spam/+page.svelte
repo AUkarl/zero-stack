@@ -497,7 +497,7 @@
       <button class="sm" onclick={() => void copyDefaultPatterns()} disabled={defaultsBusy}>
         {defaultsBusy ? '读取中…' : '复制内置默认规则到下面'}
       </button>
-      <span class="muted small">内置那份随时可以用上面的开关整份关掉，两者同时命中会累加。</span>
+      <span class="muted small"></span>
     </div>
     <textarea rows="10" placeholder={'/\\d{11}/\n加\\s*好友\n(https?:)?\\/\\/t\\.me'} bind:value={customRegex}></textarea>
   </section>
@@ -506,8 +506,7 @@
     <section class="card">
       <h4>AI 审核</h4>
       <p class="muted small">
-        本地规则放行后再交给大模型复核：正常就通过，拿不准转待审核，判垃圾直接拒收。
-        模型超时、报错或额度用完时维持本地判定，不会把评论区卡死。
+        本地规则放行后再交给大模型复核；模型异常时维持本地判定。
       </p>
       {#if ai}
         <label class="switch">
@@ -531,7 +530,7 @@
           </p>
         {/if}
         <p class="muted small">
-          逐条复核用下面队列里的「AI 复核」；自动回复的开关与人设在 <a href="/ai">AI 回复</a> 页。
+          逐条复核用下面队列里的「AI 复核」。
         </p>
       {:else}
         <p class="muted small">AI 状态读取失败，点右上角「重新读取」再试。</p>
@@ -541,10 +540,7 @@
     <section class="card">
       <h4>外部审核服务商</h4>
       <p class="muted small">
-        服务商只做加法：它说垃圾才算加到分上，异常或超时 fail-open。这里只选服务商；
-        Endpoint 与密钥在
-        <a href="/settings">「设置 → 评论审核服务商」</a>
-        填。
+        异常或超时按放行处理。
       </p>
       <div class="fields">
         <label>
@@ -561,14 +557,10 @@
     <details class="card repo-file">
       <summary><span>仓库规则文件（高级）</span>{#if pfPath}<code>{pfPath}</code>{/if}</summary>
       <p class="muted small">
-        和上面的「自定义正则」二选一即可：这一份会提交进内容仓库，随站点走，适合多台设备/多人共享；
-        日常改规则用上面那个就够了。
+        提交进内容仓库的共享规则；日常用上面的自定义正则即可。
       </p>
       <p class="muted small">
-        站点仓库里那份共享正则清单，落在仓库根的 <code>.zero/spam-patterns.txt</code>，读写走
-        <code>GET / PUT /api/admin/spam/pattern-file</code>。别把它挪进 <code>data/</code>：
-        Hugo 会把 <code>data/</code> 下任何未知扩展名都当数据文件解析，那份文件一进去整站构建就报
-        <code>unmarshal of format "" is not supported</code>。
+        不要把它放进 <code>data/</code>：Hugo 会把未知扩展名当数据文件解析，导致整站构建失败。
       </p>
       {#if pfLoading}
         <p class="muted small">读取中…</p>

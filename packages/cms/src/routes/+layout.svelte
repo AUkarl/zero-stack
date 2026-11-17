@@ -327,11 +327,7 @@
       {#if session.slow}
         {@const apiBase = getApiBase()}
         <p>
-          接口 4 秒还没回话。当前用的 API 地址：<code>{apiBase || '（空 = 打后台自己这个域名）'}</code>
-        </p>
-        <p class="muted small">
-          地址不是你部署的那一个：去登录页把它清掉重填（浏览器里存的那条会一直盖掉部署时内置的地址）。
-          地址是对的但很慢：worker 的 workers.dev 域名在国内绕得远，给 Worker 绑一个自己的域名就能快下来。
+          接口 4 秒还没回话。当前 API 地址：<code>{apiBase || '（后台自身域名）'}</code>
         </p>
         <div class="row">
           <button class="sm" onclick={() => void session.refresh()}>再试一次</button>

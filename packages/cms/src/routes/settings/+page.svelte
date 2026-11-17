@@ -62,37 +62,37 @@
   const GROUPS: Group[] = [
     {
       title: '注册与邀请码',
-      desc: '「前台账号系统」关掉后 /account/ 整页只留提示，用户无法登录；管理员仍可从站点后台路径登录。「允许注册」只下线注册 tab 与验证码注册通道，已注册用户照常登录。',
+      desc: '关闭「前台账号系统」后读者无法登录。',
       fields: [
         { key: 'accountSystemEnabled', label: '前台账号系统', kind: 'bool' },
-        { key: 'allowRegister', label: '允许注册', kind: 'bool', hint: '只控制新账号注册；已注册用户是否还能登录看下面一项' },
-        { key: 'readerLoginEnabled', label: '注册用户可登录', kind: 'bool', hint: '关掉后只有站长/管理员能登录，普通用户会被拒绝；不影响注册开关' },
-        { key: 'requireInviteCode', label: '注册需邀请码', kind: 'bool', hint: '邀请码在「用户」页的「邀请码」tab 生成' },
-        { key: 'cmsAdminUrl', label: '后台地址', hint: '管理员在前台登录成功后跳这里。留空时只能按同域 /admin/ 兜底，路径必然是 404。' },
+        { key: 'allowRegister', label: '允许注册', kind: 'bool' },
+        { key: 'readerLoginEnabled', label: '注册用户可登录', kind: 'bool' },
+        { key: 'requireInviteCode', label: '注册需邀请码', kind: 'bool' },
+        { key: 'cmsAdminUrl', label: '后台地址', hint: '管理员前台登录后的跳转地址。' },
         { key: 'inviteCodeLength', label: '随机码长度', kind: 'number', hint: '4 ~ 16' },
         { key: 'inviteCodeUses', label: '随机码默认可用次数', kind: 'number', hint: '0 表示不限' },
       ],
     },
     {
       title: '用户中心',
-      desc: '这里是全站总闸；具体哪个人能投稿、能申请认证，在「用户」页按账号勾选。关掉总闸后即便已勾权限也不会开放——接口侧同样会拒，不只是前端把入口藏起来。',
+      desc: '全站总闸；具体权限在「用户」页按账号勾选。',
       fields: [
-        { key: 'draftsEnabled', label: '开放投稿', kind: 'bool', hint: '投稿先进库，审核通过才写入仓库' },
+        { key: 'draftsEnabled', label: '开放投稿', kind: 'bool' },
         { key: 'authorVerifyEnabled', label: '开放作者认证申请', kind: 'bool' },
-        { key: 'newUserCanPublish', label: '新注册默认可投稿', kind: 'bool', hint: '开关只影响之后注册的账号，已有账号仍在「用户」页按人勾选' },
-        { key: 'newUserCanAuthor', label: '新注册默认可申请认证', kind: 'bool', hint: '同上：新账号自带「作者认证申请」权限位，认证本身仍要审核' },
+        { key: 'newUserCanPublish', label: '新注册默认可投稿', kind: 'bool', hint: '只影响之后注册的账号' },
+        { key: 'newUserCanAuthor', label: '新注册默认可申请认证', kind: 'bool', hint: '只影响之后注册的账号' },
       ],
     },
     {
       title: '评论',
-      desc: '评论区按 /api/config 在运行时挂载对应系统，与构建期写死的 provider 不一致时前台会自动接管，60 秒内生效，不用重新构建站点。',
+      desc: '运行时切换，60 秒内生效，无需重建。',
       fields: [
         { key: 'commentEnabled', label: '开启评论', kind: 'bool' },
         {
           key: 'commentAllowAnonymous',
           label: '允许游客评论',
           kind: 'bool',
-          hint: '只有开启登录注册时才有作用，否则一律按游客处理；不控制第三方评论',
+          hint: '未开启登录注册时无效',
         },
         { key: 'commentRequireReview', label: '游客评论需审核', kind: 'bool', hint: '登录用户评论始终直接通过' },
         { key: 'commentMaxDepth', label: '最大嵌套层级', kind: 'number', hint: '2 以上，不设上限' },
@@ -110,9 +110,7 @@
     },
     {
       title: '评论审核服务商',
-      desc:
-        '评论入库前先过本地规则（关键词 / 正则 / 仓库规则文件），这里配的是「再加一道外部服务商」：它说垃圾才算加分，' +
-        '异常或超时一律 fail-open。审核规则本身在「评论审核」页调，这里只放凭据。',
+      desc: '外部复核，异常按放行处理；规则在「评论审核」页。',
       fields: [
         {
           key: 'spamProviderEndpoint',
@@ -135,9 +133,7 @@
     },
     {
       title: 'AI 模型配置',
-      desc:
-        'AI 模型配置，供评论审核、AI 回复、翻译等共用。开启后相关内容会发送到你选的服务商，' +
-        '介意隐私或服务商在境外时建议保持关闭。',
+      desc: '供评论审核、AI 回复、翻译共用。',
       fields: [
         {
           key: 'aiProvider',
@@ -183,28 +179,24 @@
     },
     {
       title: '头像与媒体',
-      desc:
-        '这一组只管三件全站兜底：① 匿名评论者的头像地址模板（留空按内置链 Gravatar→Cravatar→QQ→首字母，填了整条链换图床；注册者自己填的头像永远优先）；' +
-        '② 媒体直链域名（R2 自定义域或 CDN，只对默认 r2 桶生效）；' +
-        '③ 走 Worker 代理时补在站内路径前面的接口根地址（站点与接口不同源才需要）。' +
-        '站点 Logo / 分享图在「前端管理 → 基本信息」，时刻横幅与头像在「前端管理 → 时刻页」，管理员自己的头像在「我的信息 → 账号资料」，都在别处，这里不重复。',
+      desc: '全站头像与媒体地址兜底。',
       fields: [
-        { key: 'avatarTemplate', label: '头像地址模板', hint: '' },
+        { key: 'avatarTemplate', label: '头像地址模板' },
         {
           key: 'mediaBaseUrl',
           label: '媒体直链域名',
-          hint: 'R2 自定义域或 CDN 根地址，填了以后新上传的图片外链成 <域名>/uploads/…，不占 Worker 请求数；只对没单独填域名的 r2 桶生效（「媒体 → 管理存储桶」里每个桶还能各填一个，桶的优先）',
+          hint: 'R2 自定义域或 CDN 根地址；只对默认 r2 桶生效',
         },
         {
           key: 'mediaPublicUrl',
           label: '代理地址前缀',
-          hint: '没填直链域名时图片走 Worker 代理（站内路径 /api/media/桶/键）。站点与接口不同源时，正文里要写绝对地址 —— 这里填**接口自己的根地址**（如 https://zero-api.xxx.workers.dev），留空则按 apiBaseUrl 兜底。它不是图片域名，别填成 CDN',
+          hint: '站点与接口不同源时，填接口根地址',
         },
       ],
     },
     {
       title: '发信方式',
-      desc: '先选通道，只填下面对应的那一节，其它通道的字段不显示也不会被改动。',
+      desc: '先选通道，只填对应的一节。',
       fields: [
         {
           key: 'emailProvider',
@@ -241,19 +233,19 @@
       sections: [
         {
           title: '通道与发件人',
-          desc: '密码 / 授权码可以直接填在这里（保存后读取只显示「已设置」，留空即不修改；导出的备份属于敏感数据）。也可以用 wrangler secret 配 SMTP_PASSWORD / RESEND_API_KEY，两处都有时以这里填的为准。每日上限是给发信服务的免费档留的余量：额度不够时群发与订阅推送整批不发，留到明天自动续跑。',
+          desc: '密钥可直接填在这里；留空即不修改。',
           keys: ['emailProvider', 'emailFrom', 'emailFromName', 'emailDailyLimit'],
         },
         {
           title: 'SMTP',
-          desc: '465 与 587 都要开 SSL/TLS；用户名一般就是发件邮箱本身，密码填服务商给的授权码。',
+          desc: '465 / 587 需开 SSL/TLS；密码填服务商授权码。',
           keys: ['smtpHost', 'smtpPort', 'smtpSecure', 'smtpUser', 'smtpPassword'],
           onlyFor: ['smtp'],
           presets: true,
         },
         {
           title: 'Resend',
-          desc: 'API Key 形如 re_…，在 Resend 控制台 Dashboard → API Keys 里拿。',
+          desc: 'API Key 形如 re_…。',
           keys: ['resendApiKey'],
           onlyFor: ['resend'],
         },
@@ -263,7 +255,7 @@
           keys: ['cloudflareAccountId', 'cloudflareEmailToken'],
           onlyFor: ['cloudflare'],
         },
-        { title: '测试发送', desc: '真发一封才知道配置对不对 —— 本地没有邮件服务，看着填对了也可能发不出去。下面「通知链路自检」会把新评论提醒的站长那封和用户那封各发一遍，并摊开发信服务器原文。', keys: [], test: true },
+        { title: '测试发送', desc: '发一封测试信核对配置。', keys: [], test: true },
       ],
     },
     {
@@ -320,7 +312,7 @@
     },
     {
       title: '内容仓库',
-      desc: '后台发文、发时刻、写回作者表与友链文件都要落到这个仓库。令牌不在此处，使用 wrangler secret put GITHUB_TOKEN 配置 fine-grained PAT（Contents 读写）；本地开发用 GIT_LOCAL_DIR 指向站点目录，不走 GitHub。',
+      desc: '内容写入目标；令牌用 wrangler secret GITHUB_TOKEN 配置。',
       fields: [
         { key: 'githubOwner', label: 'owner' },
         { key: 'githubRepo', label: 'repo' },
@@ -361,7 +353,7 @@
     },
     {
       title: '邮件模板',
-      desc: '四封信只写正文那一段：站点名、Logo、称呼「亲爱的 X：您好！」、落款与页脚由主题外壳统一包好（取「前端管理 → 基本信息」的站点名 / Logo / 署名）。留空即回落到代码里的默认文本。',
+      desc: '只写正文；站点名、Logo 与页脚由主题统一包好，留空用默认文本。',
       fields: [
         {
           key: 'emailTemplateCode',
@@ -389,13 +381,13 @@
     },
     {
       title: '评论提醒与展示',
-      desc: '提醒邮件走「发信方式」里配好的通道；关闭对应开关只是不再发信，评论本身不受影响。',
+      desc: '关闭只是不发信，评论本身不受影响。',
       fields: [
-        { key: 'commentNotifyAdmin', label: '新评论提醒管理员', kind: 'bool', hint: '别人发评论、以及待审核的评论才提醒。**你自己发的评论与回复不会再提醒你自己** —— 以前站主每发一条就给自己来一封「新评论待处理」，那是这一条没排自己' },
+        { key: 'commentNotifyAdmin', label: '新评论提醒管理员', kind: 'bool', hint: '不会提醒你自己发的评论' },
         {
           key: 'adminNotifyEmail',
           label: '站长收件邮箱',
-          hint: '评论通知等给站长的信发到这里。留空会发到「发信方式」里的发件邮箱——那通常是 noreply@ 这类只发不收的地址，站长自己收不到提醒，建议填常用邮箱',
+          hint: '留空会发到发件邮箱（通常只发不收）。',
         },
         { key: 'commentNotifyReply', label: '被回复时提醒', kind: 'bool' },
         { key: 'commentNotifyAuthor', label: '提醒文章作者', kind: 'bool' },
@@ -866,10 +858,8 @@
       {#if notifyResult.rows.length}<p class="muted small">{notifyResult.note}</p>{/if}
     </div>
   {/if}
-  <p class="muted small">测试信用的就是上面几节的发信配置与「邮件模板」里填的正文，改了先保存再发才准。</p>
   <p class="muted small">
-    「已发送 / sent」只代表中继收下了这封信（SMTP 回 250）。250 不等于投进对方收件箱：地址不存在、被判为垃圾、
-    服务商限流都照样回 250。这里显示已送出而邮箱（含垃圾邮件箱）里没有，就查发信邮箱服务商的投递日志。
+    「已发送 / sent」只代表中继收下（SMTP 250），不代表送达；收不到请查发信邮箱服务商的投递日志。
   </p>
 {/snippet}
 
@@ -929,8 +919,6 @@
   </section>
   {/if}
 {/each}
-
-<p class="muted small foot">修改后立即生效（配置缓存 30 秒内刷新）；前台需重新构建的项以 Hugo 参数为准。</p>
 
 <style>
   .head {
@@ -1180,8 +1168,5 @@
     .fields {
       grid-template-columns: 1fr;
     }
-  }
-  .foot {
-    margin-top: 1rem;
   }
 </style>

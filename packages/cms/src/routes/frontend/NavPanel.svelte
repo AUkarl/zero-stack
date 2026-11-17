@@ -151,9 +151,7 @@
 <div class="row spread head">
   <div>
     <h3>导航栏菜单项</h3>
-    <p class="muted small tip">
-      共 {count} 项（上限 {CAP.nav}）。上面的顺序就是列表顺序，真正的前台顺序由「区域 + weight」决定，底部预览会实时跟着变。
-    </p>
+    <p class="muted small tip">共 {count} 项（上限 {CAP.nav}）</p>
   </div>
   <button class="sm primary" onclick={addItem} disabled={count >= CAP.nav}>＋ 添加菜单项</button>
 </div>
@@ -164,9 +162,7 @@
 
 <div class="legend">
   <span class="chip on">主菜单</span>
-  <span class="muted small">站点标题旁边那一排</span>
   <span class="chip on">右侧图标区</span>
-  <span class="muted small">和主题自带的图标开关同一排，按 weight 一起排序</span>
 </div>
 
 {#each nav.items as it, i (it)}
@@ -198,7 +194,6 @@
       <label>
         链接
         <input bind:value={it.url} maxlength={LIMIT.href} placeholder="/home/ 或 https://example.com" />
-        <span class="muted small">站内写 / 开头的路径；父项可留空</span>
       </label>
       <label>
         区域
@@ -206,29 +201,24 @@
           <option value="">主菜单</option>
           <option value="controls">右侧图标区</option>
         </select>
-        <span class="muted small">换区域，weight 会按新区重排</span>
       </label>
       <label>
         weight（越小越靠前）
         <input type="number" step="1" bind:value={it.weight} min={LIMIT.weightMin} max={LIMIT.weightMax} />
-        <span class="muted small"></span>
       </label>
       <label>
         标识 identifier
         <input bind:value={it.identifier} maxlength={LIMIT.short} placeholder="有子项时必填，例如 work" />
-        <span class="muted small">子项靠 parent 指回这个值</span>
       </label>
       <label>
         父项 parent
         <select bind:value={it.parent}>
           {#each parentOptions(it) as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
         </select>
-        <span class="muted small"></span>
       </label>
       <label>
         图标（Font Awesome 类名）
         <input bind:value={it.icon} list="zero-fa-icons" maxlength={LIMIT.short} placeholder="fa-solid fa-house" />
-        <span class="muted small">可从清单选择，也可填任意 Font Awesome 类名；清单内图标使用精简字体，清单外自动回退完整图标库</span>
       </label>
       <label>
         图片图标（比图标优先级更高）
@@ -248,7 +238,6 @@
         <input type="checkbox" bind:checked={it.external} />
         <span>外部链接（新标签打开）</span>
       </label>
-      <span class="muted small">登录 / 账号入口显示与否只看「设置 → 注册与邀请码 → 前台账号系统」。</span>
     </div>
     {#if badParent}
       <p class="err small">parent 填的「{it.parent}」在本段里没有任何项的标识与它相同，这一项不会出现在子菜单里。改 parent 或给父项补上 identifier。</p>
@@ -256,13 +245,13 @@
   </section>
 {:else}
   <section class="card">
-    <p class="muted">还没有菜单项。点上面的「＋ 添加菜单项」开始。</p>
+    <p class="muted">暂无菜单项。</p>
   </section>
 {/each}
 
 <section class="card prev">
   <h4>前台顺序预览</h4>
-  <p class="muted small">按「区域 + weight」算出来的最终顺序；子项缩进在父项下面，⚠ 开头的是挂不上父项的孤立项。</p>
+  <p class="muted small">最终顺序</p>
   {#each preview as p (p.group)}
     <div class="pvgrp">
       <h5>{POSITION_LABEL[p.group]}</h5>

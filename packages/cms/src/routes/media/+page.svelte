@@ -444,10 +444,6 @@
 >
   <p>拖拽文件到此处，或点击选择（支持多张，单文件 ≤ 20MB）</p>
   <input bind:this={input} type="file" multiple hidden onchange={onPick} accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon,image/tiff,image/heic,video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo,audio/mpeg,audio/mp4,audio/aac,audio/ogg,audio/wav,audio/flac,application/pdf" />
-  <p class="muted small">
-    上传会带上选中的存储桶 id；桶配了公开域名复制出来就是直链，没配则是访客也能打开的 Worker 代理链接，绝不会是需要登录的后台地址。
-    位图（JPEG / PNG / AVIF…）会在浏览器里先转成 WebP 再上传，像素尺寸不变；转完反而更大的（小图、纯色图常见）保留原文件不转，GIF 与 SVG 原样上传。
-  </p>
 </div>
 
 {#if uploading}<p class="muted">{progress}</p>{/if}
@@ -481,10 +477,6 @@
         <h3>管理存储桶</h3>
         <button class="sm ghost" onclick={() => (drawer = false)}>关闭</button>
       </div>
-      <p class="muted small">
-        保存写入配置键 <code>mediaBuckets</code>。<strong>r2</strong> 走 Worker 绑定的 <code>binding</code>；<strong>s3</strong> 走
-        <code>bucket/endpoint/region/accessKeyId/secretAccessKey</code>。密钥留空表示不覆盖已存值。
-      </p>
       {#if draftError}<p class="err">{draftError}</p>{/if}
       {#if draftNotice}<p class="ok">{draftNotice}</p>{/if}
 
@@ -522,13 +514,10 @@
             {#if !r.publicRead}
               <p class="warn">
                 关掉之后访客端拿到 403：正文、封面、头像里凡是用 <code>/api/media/{r.id || '这个桶'}/…</code> 的地址全部点不开
-                （有 <code>baseUrl</code> 直链的图不受影响）。内部用的桶才这样关；要公开的图请放到有公开域名的桶，或把这格重新勾上。
+                （有 <code>baseUrl</code> 直链的图不受影响）。
               </p>
             {:else}
-              <p class="muted">
-                勾着 = 任何人拿到对象键就能通过这个桶读到文件（键是 <code>uploads/日期/uuid</code>，猜不到，但出现在页面源码里的就等于公开的）。
-                只想内部用的桶，取消勾选。
-              </p>
+              <p class="muted">公开桶：拿到对象键即可读取。</p>
             {/if}
           </div>
         </div>

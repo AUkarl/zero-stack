@@ -598,7 +598,6 @@
           aria-label={t('websiteField')}
         />
       </div>
-      <p class="hint id-hint">{t('guestHint')}</p>
     {/if}
   {/snippet}
 

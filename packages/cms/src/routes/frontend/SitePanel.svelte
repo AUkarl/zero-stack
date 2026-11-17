@@ -33,16 +33,16 @@
   <h3>站点名称</h3>
   <div class="grid2">
     <label>
-      站点名（导航栏、浏览器标题、分享卡片都用它）
+      站点名
       <input bind:value={site.name} maxlength={LIMIT.short} placeholder="你的站点名" />
     </label>
     <label>
-      导航栏里显示的名字（留空则与站点名相同）
+      导航栏名称（留空同站点名）
       <input bind:value={site.navName} maxlength={LIMIT.short} />
     </label>
   </div>
   <label>
-    站点主地址（邮件里的确认 / 退订链接前缀、后台仪表盘的跳转都用它）
+    站点主地址
     <input bind:value={site.siteUrl} maxlength={LIMIT.href} placeholder="https://example.com" />
   </label>
   <div class="row sws">
@@ -69,59 +69,37 @@
       </div>
     </label>
     <label>
-      分享图（文章没有封面时，社交平台卡片用的那一张；留空回落到 Logo）
+      分享图
       <div class="row">
         <input bind:value={site.ogImage} maxlength={LIMIT.href} placeholder="/img/bj.webp" />
         <button class="sm ghost" onclick={() => (pickOg = true)}>选媒体</button>
       </div>
     </label>
     <label>
-      落地页背景图（进站第一屏 /index 那张底图）
+      落地页背景图
       <div class="row">
         <input bind:value={site.landingImage} maxlength={LIMIT.href} placeholder="/img/bj.png" />
         <button class="sm ghost" onclick={() => (pickLanding = true)}>选媒体</button>
       </div>
-      <span class="muted small cnt">
-        只影响 <code>/index</code> 那一屏的背景，首页 <code>/home/</code> 与文章页都不读它。
-        {#if site.landingImage.trim()}
-          {@const pv = previewSrc(site.landingImage)}
-          当前背景图：{#if pv}<img class="thumb" src={pv} alt="落地页背景图预览" />{:else}<code>{site.landingImage.trim()}</code>（没配站点地址，拼不出预览）{/if}
-        {:else}
-          留空时前台用主题自带的 <code>img/bj.png</code>。
-        {/if}
-      </span>
+      {#if site.landingImage.trim()}
+        {@const pv = previewSrc(site.landingImage)}
+        {#if pv}<img class="thumb" src={pv} alt="落地页背景图预览" />{/if}
+      {/if}
     </label>
   </div>
-  <p class="muted small">
-    填站内路径（<code>/img/xxx.webp</code>，对应站点 static 目录）或完整 <code>https://</code> 外链都行。
-    {#if site.logo.trim()}
-      {@const pv = previewSrc(site.logo)}
-      当前 Logo：{#if pv}<img class="thumb" src={pv} alt="logo 预览" />{:else}<code>{site.logo.trim()}</code>（没配站点地址，拼不出预览）{/if}
-    {:else}
-      当前没填 Logo，前台用主题自带的 img/logo-nav.webp。
-    {/if}
-  </p>
 </section>
 
 <section class="card blk">
   <h3>简介与关键词</h3>
   <label>
-    站点简介（全站 meta description 首选）
+    站点简介
     <textarea rows="3" bind:value={site.description} maxlength={LIMIT.long}></textarea>
     <span class="muted small cnt">{site.description.length}/{LIMIT.long} 字</span>
-    <span class="muted small">
-      这是全站 meta description 的首选；单篇文章自己填了描述就用文章那句，页面也没有正文摘要时才回落到这里。
-      两处都空就不出 description 标签（不拿站点名冒充）。
-    </span>
   </label>
   <label>
     关键词（逗号分隔，最多 40 个）
     <input value={keywordsText} oninput={(e) => setKeywords(e.currentTarget.value)} placeholder="个人博客, 技术分享, 摄影" />
   </label>
-  <p class="muted small">
-    站点主域名（baseURL）与 Hugo 的 <code>title</code> 属于 <code>config.toml</code>，这一页不碰；
-    要改请用最后一个「主题配置文件」子标签整份编辑。
-  </p>
 </section>
 
 <MediaPicker bind:open={pickLogo} title="选择 Logo" onpick={(url) => (site.logo = url)} />

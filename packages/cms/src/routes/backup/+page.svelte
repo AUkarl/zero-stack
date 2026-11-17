@@ -640,10 +640,7 @@
   </div>
 </div>
 
-<p class="muted small">
-  只有一种备份：全站。一份文件带主题样式、文章、时刻、评论、点赞与收藏、友链、订阅名单、普通用户、站点设置与媒体清单。
-  <strong>导出不挑范围，恢复时才挑分区</strong> —— 每个分区可以单独演习、单独推送，不会一把全盖回去。
-</p>
+<p class="muted small">整站一份文件；导出不挑范围，恢复时按分区挑选。</p>
 
 
 <section class="card">
@@ -663,9 +660,7 @@
     </table>
   </div>
   <p class="muted small">
-    不进备份：邮件发送日志、群发任务、邀请码使用记录、访问统计明细、审计流水、登录会话与第三方绑定。
-    密钥（SMTP 密码、各家 API Key）永不进文件；绑定本站域名与仓库坐标的配置项也不会写回新站，
-    只在文件里列出旧值给你人工对照。图片本体不在文件里，用下面「图片（媒体本体）」那一节单独导一个图片包过去。
+    密钥不进文件；日志、统计明细、审计流水不入备份；图片本体需在下面单独导出。
   </p>
 
   <div class="exportbar">
@@ -742,12 +737,7 @@
 
 <section class="card">
   <h3>图片（媒体本体）</h3>
-  <p class="muted small">
-    上面那份全站备份里只有图片<strong>清单</strong>，图片本体在这一节搬：导出一个「图片包」，
-    到新站的同一节导入。一张一个请求走后台代理，单次请求的体积上限卡不住整站图片；
-    写回用的是<strong>原对象键</strong>，所以文章与主题里已有的图片地址不会变。
-    本站已经有同名的就跳过 —— 恢复不该把新站这段时间刚传的图打回旧版。
-  </p>
+  <p class="muted small">全站备份只带图片清单，图片本体在这里单独导出 / 导入；同名对象跳过。</p>
   <div class="row actions">
     <button onclick={() => void exportPack()} disabled={packBusy !== '' || busy !== ''}>
       {packBusy === 'export' ? '打包中…' : '导出图片包'}
@@ -812,11 +802,7 @@
 
 <section class="card">
   <h3>恢复</h3>
-  <p class="muted small">
-    选一份备份文件，下面会列出它带的分区与各自条数。勾选要恢复的分区，先「跑演习」——
-    演习不写任何东西，只告诉你每区会写多少行、哪些文件同名、配置要改哪几项；确认过再「推送恢复」。
-    改动勾选后上一份演习结果就作废，需要重跑一次。
-  </p>
+  <p class="muted small">先跑演习，确认分区与条数后再推送恢复。</p>
   <input type="file" aria-label="选择要恢复的备份 JSON 文件" accept="application/json,.json" onchange={(e) => void pickFile(e.currentTarget.files?.[0])} />
 
   {#if picked}
@@ -825,9 +811,7 @@
         {picked.name} · 导出于 {fmtDate(picked.payload.createdAt)} · 来源站点 {picked.payload.siteName || '（未记名）'} · 格式 v{picked.payload.version}
       </p>
       <p class="muted small">
-        来源仓库 {picked.payload.origin.owner || '（未记）'}/{picked.payload.origin.repo || '（未记）'}@{picked.payload.origin.branch || 'main'} ·
-        备份里的目录：文章 {picked.payload.origin.postsDir} · 时刻 {picked.payload.origin.momentsDir} · 数据 {picked.payload.origin.dataDir}。
-        文件按备份里的相对路径写回本站仓库，所以本站「设置 → 内容仓库」的目录要和它一致，否则内容会落到另一个位置。
+        文件按备份里的相对路径写回本站仓库，目录需与来源一致。
       </p>
 
       <div class="row actions">
@@ -963,11 +947,7 @@
 <section class="card">
   <h3>导入其它评论系统的历史评论</h3>
   <p class="muted small">
-    支持 <strong>Waline / Twikoo / Artalk / Giscus / CommentBox</strong> 的导出文件（JSON 或 CSV），
-    以及自家备份文件里的 comments 段。字段名各家都不一样，后端按候选键名依次取值；
-    先「跑演习」看清识别结果、条数与落到的文章，再点「确认写入」。
-    写入的每条都带「历史数据」标记与原始 id，<strong>重复导入同一份文件不会翻倍</strong>。
-    Waline 附带那张 Counter（点赞数 / 浏览量）按<strong>只增不减</strong>并入：本站更大的时候保持本站，不会被旧站的数盖掉。
+    支持 Waline / Twikoo / Artalk / Giscus / CommentBox 的 JSON / CSV 导出。先跑演习，再确认写入；重复导入不会翻倍。
   </p>
 
   <div class="row fields">
@@ -1029,7 +1009,7 @@
         </ul>
       {/if}
       {#if cPlan.slugs?.length}
-        <p class="muted small">会落到这些文章地址上（最多列 30 个，对不上就说明导出里的路径与本站 permalink 不同，先在「评论」页核对一篇再写入）：</p>
+        <p class="muted small">会落到这些文章地址上（最多 30 个）：</p>
         <div class="counts">
           {#each cPlan.slugs as s (s.slug)}
             <span class="pill">{s.slug} {s.count}</span>

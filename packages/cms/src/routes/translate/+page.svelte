@@ -296,10 +296,6 @@
           {/each}
         </select>
       </label>
-      <p class="muted small">
-        翻译与评论审核、AI 回复共用一份 <a href="/settings">「设置 → AI 模型配置」</a>；
-        MyMemory 是免密钥公共接口，配额低，失败会原样报错。
-      </p>
       <button class="primary" onclick={() => void doTranslate()} disabled={translating || !docPath || savingProvider || !targetConfigured}>
         {translating ? '翻译中…' : `一键译成${targetName}`}
       </button>
@@ -311,10 +307,7 @@
   <section class="card blk edit">
     <h3>3 · 编辑{targetName}稿</h3>
     {#if withInfo}
-      <p class="muted small">
-        由 {withInfo.provider} 译成{targetName} · {withInfo.segments} 段
-date/author/comments 等字段保持不变，仅标题/摘要/描述与正文翻译。
-      </p>
+      <p class="muted small">由 {withInfo.provider} 译成{targetName} · {withInfo.segments} 段</p>
     {/if}
     <div class="fields">
       <label class="tight">标题<input bind:value={trTitle} /></label>
@@ -330,7 +323,6 @@ date/author/comments 等字段保持不变，仅标题/摘要/描述与正文翻
       <label class="chk"><input type="checkbox" bind:checked={overwrite} /> 覆盖已存在文件</label>
       <button class="primary" onclick={() => void doPublish()} disabled={publishing || !targetConfigured}>{publishing ? '发布中…' : `发布${targetName}稿`}</button>
     </div>
-    <p class="muted small">写进 content/&lt;目标语言&gt;/posts/&lt;源文件名&gt;.md。目标语言不是站点默认语言时，要先在 hugo.toml 配好那门语言，否则后端会拒绝（写进去也不会出现在前台）。</p>
 
     {#if published}
       <p class="ok">

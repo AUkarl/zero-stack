@@ -10,11 +10,19 @@
 export { renderMarkdown } from '../../../comment/src/lib/markdown';
 export type { MdOptions } from '../../../comment/src/lib/markdown';
 
-/** 估算中文 + 英文混排的字数（中文按字，英文按词） */
+/**
+ * 字数：中文字符各算 1，连续的英文/数字算 1 个词；标点与空白不计。
+ * 与前台模板 partials/zero/word-count.html 同一口径 —— 两边对不上时读者会先发现。
+ * 链接只算可见的链接文字，图片（alt 不显示）不计。
+ */
 export function countWords(s: string): number {
-  const cn = (s.match(/[\u4e00-\u9fa5]/g) || []).length;
-  const en = (s.replace(/[\u4e00-\u9fa5]/g, ' ').match(/[A-Za-z0-9]+/g) || []).length;
-  return cn + en;
+  const text = String(s ?? '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>]+>/g, ' ');
+  const han = (text.match(/\p{Script=Han}/gu) || []).length;
+  const latin = (text.replace(/\p{Script=Han}/gu, ' ').match(/[A-Za-z0-9]+/g) || []).length;
+  return han + latin;
 }
 
 /**

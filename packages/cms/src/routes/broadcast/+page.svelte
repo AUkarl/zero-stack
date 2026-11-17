@@ -231,11 +231,7 @@
   </div>
 </div>
 
-<p class="muted small">
-  邮件按 <code>siteUrl</code> 生成退订链接，收件人只包含已确认订阅者。发信不可用时这里会直接报错，不会假装发送成功。
-  「新文章自动推送」是每天一次的定时任务（世界时 02:00）比站点 RSS 找新文章，最近一次跑成什么样在
-  <a href="/">首页的「定时任务」表</a>里；想当场验证就点下面那两个按钮，结果会写明抓到的 RSS、几篇新文章、给几位订阅者入了队多少封。
-</p>
+<p class="muted small">收件人只包含已确认订阅者。</p>
 
 
 <section class="card">
@@ -277,7 +273,7 @@
   {#if htmlMode}
     <textarea rows="14" placeholder="<p>邮件正文</p>" bind:value={htmlText}></textarea>
   {:else}
-    <MarkdownEditor bind:value={md} rows={14} shortBase={frontUrl('/posts/') || '/posts/'} placeholder={'用 Markdown 写正文，发送时自动转成邮件 HTML。\n\n支持标题、列表、引用、链接、**加粗**。'} />
+    <MarkdownEditor bind:value={md} rows={14} shortBase={frontUrl('/posts/') || '/posts/'} showTip={false} placeholder={'邮件正文（Markdown）'} />
   {/if}
 
   <div class="row acts">
@@ -353,10 +349,7 @@
 <section class="card logs">
   <h3>发信记录</h3>
   <p class="muted small">
-    「已发送」只代表发信服务器收下了这封信（SMTP 回 250），不代表投进了对方收件箱。
-    「说明」那列悬停能看发信服务器的原文回执，里面的 <code>queued as XXX</code> 是服务商的队列号，
-    拿它去邮箱服务商的收发日志查，才能确定某一封信到底有没有出去、有没有被判垃圾。
-    一行「排队中」长期不动，说明队列消费者没跑起来（跟发信配置无关）。
+    「已发送」只代表发信服务器收下（SMTP 250），不代表投进收件箱；长期「排队中」说明队列消费者未运行。
   </p>
   {#if logs.length === 0}
     <p class="muted small">还没有发信记录。</p>

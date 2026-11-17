@@ -71,6 +71,7 @@ import { DEFAULT_TEMPLATES, TEMPLATE_LABELS, TEMPLATE_VARS, queueEmail, renderEm
 import { pushNewPostsToSubscribers } from '../services/feed-push';
 import { exportPostStats, JOB_LABELS } from '../services/scheduler';
 import { newId } from '../lib/crypto';
+import { canonSlug } from '../lib/slug';
 import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
@@ -1074,6 +1075,122 @@ app.delete('/content/file', async (c) => {
     build,
     buildHealth: kv,
     note: [existed === false ? '仓库里本来就没有这个文件，这次没有东西被删除' : null, kvNote || null].filter(Boolean).join('；') || null,
+  });
+});
+
+/* ---------------- 文章改名：文件 + 301 + 评论数据一次处理 ---------------- */
+
+/**
+ * POST /api/admin/content/rename —— 改一篇文章的文件名（目录不变）。
+ *
+ * 文件名就是文章 URL，所以一次改名要同时做完四件事：
+ * 1. 新文件写入 + 旧文件删除放在**同一个提交**里（Git Data API 支持 deletes），
+ *    否则中间失败会出现「两篇同名内容」或「一篇都没有」；
+ * 2. 往内容仓 static/_redirects 追加一条 301，旧链接、外链不会 404；
+ * 3. 评论 / 点赞收藏 / 访问记录按旧 slug 迁到新 slug，不然数据挂在已经不存在的页面上；
+ * 4. 清后台缓存、清边缘缓存并触发重建（旧页面还会在 CDN 上活几天，见 R51）。
+ * 页面包（index.md）与栏目页（_index.md）不支持改文件名：它们对应的是目录地址。
+ */
+app.post('/content/rename', async (c) => {
+  const admin = requireAdmin(c);
+  const body = (await c.req.json().catch(() => null)) as { path?: string; name?: string } | null;
+  const oldPath = safePath(body?.path ?? '');
+  const oldName = oldPath.split('/').pop() ?? '';
+  if (/^_?index\.mdx?$/i.test(oldName)) fail(400, 'index / _index 文件对应目录地址，不能直接改名');
+
+  let name = String(body?.name ?? '').trim().replace(/\.mdx?$/i, '').trim();
+  if (!name) fail(400, '文件名不能为空');
+  if (name.includes('/') || name.includes('\\')) fail(400, '只改文件名，不能移动目录');
+  if (name === oldName.replace(/\.mdx?$/i, '')) fail(400, '文件名没有变化');
+  if (name.toLowerCase() === oldName.replace(/\.mdx?$/i, '').toLowerCase()) {
+    fail(400, '只改大小写会让本地文件系统认不出新旧两个名字，请改成一个不同的名字');
+  }
+  const newPath = safePath(oldPath.slice(0, oldPath.length - oldName.length) + name + '.md');
+
+  const settings = await repoTarget(c.env);
+  const oldFile = await readFile({ ...settings, path: oldPath });
+  if (!oldFile) fail(404, '仓库里找不到这个文件');
+  const clash = await readFile({ ...settings, path: newPath });
+  if (clash) fail(409, `新文件名已存在：${newPath}`);
+
+  /* 有未推送的本地暂存时改名会把旧文件名又推回来：先让站主处理掉这份草稿 */
+  const db = createDb(c.env);
+  const pending = await db
+    .select({ id: adminDrafts.id })
+    .from(adminDrafts)
+    .where(and(eq(adminDrafts.userId, admin.id ?? ''), eq(adminDrafts.path, oldPath)))
+    .limit(1);
+  if (pending.length) fail(409, '这篇还有没推送的本地暂存；先「保存到 Git」或移除草稿后再改名');
+
+  const oldUrl = contentWebPath(oldPath);
+  const newUrl = contentWebPath(newPath);
+  const sources = new Set([oldUrl, oldUrl.replace(/\/+$/, ''), oldUrl.replace(/^\/+/, '')]);
+  const oldFront = parseFrontMatter(oldFile.content).front;
+  const draft = isDraftFront(oldFront);
+
+  /* 草稿没有公开过的地址，不必写 301；已发布文章：先摘掉同一来源的旧规则（重复改名不留死链），
+     再追加新规则。规则按「先匹配先生效」排队，追加在末尾即可 —— 现有规则里没有 /posts/* 这种通配。 */
+  const commitFiles = [{ path: newPath, content: oldFile.content }];
+  if (!draft) {
+    const redirectPath = 'static/_redirects';
+    const redirectFile = await readRepoFile(c.env, redirectPath);
+    const before = redirectFile?.content ?? '# 旧地址 301（后台重命名文章时自动追加）\n';
+    const kept = before
+      .split(/\r?\n/)
+      .filter((line) => {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) return true;
+        return !sources.has(t.split(/\s+/)[0] ?? '');
+      })
+      .join('\n')
+      .replace(/\s+$/, '');
+    const nextRedirects = `${kept}\n\n# 重命名：${oldPath} → ${newPath}\n${oldUrl} ${newUrl} 301\n`;
+    commitFiles.push({ path: redirectPath, content: nextRedirects });
+  }
+
+  const commit = await commitRepoFiles(c.env, commitFiles, `content: rename ${oldPath} → ${newPath}`, { deletes: [oldPath] });
+  if (!commit.success) fail(502, commit.error ?? '改名提交失败');
+
+  /* 评论/点赞/访问记录跟着文章走。历史行可能存成带/不带结尾斜杠、带/不带开头斜杠三种形状；
+     但数据库里的正规形状是 canonSlug（无结尾斜杠），迁移也必须落到这一种，
+     否则前台按 canonSlug 查询会认不出这些行。 */
+  const oldSlugs = [...sources].flatMap((s) => [s, canonSlug(s)]);
+  const storedSlug = canonSlug(newUrl);
+  const migrated = {
+    comments: ((await db.update(comments).set({ postSlug: storedSlug }).where(inArray(comments.postSlug, oldSlugs))) as unknown as { meta?: { changes?: number } })?.meta?.changes ?? 0,
+    reactions: ((await db.update(reactions).set({ targetSlug: storedSlug }).where(inArray(reactions.targetSlug, oldSlugs))) as unknown as { meta?: { changes?: number } })?.meta?.changes ?? 0,
+    visits: ((await db.update(visits).set({ path: storedSlug }).where(inArray(visits.path, oldSlugs))) as unknown as { meta?: { changes?: number } })?.meta?.changes ?? 0,
+  };
+
+  /* 本地开发要连构建产物一起清：hugo server 增量渲染不会因为源文件改名而删掉旧目录 */
+  let purgedBuild: string[] = [];
+  const ref = buildPageRef(oldPath);
+  if (ref) {
+    const title = String(oldFront.title ?? '').trim();
+    purgedBuild = await pruneLocalBuild(settings, { ...ref, title });
+  }
+  const purge = draft ? null : await purgePageUrls(c.env, [oldUrl]);
+  const { build, buildHealth } = await finishContentWrite(c.env, 1, true, [oldPath, newPath]);
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'content',
+    target: oldPath,
+    detail: { event: 'rename', to: newPath, from: oldUrl, url: newUrl, migrated, purgedBuild, purge, build: build ? 'requested' : 'skipped' },
+    ip: clientIp(c),
+  });
+  const healthNote = buildHealthReceipt(buildHealth).replace(/^；/, '');
+  return ok({
+    path: newPath,
+    oldPath,
+    sha: commit.shas[newPath] ?? '',
+    url: { from: oldUrl, to: newUrl },
+    redirect: !draft,
+    migrated,
+    purgedBuild,
+    purge,
+    build,
+    buildHealth,
+    note: [healthNote || null].filter(Boolean).join('；') || null,
   });
 });
 

@@ -462,7 +462,7 @@
   {#if checkResult.length}
     <div class="card check">
       {#each checkResult as line (line)}<p class="small">{line}</p>{/each}
-      <p class="muted small">检测会访问全部友链与站点联盟的站点首页；带 RSS 的友链同时抓取朋友动态，连续失败 3 次进入冷却。</p>
+      <p class="muted small">检测全部友链与联盟站点；连续失败 3 次进入冷却。</p>
     </div>
   {/if}
 
@@ -512,7 +512,7 @@
         <span class="muted small">{items.length} 条</span>
       </div>
       {#if !items.length}
-        <p class="muted small">{kind === 'alliance' ? '还没有站点联盟成员，可在友链条目上「移到站点联盟」。' : '还没有友链，点击右上角新增。'}</p>
+        <p class="muted small">暂无。</p>
       {/if}
       {#each items as f, i (f.id)}
         <div class="frow">
@@ -626,7 +626,7 @@
                   </div>
 
                   {#if r.status === 'pending'}
-                    <p class="muted small">可微调后再通过；通过后自动写入所选分组并发布，审核结果会发送到上面的邮箱。</p>
+                    <p class="muted small">通过后写入所选分组并发布，结果会发到邮箱。</p>
                     <div class="grid2">
                       <label>站点名称 *<input bind:value={form.name} maxlength="60" /></label>
                       <label>站点地址 *<input bind:value={form.url} maxlength="300" /></label>

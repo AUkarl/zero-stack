@@ -11,7 +11,6 @@
 
 <section class="card blk">
   <h3>首页布局</h3>
-  <p class="muted small">二选一，点一下即切换（保存后才对前台生效）。</p>
   <div class="row spread pick">
     {#each LAYOUTS as o (o.value)}
       <button class="opt" class:on={home.layout === o.value} onclick={() => (home.layout = o.value)} aria-pressed={home.layout === o.value}>
@@ -20,27 +19,24 @@
       </button>
     {/each}
   </div>
-  <p class="muted small">当前选择：<strong>{home.layout}</strong>。仅选择 Home 页面风格，具体细节要去 params.toml。</p>
 </section>
 
 <section class="card blk">
   <h3>首页描述</h3>
   <label class="switch">
     <input type="checkbox" bind:checked={home.showDesc} />
-    <span>显示主页描述（前台标题下方那一行）</span>
+    <span>显示主页描述</span>
   </label>
   <label>
     描述文字
     <textarea rows="2" bind:value={home.desc} maxlength={LIMIT.short} placeholder="这里永远有一摩尔的不确定性"></textarea>
-    <span class="muted small">支持 Markdown 与 <code>[[文章标识符]]</code> 短链</span>
     <span class="muted small cnt">{home.desc.length}/{LIMIT.short} 字{home.desc.length >= LIMIT.short ? '（已到上限）' : ''}</span>
   </label>
   <div class="pv">
-    <span class="muted small">预览：</span>
     {#if home.showDesc && home.desc.trim()}
       <span class="pvtext">{home.desc.trim()}</span>
     {:else}
-      <span class="muted small">（这一行不会显示 —— {home.showDesc ? '文字还是空的' : '开关是关的'}）</span>
+      <span class="muted small">（不显示）</span>
     {/if}
   </div>
 </section>

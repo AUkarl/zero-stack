@@ -163,8 +163,7 @@
 </div>
 
 <p class="muted small">
-  共 {counts.all} 个邮箱：已确认 <b>{counts.confirmed}</b>（点过信里的确认按钮）、待确认 <b>{counts.pending}</b>（信发到了但还没点，或压根没收到）、已退订
-  <b>{counts.unsubscribed}</b>。只有「已确认」的会收到群发；确认时间在看下表格里那一列。
+  共 {counts.all} 个邮箱：已确认 <b>{counts.confirmed}</b> · 待确认 <b>{counts.pending}</b> · 已退订 <b>{counts.unsubscribed}</b>。
 </p>
 
 <div class="card table-wrap">
