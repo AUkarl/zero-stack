@@ -20,6 +20,7 @@
 
   let rows = $state<Row[]>([]);
   let filter = $state<'pending' | 'approved' | 'spam' | 'all'>('pending');
+  let q = $state('');
   let loading = $state(false);
   let error = $state('');
   /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
@@ -57,6 +58,16 @@
     ['spam', '垃圾'],
     ['all', '全部'],
   ] as const;
+
+  const shown = $derived.by(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((r) =>
+      [r.authorName, r.authorEmail ?? '', r.content, r.postTitle ?? '', r.postSlug].some((v) =>
+        v.toLowerCase().includes(needle),
+      ),
+    );
+  });
 </script>
 
 <div class="row spread head">
@@ -71,12 +82,13 @@
   {#each TABS as [key, label] (key)}
     <button class="sm" class:on={filter === key} onclick={() => { filter = key; void load(); }}>{label}</button>
   {/each}
+  <input class="q" type="search" placeholder="搜索作者 / 内容 / 文章" bind:value={q} />
 </div>
 
-{#if rows.length === 0 && !loading}<p class="muted">{filter === 'pending' ? '没有待审核的评论。' : '暂无记录'}</p>{/if}
+{#if shown.length === 0 && !loading}<p class="muted">{q.trim() ? '没有匹配的评论。' : filter === 'pending' ? '没有待审核的评论。' : '暂无记录'}</p>{/if}
 
 <div class="list">
-  {#each rows as r (r.id)}
+  {#each shown as r (r.id)}
     <div class="card item">
       <div class="row spread">
         <div class="who">
@@ -116,8 +128,20 @@
   }
   .tabs {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 0.4rem;
     margin-bottom: 0.9rem;
+  }
+  .q {
+    margin-left: auto;
+    width: min(17rem, 100%);
+  }
+  @media (max-width: 640px) {
+    .q {
+      margin-left: 0;
+      width: 100%;
+    }
   }
   .tabs .on {
     background: var(--accent);

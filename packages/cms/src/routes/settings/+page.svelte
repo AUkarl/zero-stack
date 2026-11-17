@@ -1072,7 +1072,7 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.7rem 1.2rem;
-    padding: 0.8rem 1rem 0.2rem;
+    padding: 0.8rem 1rem 1rem;
   }
   .bool {
     display: flex;

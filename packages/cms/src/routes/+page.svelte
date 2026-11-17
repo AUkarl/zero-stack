@@ -389,9 +389,12 @@
     font-size: 0.72rem;
   }
   .dash {
+    --dash-trend: 360px;
+    --dash-pies: 260px;
+    --dash-gap: 0.9rem;
     display: grid;
     grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-    gap: 0.9rem;
+    gap: var(--dash-gap);
     /* 两边等高：地区分布上沿与访问趋势齐、下沿与系统/浏览器两卡的下沿齐 */
     align-items: stretch;
   }
@@ -403,17 +406,19 @@
   }
   /* 三张卡写死高度：数据空着也不许塌，右侧地区分布才有确定的上下沿可对齐 */
   .dash-main > .card:first-child {
-    height: 360px;
+    height: var(--dash-trend);
   }
   .pies > .card {
-    height: 260px;
+    height: var(--dash-pies);
   }
   .pies {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.9rem;
+    gap: var(--dash-gap);
   }
   .region {
+    /* 高度必须锁死：地区行数一多会把网格行撑高，右侧就比左边两张饼图长出一截 */
+    height: calc(var(--dash-trend) + var(--dash-gap) + var(--dash-pies));
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -562,7 +567,8 @@
       grid-template-columns: 1fr;
     }
     .dash-main > .card:first-child,
-    .pies > .card {
+    .pies > .card,
+    .region {
       height: auto;
     }
     .pies {

@@ -4,9 +4,9 @@
 
   let { home }: { home: HomeSection } = $props();
 
-  const LAYOUTS: { value: 'bento' | 'grid'; title: string; desc: string }[] = [
-    { value: 'bento', title: 'bento 精选网格', desc: '顶部简介 + 精选区（11 个槽位）+ 全部文章等高网格，点击可加载更多' },
-    { value: 'grid', title: 'grid 旧版卡片', desc: '等宽等高的卡片网格，做了卡片交错，既保留规整感又增加了瀑布流的感觉' },
+  const LAYOUTS: { value: 'bento' | 'grid'; title: string }[] = [
+    { value: 'bento', title: 'Bento 精选网格' },
+    { value: 'grid', title: 'Grid 卡片网格' },
   ];
 </script>
 
@@ -21,7 +21,6 @@
     {#each LAYOUTS as o (o.value)}
       <button class="opt" class:on={home.layout === o.value} onclick={() => (home.layout = o.value)} aria-pressed={home.layout === o.value}>
         <span class="ot">{o.title}</span>
-        <span class="muted small od">{o.desc}</span>
       </button>
     {/each}
   </div>
@@ -65,7 +64,4 @@
   .opt.on .ot {
     color: var(--accent);
   }
-  .od {
-    line-height: 1.5;
-  }
-        </style>
+</style>

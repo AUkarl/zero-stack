@@ -89,7 +89,7 @@
     }
   }
 
-  function reset() {
+  function clearForm() {
     editId = null;
     name = '';
     url = '';
@@ -97,6 +97,10 @@
     avatar = '';
     rssUrl = '';
     fkind = 'friend';
+  }
+
+  function openNew() {
+    clearForm();
     showForm = true;
   }
 
@@ -119,6 +123,7 @@
     }
     busy = true;
     error = '';
+    const creating = !editId;
     const body = {
       name: name.trim(),
       url: url.trim(),
@@ -128,13 +133,13 @@
       kind: fkind,
     };
     try {
-      const d = editId
-        ? await patch<{ data: FileBacked }>(`/api/admin/friends/${editId}`, body)
-        : await post<{ data: FileBacked }>('/api/admin/friends', body);
+      const d = creating
+        ? await post<{ data: FileBacked }>('/api/admin/friends', body)
+        : await patch<{ data: FileBacked }>(`/api/admin/friends/${editId}`, body);
       showForm = false;
-      reset();
+      clearForm();
       await loadFriends();
-      reportFile(d.data, editId ? '已更新' : '已添加');
+      reportFile(d.data, creating ? '已添加' : '已更新');
     } catch (e) {
       error = msg(e);
     } finally {
@@ -330,6 +335,7 @@
 
   function switchTab(next: 'list' | 'apps') {
     tab = next;
+    showForm = false;
     if (next === 'apps' && !apps.length) void loadApps();
   }
 
@@ -446,7 +452,7 @@
     </button>
     {#if tab === 'list'}
       <button class="sm" onclick={() => void checkNowPost()} disabled={checking}>{checking ? '检测中…' : '立即检测'}</button>
-      <button class="sm primary" onclick={reset}>+ 新增友链</button>
+      <button class="sm primary" onclick={openNew}>+ 新增友链</button>
     {/if}
   </div>
 </div>
@@ -458,17 +464,21 @@
   </button>
 </div>
 
-{#if tab === 'list'}
-  {#if checkResult.length}
-    <div class="card check">
-      {#each checkResult as line (line)}<p class="small">{line}</p>{/each}
-      <p class="muted small">检测全部友链与联盟站点；连续失败 3 次进入冷却。</p>
-    </div>
-  {/if}
-
-  {#if showForm}
-    <section class="card form">
-      <h3>{editId ? '编辑友链' : '新增友链'}</h3>
+{#if showForm}
+  <div
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-label={editId ? '编辑友链' : '新增友链'}
+    tabindex="-1"
+    onclick={(e) => { if (e.target === e.currentTarget) showForm = false; }}
+    onkeydown={(e) => { if (e.key === 'Escape') showForm = false; }}
+  >
+    <div class="modalbox">
+      <div class="row spread">
+        <h3>{editId ? '编辑友链' : '新增友链'}</h3>
+        <button class="sm" onclick={() => (showForm = false)} aria-label="关闭">关闭</button>
+      </div>
       <div class="grid2">
         <label>名称 *<input bind:value={name} placeholder="站点名" /></label>
         <label>地址 *<input bind:value={url} placeholder="https://example.com" /></label>
@@ -481,18 +491,29 @@
             <option value="alliance">站点联盟</option>
           </select>
         </label>
+        <label>简介<input bind:value={description} placeholder="一句话介绍（≤200 字）" /></label>
       </div>
-      <label>简介<input bind:value={description} placeholder="一句话介绍（≤200 字）" /></label>
       <div class="row">
-        <button class="primary" onclick={() => void save()} disabled={busy}>{busy ? '保存中…' : '保存'}</button>
+        <span class="grow"></span>
         <button onclick={() => (showForm = false)}>取消</button>
+        <button class="primary" onclick={() => void save()} disabled={busy}>{busy ? '保存中…' : '保存'}</button>
       </div>
-    </section>
+    </div>
+  </div>
+{/if}
+
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') showForm = false; }} />
+
+{#if tab === 'list'}
+  {#if checkResult.length}
+    <div class="card check">
+      {#each checkResult as line (line)}<p class="small">{line}</p>{/each}
+    </div>
   {/if}
 
   <div class="row spread sortbar">
     <span class="muted small">
-      {#if sortMode}用 ↑ / ↓ 调整同组顺序，点「保存顺序」写入 sortOrder（POST /api/admin/friends/reorder）。{/if}
+      {#if sortMode}用 ↑ / ↓ 调整同组顺序。{/if}
     </span>
     <div class="row">
       {#if !sortMode}
@@ -614,7 +635,7 @@
                   <div class="apply">
                     <dl class="fields3">
                       <div><dt>站点名称</dt><dd>{r.name}</dd></div>
-                      <div><dt>站点地址（friendLink）</dt><dd><a class="flink" href={r.url} target="_blank" rel="noreferrer" title={r.url}>{r.url}</a></dd></div>
+                      <div><dt>站点地址</dt><dd><a class="flink" href={r.url} target="_blank" rel="noreferrer" title={r.url}>{r.url}</a></dd></div>
                       <div><dt>站长邮箱</dt><dd>{r.email || '—（未填，无法发信）'}</dd></div>
                       <div><dt>RSS</dt><dd>{r.rssUrl || '—'}</dd></div>
                       <div><dt>头像</dt><dd>{r.avatar || '—'}</dd></div>
@@ -626,7 +647,6 @@
                   </div>
 
                   {#if r.status === 'pending'}
-                    <p class="muted small">通过后写入所选分组并发布，结果会发到邮箱。</p>
                     <div class="grid2">
                       <label>站点名称 *<input bind:value={form.name} maxlength="60" /></label>
                       <label>站点地址 *<input bind:value={form.url} maxlength="300" /></label>
@@ -700,12 +720,60 @@
   .search {
     width: 200px;
   }
-  .form,
   .check {
     margin-bottom: 0.9rem;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
+  }
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .modalbox {
+    width: min(720px, 100%);
+    max-height: 86vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem 1.1rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+  .modalbox h3 {
+    margin: 0;
+  }
+  .modalbox .grid2 {
+    margin-bottom: 0;
+  }
+  .modalbox .row:not(.spread) {
+    justify-content: flex-end;
+  }
+  .modalbox .grow {
+    flex: 1;
+  }
+  @media (max-width: 640px) {
+    .modal {
+      align-items: flex-end;
+      padding: 0;
+    }
+    .modalbox {
+      max-height: 88dvh;
+      border-radius: var(--radius) var(--radius) 0 0;
+      padding: 1rem;
+    }
+    .modalbox .grid2 {
+      grid-template-columns: 1fr;
+    }
   }
   .check p {
     margin: 0.15rem 0;

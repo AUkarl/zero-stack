@@ -121,6 +121,7 @@
   // 队列
   let queue = $state<Cmt[]>([]);
   let queueStatus = $state<'spam' | 'pending'>('spam');
+  let queueQ = $state('');
   let expandedContent = $state<Set<string>>(new Set());
   function toggleContent(id: string) {
     const next = new Set(expandedContent);
@@ -128,6 +129,16 @@
     else next.add(id);
     expandedContent = next;
   }
+
+  const queueShown = $derived.by(() => {
+    const needle = queueQ.trim().toLowerCase();
+    if (!needle) return queue;
+    return queue.filter((r) =>
+      [r.authorName, r.authorEmail ?? '', r.content, r.postTitle ?? '', r.postSlug].some((v) =>
+        v.toLowerCase().includes(needle),
+      ),
+    );
+  });
 
   const kwJson = (arr: string[]) => JSON.stringify(arr.map((s) => s.trim()).filter(Boolean));
 
@@ -505,9 +516,6 @@
   <div class="stack">
     <section class="card">
       <h4>AI 审核</h4>
-      <p class="muted small">
-        本地规则放行后再交给大模型复核；模型异常时维持本地判定。
-      </p>
       {#if ai}
         <label class="switch">
           <input
@@ -529,9 +537,6 @@
             补齐。
           </p>
         {/if}
-        <p class="muted small">
-          逐条复核用下面队列里的「AI 复核」。
-        </p>
       {:else}
         <p class="muted small">AI 状态读取失败，点右上角「重新读取」再试。</p>
       {/if}
@@ -539,9 +544,6 @@
 
     <section class="card">
       <h4>外部审核服务商</h4>
-      <p class="muted small">
-        异常或超时按放行处理。
-      </p>
       <div class="fields">
         <label>
           服务商类型
@@ -556,9 +558,6 @@
 
     <details class="card repo-file">
       <summary><span>仓库规则文件（高级）</span>{#if pfPath}<code>{pfPath}</code>{/if}</summary>
-      <p class="muted small">
-        提交进内容仓库的共享规则；日常用上面的自定义正则即可。
-      </p>
       <p class="muted small">
         不要把它放进 <code>data/</code>：Hugo 会把未知扩展名当数据文件解析，导致整站构建失败。
       </p>
@@ -580,7 +579,6 @@
 
 <section class="card probe">
   <h3>试跑一段文本</h3>
-  <p class="muted small">用当前规则打分，不会写入数据库，调阈值时对着看。</p>
   <textarea rows="4" placeholder="把可疑评论贴进来" bind:value={probe.content}></textarea>
   <div class="fields tight">
     <label>昵称<input bind:value={probe.name} /></label>
@@ -602,7 +600,6 @@
           AI 判定：{aiProbe.verdict === 'approve' ? '正常' : aiProbe.verdict === 'spam' ? '垃圾' : '转人工待审'}
         </p>
         <p class="muted small">{aiProbe.reason || '模型没有给出理由'}</p>
-        <p class="muted small">这里只试判、不改任何评论；正式拦截看上面的「开启 AI 审核」。</p>
       </div>
     </div>
   {/if}
@@ -647,8 +644,6 @@
               </details>
             {/if}
           </div>
-        {:else}
-          <p class="muted small">未启用外部服务商，或后端试跑接口尚未回传 provider 字段。</p>
         {/if}
       </div>
     </div>
@@ -671,48 +666,48 @@
   {#if queue.length === 0}
     <p class="muted small">这个队列是空的。</p>
   {:else}
-    <div class="table-wrap">
-      <table class="cols-wide stack">
-        <thead>
-          <tr>
-            <th>作者</th>
-            <th>邮箱</th>
-            <th>内容</th>
-            <th>位置</th>
-            <th>时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each queue as r (r.id)}
-            <tr>
-              <td data-label="作者" class="author">{r.authorName}</td>
-              <td data-label="邮箱" class="email">{r.authorEmail || '—'}</td>
-              <td data-label="内容" class="content-cell" class:open={expandedContent.has(r.id)}>
-                <div class="clip">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</div>
-                <button class="sm ghost more" type="button" onclick={() => toggleContent(r.id)}>{expandedContent.has(r.id) ? '收起' : '展开'}</button>
-              </td>
-              <td data-label="位置" class="place">
+    <input class="q" type="search" placeholder="搜索作者 / 内容 / 文章" bind:value={queueQ} />
+    {#if queueShown.length === 0}
+      <p class="muted small">没有匹配的评论。</p>
+    {:else}
+      <div class="queue-list">
+        {#each queueShown as r (r.id)}
+          <article class="qitem">
+            <div class="qhead">
+              <div class="qwho">
+                <b>{r.authorName}</b>
+                <span class="muted small">{r.authorEmail || '—'}</span>
+              </div>
+              <span class="muted small">{timeAgo(r.createdAt)}</span>
+            </div>
+            <div class="qcontent" class:open={expandedContent.has(r.id)}>
+              <div class="clip">{@html renderMarkdown(r.content, { shortBase: frontUrl('/posts/') || '/posts/' })}</div>
+              {#if r.content.length > 80 || expandedContent.has(r.id)}
+                <button class="sm ghost more" type="button" onclick={() => toggleContent(r.id)}>
+                  {expandedContent.has(r.id) ? '收起' : '展开'}
+                </button>
+              {/if}
+            </div>
+            <div class="qfoot">
+              <div class="qplace">
                 {#if frontUrl(r.postSlug)}
                   <a href={frontUrl(r.postSlug)} target="_blank" rel="noreferrer" title={r.postTitle || r.postSlug}>{r.postTitle || r.postSlug}</a>
                 {:else}
                   <span class="muted" title={r.postTitle || r.postSlug}>{r.postTitle || r.postSlug}</span>
                 {/if}
-                {#if r.postTitle}<div class="muted small" title={r.postSlug}>{r.postSlug}</div>{/if}
-              </td>
-              <td data-label="时间" class="time">{timeAgo(r.createdAt)}</td>
-              <td class="ops">
+              </div>
+              <div class="qops">
                 <button class="sm" onclick={() => void moderate(r.id, 'approve')}>放行</button>
                 <button class="sm" onclick={() => void aiReview(r.id)} disabled={aiBusy === r.id}>
                   {aiBusy === r.id ? '复核中…' : 'AI 复核'}
                 </button>
                 <button class="sm danger" onclick={() => void moderate(r.id, 'reject')}>删除</button>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+              </div>
+            </div>
+          </article>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -947,90 +942,105 @@
   .repo-file[open] > summary {
     margin-bottom: 0.5rem;
   }
-  /* 940px 是横向表格的宽度；≤1080 走 .stack 卡片，这条必须撤掉，
-     否则卡片被撑成 940 宽：外框横向滚动、内容跑出卡片（第十轮第 2 条）。 */
-  @media (min-width: 1081px) {
-    .queue table {
-      table-layout: fixed;
-      min-width: 940px;
-    }
+  .q {
+    width: 100%;
+    margin: 0.2rem 0 0.7rem;
   }
-  .queue th:nth-child(1) { width: 120px; }
-  .queue th:nth-child(2) { width: 170px; }
-  .queue th:nth-child(4) { width: 170px; }
-  .queue th:nth-child(5) { width: 84px; }
-  .queue th:nth-child(6) { width: 190px; }
-  .queue td.author,
-  .queue td.email,
-  .queue td.time {
-    white-space: nowrap;
+  .queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .qitem {
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--border);
+  }
+  .qitem:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+  .qhead,
+  .qfoot {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .qhead {
+    justify-content: space-between;
+  }
+  .qwho {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .qwho b,
+  .qwho span {
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .queue td.place a,
-  .queue td.place .muted {
+  .qcontent {
+    margin: 0.45rem 0;
+  }
+  .clip {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .qcontent.open .clip {
+    white-space: normal;
+  }
+  .clip :global(p) {
+    display: inline;
+    margin: 0;
+  }
+  .qcontent.open .clip :global(p) {
+    display: block;
+    margin: 0.25rem 0;
+  }
+  .clip :global(img.zc-emoji-img) {
+    display: inline-block;
+    height: 1.4em;
+    width: auto;
+    max-width: 1.4em;
+    vertical-align: -0.3em;
+    margin: 0 0.05em;
+  }
+  .qcontent .more {
+    margin-top: 0.25rem;
+    padding: 0 0.35rem;
+    min-height: 22px;
+    font-size: 0.72rem;
+  }
+  @media (max-width: 640px) {
+    .qcontent .more {
+      min-height: 40px;
+    }
+  }
+  .qplace {
+    min-width: 0;
+    flex: 1 1 14rem;
+    font-size: 0.8rem;
+  }
+  .qplace a,
+  .qplace span {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* 320px 只属于横向表格那一档；卡片档（≤1080）要放开，否则内容格比卡片还宽，
-     整张卡横向溢出（第十轮第 2 条）。Svelte 给每条选择器都加了哈希，权重很高，
-     所以这条必须搬进宽屏媒体查询里，光在 app.css 里覆盖盖不住。 */
-  @media (min-width: 1081px) {
-    .queue td.content-cell .clip {
-      max-width: 320px;
-    }
-  }
-  .queue td.content-cell.open .clip {
-    max-width: none;
-    white-space: normal;
-  }
-  .queue td.content-cell .more {
-    margin-top: 2px;
-    padding: 0 0.35rem;
-    min-height: 22px;
-    font-size: 0.72rem;
-  }
-  /* 手机上这颗「展开」原来只有 22px 高，低于全局 40px 的触区下限（第十轮第 6 条查到） */
-  @media (max-width: 640px) {
-    .queue td.content-cell .more {
-      min-height: 40px;
-    }
-  }
-  .queue td.content-cell .clip :global(p) {
-    margin: 0;
-  }
-  .queue td.content-cell.open .clip :global(p) {
-    margin: 0.25rem 0;
-    white-space: normal;
+  .qops {
+    display: flex;
+    gap: 0.3rem;
+    margin-left: auto;
+    flex-wrap: wrap;
   }
   .queue .on {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--accent-fg);
-  }
-  .clip {
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* 这一列现在装的是渲染后的 HTML：段落收成 inline 才仍然单行截断，
-     表情图跟着行高走，别把整行撑高 */
-  .clip :global(p) {
-    display: inline;
-    margin: 0;
-  }
-  .clip :global(img.zc-emoji-img) {
-    display: inline-block; height: 1.4em; width: auto; max-width: 1.4em;
-    vertical-align: -0.3em; margin: 0 0.05em;
-  }
-  .ops {
-    white-space: nowrap;
-  }
-  .ops button + button {
-    margin-left: 0.3rem;
   }
   /* 手机/小屏：两列字段表收成一列 */
   @media (max-width: 900px) {
