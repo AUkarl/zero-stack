@@ -16,6 +16,7 @@ import { clientIp } from '../lib/http';
 import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
 import { zodZh } from '../lib/zmsg';
+import { kvDelete, kvGet, kvPut } from '../services/kv-cache';
 
 /**
  * 前端管理：基本信息 / 导航 / 首页 / 页脚 / 关于页 / 工坊页 / 时刻页 / 友链页 / 归档页 / 搜索页 / 订阅页 / SEO。
@@ -676,6 +677,9 @@ function syncSeoAliases(
 app.get('/', async (c) => {
   requireAdmin(c);
   const dir = await dataDir(c.env);
+  const cacheKey = `zero:admin:frontend:${dir}`;
+  const cached = (await kvGet(c.env, cacheKey)) as Record<string, unknown> | null;
+  if (cached) return ok(cached);
   const out: Record<string, unknown> = {};
   const notices: string[] = [];
   const keys = Object.keys(SECTIONS) as SectionKey[];
@@ -712,7 +716,9 @@ app.get('/', async (c) => {
     out.seo = merged.value;
     if (merged.migrated) notices.push('已把 data/seo.json 的重复 SEO 项合并到基本信息；保存时会同步写回 seo.json');
   }
-  return ok({ ...out, dataDir: dir, notice: notices.join('；') || null });
+  const payload = { ...out, dataDir: dir, notice: notices.join('；') || null };
+  await kvPut(c.env, cacheKey, payload, 60);
+  return ok(payload);
 });
 
 const saveSchema = z.object({
@@ -898,6 +904,7 @@ app.post('/', async (c) => {
   /* 这一条通道写的就是 data/*.json：非标量字段（head_html 那种）会让 Hugo 整站失败，
      而回执以前只说「已保存 N 个文件」。与文章保存共用同一个体检，别再各写一份口径。 */
   const health = written.length ? await runLocalBuildCheck(c.env) : null;
+  if (written.length) await kvDelete(c.env, `zero:admin:frontend:${dir}`);
 
   return ok({
     written,
