@@ -1,5 +1,6 @@
 <script lang="ts">
   import MediaPicker from '../content/MediaPicker.svelte';
+  import PageTitleFields from './PageTitleFields.svelte';
   import { get, patch } from '#lib/api';
   import { LIMIT, type MomentsSection } from './types';
 
@@ -55,6 +56,12 @@
     }
   }
 </script>
+
+<section class="card blk">
+  <h3>时刻页头部</h3>
+  <PageTitleFields bind:showTitle={moments.showTitle} bind:title={moments.title} defaultTitle="时刻" />
+  <label>标题下的描述<input bind:value={moments.desc} maxlength={LIMIT.short} /></label>
+</section>
 
 <section class="card blk">
   <h3>时刻页开关与列表</h3>

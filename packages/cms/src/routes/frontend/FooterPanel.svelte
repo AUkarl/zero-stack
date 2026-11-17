@@ -208,7 +208,4 @@
     white-space: nowrap;
     flex-wrap: nowrap;
   }
-  .note {
-    margin-top: 0.2rem;
-  }
 </style>

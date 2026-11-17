@@ -709,8 +709,7 @@
 <!-- ---------------------------------------------------------- 改密码 -->
 <section class="card blk">
   <h3>修改密码</h3>
-  <p class="muted small">唯一入口 POST {EP.password}，body 为 current / next / second / code。</p>
-  <div class="grid2">
+    <div class="grid2">
     <label>当前密码<input type="password" bind:value={curPassword} autocomplete="current-password" /></label>
     <label>新密码<input type="password" bind:value={newPassword} autocomplete="new-password" maxlength="200" /></label>
   </div>

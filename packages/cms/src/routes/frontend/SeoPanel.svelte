@@ -183,10 +183,6 @@ Host: {seo.robotsHost.trim()}{/if}</pre>
     font-size: 0.88rem;
     color: var(--fg);
   }
-  .cnt,
-  .muted {
-    font-size: 0.76rem;
-  }
   .pv {
     margin: 0;
     padding: 0.5rem 0.6rem;

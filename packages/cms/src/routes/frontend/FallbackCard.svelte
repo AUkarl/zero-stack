@@ -42,11 +42,6 @@
     margin: 0;
     line-height: 1.65;
   }
-  .gate ul {
-    margin: 0;
-    padding-left: 1.1rem;
-    line-height: 1.7;
-  }
   .gate code {
     background: var(--panel-2);
     border-radius: 4px;

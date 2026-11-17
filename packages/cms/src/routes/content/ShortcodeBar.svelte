@@ -51,7 +51,4 @@
     padding: 0.18rem 1.8rem 0.18rem 0.55rem;
     font-size: 0.82rem;
   }
-  .small {
-    font-size: 0.74rem;
-  }
 </style>

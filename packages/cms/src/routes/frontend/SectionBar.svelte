@@ -18,7 +18,7 @@
     loaded: boolean;
     initialized: boolean;
     issueCount: number;
-    /** 删掉这份 data 文件之后前台改读什么；只有「友链申请」不是 params.toml */
+    /** 删掉这份 data 文件之后前台改读什么；友链页回落的是页面正文 */
     fallback?: string;
     onremove: () => void;
     oncancel: () => void;

@@ -77,6 +77,13 @@ export function validateSection(key: SectionKey, form: Forms[SectionKey]): Issue
     return out;
   }
 
+  if (key === 'home' || key === 'about' || key === 'works' || key === 'moments' || key === 'apply' || key === 'archive' || key === 'search' || key === 'subscribe') {
+    const f = v as { title?: string; desc?: string };
+    if ((f.title ?? '').length > LIMIT.short) push(`大标题超过 ${LIMIT.short} 字`);
+    if ((f.desc ?? '').length > LIMIT.short) push(`标题下的描述超过 ${LIMIT.short} 字`);
+    if (key === 'archive' || key === 'search' || key === 'subscribe') return out;
+  }
+
   if (key === 'home') {
     const f = v as Forms['home'];
     if (f.desc.length > LIMIT.short) push(`首页描述超过 ${LIMIT.short} 字（后端按短文本存）`);

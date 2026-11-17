@@ -1,5 +1,6 @@
 <script lang="ts">
   import { LIMIT, type HomeSection } from './types';
+  import PageTitleFields from './PageTitleFields.svelte';
 
   let { home }: { home: HomeSection } = $props();
 
@@ -8,6 +9,11 @@
     { value: 'grid', title: 'grid 旧版卡片', desc: '等宽等高的卡片网格，做了卡片交错，既保留规整感又增加了瀑布流的感觉' },
   ];
 </script>
+
+<section class="card blk">
+  <h3>页面标题</h3>
+  <PageTitleFields bind:showTitle={home.showTitle} bind:title={home.title} defaultTitle="主页" />
+</section>
 
 <section class="card blk">
   <h3>首页布局</h3>
@@ -25,7 +31,7 @@
   <h3>首页描述</h3>
   <label class="switch">
     <input type="checkbox" bind:checked={home.showDesc} />
-    <span>显示主页描述</span>
+    <span>显示描述</span>
   </label>
   <label>
     描述文字

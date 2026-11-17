@@ -92,8 +92,11 @@
       const map: Record<string, PostMeta> = {};
       for (const p of d.data ?? []) map[p.path] = { title: p.title ?? '', draft: Boolean(p.draft), hidden: Boolean(p.hidden), date: p.date ?? '' };
       postMeta = map;
+      try { sessionStorage.setItem(POST_META_CACHE, JSON.stringify(map)); } catch { /* 隐私模式没有缓存 */ }
     } catch {
-      postMeta = {};
+      if (!postMetaReady) postMeta = {};
+    } finally {
+      postMetaReady = true;
     }
   }
 
@@ -167,6 +170,7 @@
 
   /** 过滤后的文件列表：无搜索词时只显示当前目录；搜索时用整棵树，结果显示相对路径 */
   const shownEntries = $derived.by(() => {
+    if (!postMetaReady) return [];
     const q = fileQuery.trim().toLowerCase();
     const sorted = (list: Entry[]) => {
       const dirs = list.filter((e) => e.type === 'dir').sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
@@ -422,9 +426,18 @@
   let listOpen = $state(true);
   /** 文件列表的过滤词：文件名、路径、标题都能搜 */
   let fileQuery = $state('');
-  /** 每篇文章的状态（草稿 / 隐藏），来自 /api/admin/posts；取不到就只有文件名可看 */
+  /** 每篇文章的状态与发布时间；列表要等它到齐再渲染，避免先按文件名排、用户点到旧顺序 */
   type PostMeta = { title: string; draft: boolean; hidden: boolean; date: string };
+  const POST_META_CACHE = 'zero-cms-postmeta-v1';
   let postMeta = $state<Record<string, PostMeta>>({});
+  let postMetaReady = $state(false);
+  try {
+    const cached = sessionStorage.getItem(POST_META_CACHE);
+    if (cached) {
+      postMeta = JSON.parse(cached) as Record<string, PostMeta>;
+      postMetaReady = true;
+    }
+  } catch { /* 缓存坏了就当没有 */ }
   let newTitle = $state('');
   let newSlug = $state('');
   let newDir = $state('content/zh/posts');
@@ -991,8 +1004,11 @@
     </div>
     {#if searchBusy}<p class="muted">正在搜索全部目录…</p>{/if}
     {#if fileQuery && searchError && !searchBusy}<p class="err small">{searchError}</p>{/if}
-    {#if !shownEntries.length && !loading && !searchBusy && !searchError}<p class="muted">{fileQuery ? '没有匹配的文件' : '目录为空'}</p>{/if}
-    {#each shownEntries as e (e.path)}
+    {#if !postMetaReady}
+      {#each Array(6) as _, i (i)}<div class="entry skeleton" aria-hidden="true"></div>{/each}
+    {:else}
+      {#if !shownEntries.length && !loading && !searchBusy && !searchError}<p class="muted">{fileQuery ? '没有匹配的文件' : '目录为空'}</p>{/if}
+      {#each shownEntries as e (e.path)}
       <button class="entry" class:active={file === e.path} onclick={() => void openFile(e)}>
         <span>{e.type === 'dir' ? '📁' : e.name.endsWith('.md') ? '📄' : '🗎'}</span>
         <span class="nm">{e.name}</span>
@@ -1000,7 +1016,8 @@
         {#if postMeta[e.path]?.hidden}<span class="badge hid">隐藏</span>{/if}
         {#if e.size}<span class="sz">{(e.size / 1024).toFixed(1)}KB</span>{/if}
       </button>
-    {/each}
+      {/each}
+    {/if}
   </div>
 
   <div class="editor">
@@ -1297,6 +1314,18 @@
   .entry.active {
     background: var(--accent-soft);
     color: var(--accent);
+  }
+  .entry.skeleton {
+    height: 30px;
+    margin: 2px 0;
+    cursor: default;
+    background: linear-gradient(90deg, var(--panel-2) 25%, var(--border) 37%, var(--panel-2) 63%);
+    background-size: 400% 100%;
+    animation: skeleton 1.2s ease infinite;
+  }
+  @keyframes skeleton {
+    0% { background-position: 100% 0; }
+    100% { background-position: 0 0; }
   }
   .nm {
     flex: 1;

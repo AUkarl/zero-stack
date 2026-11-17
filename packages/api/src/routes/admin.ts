@@ -41,7 +41,7 @@ import { finishRepoWrites, repoTarget, triggerPagesBuild, buildReceipt } from '.
 import { buildHealthReceipt, commitRepoFiles, listRepoDir, pruneLocalBuild, readRepoFile, repoBackend, runLocalBuildCheck, walkFiles, writeRepoFile } from '../services/repo';
 import { checkRepoFileSyntax } from '../services/repo-syntax';
 import { listBuckets, maskBucket, resolveBucket, putMediaObject, listMediaObjects, getMediaObject, mediaObjectExists, deleteMediaObject, objectPath, checkUploadType, type MediaBucket } from '../services/media';
-import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry, VARIANT_HEIGHTS } from '../services/media-variants';
+import { isVariantKey, isValidOriginKey, isValidVariantObjectKey, deleteVariantsOf, mergeVariantEntry, readVariantsManifest, removeVariantEntry, variantDir, VARIANT_HEIGHTS } from '../services/media-variants';
 import { checkHugoDates, checkMediaKey, checkUploadBytes } from '../services/hugo-guard';
 import { resolveSiteName } from '../services/site-name';
 import {
@@ -1476,6 +1476,36 @@ function isImportableKey(key: string): boolean {
   return key.split('/').every((s) => s !== '' && s !== '.' && s !== '..' && !/[\u0000-\u001f\u007f]/.test(s));
 }
 
+const UPLOAD_NAME_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+/** 新上传的图片只用 6 位随机名；非图片保留原文件名 */
+function shortName(length = 6): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let out = '';
+  for (const b of bytes) out += UPLOAD_NAME_CHARS[b % UPLOAD_NAME_CHARS.length];
+  return out;
+}
+
+function uploadBaseName(fileName: string, ext: string, image: boolean): string {
+  if (image) return shortName();
+  const base = String(fileName ?? '').split(/[\\/]/).pop() ?? '';
+  return base.replace(/[\u0000-\u001f\u007f]/g, '').trim() || `${shortName()}.${ext}`;
+}
+
+/** 同名时非图片加 -xxxxxx 后缀，图片重新摇一个；返回桶内完整键 */
+async function uniqueUploadKey(env: Env, bucket: MediaBucket, dir: string, base: string, ext: string, image: boolean): Promise<string> {
+  let name = image ? `${base}.${ext}` : base;
+  let key = `${dir}/${name}`;
+  for (let i = 0; i < 6 && (await mediaObjectExists(env, bucket, key)); i++) {
+    name = image ? `${shortName()}.${ext}` : (() => {
+      const dot = base.lastIndexOf('.');
+      return dot > 0 ? `${base.slice(0, dot)}-${shortName()}${base.slice(dot)}` : `${base}-${shortName()}`;
+    })();
+    key = `${dir}/${name}`;
+  }
+  return key;
+}
+
 /** POST /api/admin/media —— FormData 的 bucket 字段或 ?bucket= 决定落到哪个桶 */
 app.post('/media', async (c) => {
   const admin = requireAdmin(c);
@@ -1495,7 +1525,9 @@ app.post('/media', async (c) => {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const byteErr = checkUploadBytes(type.ext, bytes);
   if (byteErr) fail(400, byteErr);
-  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${newId()}.${type.ext}`;
+  const dir = `uploads/${new Date().toISOString().slice(0, 10)}`;
+  const image = type.contentType.startsWith('image/');
+  const key = await uniqueUploadKey(c.env, bucket, dir, uploadBaseName(file.name, type.ext, image), type.ext, image);
   const stored = await putMediaObject(c.env, bucket, {
     key,
     data: bytes,
@@ -1517,6 +1549,75 @@ app.post('/media', async (c) => {
     ip: clientIp(c),
   });
   return ok({ key: stored.key, url, bucket: bucket.id, size: stored.size });
+});
+
+/**
+ * POST /api/admin/media/rename —— 改媒体文件名（目录不变）。
+ * 只动桶里的对象；已经写进文章/页面的旧地址不会自动改。
+ */
+app.post('/media/rename', async (c) => {
+  const admin = requireAdmin(c);
+  const body = (await c.req.json().catch(() => null)) as { bucket?: string; key?: string; name?: string } | null;
+  const bucket = await resolveBucket(c.env, String(body?.bucket ?? '').trim());
+  const key = String(body?.key ?? '').trim();
+  if (!isValidOriginKey(key)) fail(400, '对象键不合法');
+
+  const oldExt = (key.match(/(\.[^./]+)$/) ?? [])[1] ?? '';
+  const raw = String(body?.name ?? '').replace(/[\\/]/g, '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  const base = oldExt && raw.toLowerCase().endsWith(oldExt.toLowerCase()) ? raw.slice(0, -oldExt.length).trim() : raw;
+  if (!base || base === '.' || base === '..') fail(400, '文件名不合法');
+  if (base.length > 120) fail(400, '文件名最多 120 个字符');
+  const newKey = `${key.slice(0, key.length - key.split('/').pop()!.length)}${base}${oldExt}`;
+  if (newKey === key) return ok({ key, unchanged: true });
+  if (await mediaObjectExists(c.env, bucket, newKey)) fail(409, '同名文件已存在');
+
+  const old = await getMediaObject(c.env, bucket, key);
+  if (!old) fail(404, '文件不存在');
+  await putMediaObject(c.env, bucket, { key: newKey, data: old.data, contentType: old.contentType || 'application/octet-stream' });
+
+  /* 图片的三档变体跟着母版走；复制失败只影响 srcset，原图仍可用 */
+  let variants = 0;
+  if (key.startsWith('uploads/')) {
+    const manifest = await readVariantsManifest(c.env);
+    const entry = manifest[key];
+    if (entry) {
+      const from = variantDir(key);
+      const to = variantDir(newKey);
+      for (const h of VARIANT_HEIGHTS) {
+        const src = `${from}h${h}.webp`;
+        const obj = await getMediaObject(c.env, bucket, src).catch(() => null);
+        if (!obj) continue;
+        try {
+          await putMediaObject(c.env, bucket, { key: `${to}h${h}.webp`, data: obj.data, contentType: obj.contentType || 'image/webp' });
+          await deleteMediaObject(c.env, bucket, src);
+          variants++;
+        } catch { /* 单个变体失败就跳过 */ }
+      }
+      const v: Record<string, string> = {};
+      for (const h of VARIANT_HEIGHTS) {
+        const url = entry.v[h];
+        if (url) v[h] = url.split(from).join(to);
+      }
+      await mergeVariantEntry(c.env, newKey, { a: entry.a, v });
+      await removeVariantEntry(c.env, key);
+    }
+  }
+
+  let oldDeleted = true;
+  try {
+    await deleteMediaObject(c.env, bucket, key);
+  } catch {
+    oldDeleted = false;
+  }
+
+  await writeAudit(c.env, {
+    actor: admin,
+    action: 'media',
+    target: key,
+    detail: { event: 'rename', to: newKey, bucket: bucket.id, variants, oldDeleted },
+    ip: clientIp(c),
+  });
+  return ok({ key: newKey, variants, oldDeleted });
 });
 
 /**

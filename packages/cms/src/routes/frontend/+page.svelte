@@ -3,6 +3,7 @@
   import { FA_ICON_CLASSES } from '#lib/fa-icons';
   import AboutPanel from './AboutPanel.svelte';
   import ApplyPanel from './ApplyPanel.svelte';
+  import PageHeaderPanel from './PageHeaderPanel.svelte';
   import FallbackCard from './FallbackCard.svelte';
   import FooterPanel from './FooterPanel.svelte';
   import HomePanel from './HomePanel.svelte';
@@ -33,8 +34,8 @@
   } from './types';
 
   /**
-   * 前端管理：基本信息（含 SEO 专属项）/ 导航栏 / 首页 / 页脚 / 关于页 / 工坊 / 时刻页 / 友链申请，
-   * 八组共用底部一个「保存设置」按钮。
+   * 前端管理：基本信息（含 SEO 专属项）/ 导航栏 / 首页 / 页脚 / 关于页 / 工坊页 / 时刻页 / 友链页 / 归档页 / 搜索页 / 订阅页，
+   * 各段共用底部一个「保存设置」按钮。
    *
    * 一次 POST /api/admin/frontend 把要提交的几段一起发过去，后端写多个 data/*.json，
    * 但最多只触发一次站点构建 —— 这就是全页只留一个保存按钮的原因。
@@ -71,6 +72,9 @@
     works: JSON.stringify(payloadOf('works', BLANK.works)),
     moments: JSON.stringify(payloadOf('moments', BLANK.moments)),
     apply: JSON.stringify(payloadOf('apply', BLANK.apply)),
+    archive: JSON.stringify(payloadOf('archive', BLANK.archive)),
+    search: JSON.stringify(payloadOf('search', BLANK.search)),
+    subscribe: JSON.stringify(payloadOf('subscribe', BLANK.subscribe)),
     seo: JSON.stringify(payloadOf('seo', BLANK.seo)),
   };
 
@@ -197,6 +201,9 @@
         works: d.works,
         moments: d.moments,
         apply: d.apply,
+        archive: d.archive,
+        search: d.search,
+        subscribe: d.subscribe,
         seo: d.seo,
       };
       const next = {} as Forms;
@@ -556,6 +563,12 @@ async function save() {
       <WorksPanel works={forms.works} />
     {:else if sec === 'apply'}
       <ApplyPanel apply={forms.apply} />
+    {:else if sec === 'archive'}
+      <PageHeaderPanel bind:section={forms.archive} page="归档页" />
+    {:else if sec === 'search'}
+      <PageHeaderPanel bind:section={forms.search} page="搜索页" />
+    {:else if sec === 'subscribe'}
+      <PageHeaderPanel bind:section={forms.subscribe} page="订阅页" />
     {:else}
       <SeoPanel seo={forms.seo} />
     {/if}

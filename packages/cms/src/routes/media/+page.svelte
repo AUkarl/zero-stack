@@ -1,6 +1,6 @@
 <script lang="ts">
   import { flash } from '#lib/toast.svelte';
-  import { del, get, getApiBase, patch } from '#lib/api';
+  import { del, get, getApiBase, patch, post } from '#lib/api';
   import { compressNote, prepareImage } from '#lib/image-compress';
   import { fetchVariantManifest, uploadVariants } from '#lib/media-variants';
   import { loadMediaBases, mediaLink, mediaLinkKind, mediaProxyLink } from '#lib/media-url.svelte';
@@ -64,6 +64,10 @@
   const fmtTime = (t: number) => (t ? new Date(t).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-') : '—');
   let uploading = $state(false);
   let progress = $state('');
+  let preview = $state<MediaItem | null>(null);
+  let previewName = $state('');
+  let previewBusy = $state(false);
+  let previewError = $state('');
   let error = $state('');
   /* 顶部那行结果提示改走右上角浮层（页面一长就看不见那行小字） */
   flash('err', () => error);
@@ -373,7 +377,41 @@
 
   const fmtSize = (n: number) => (n > 1048576 ? (n / 1048576).toFixed(2) + 'MB' : (n / 1024).toFixed(1) + 'KB');
   const isImg = (k: string) => /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(k);
+  const isVideo = (k: string) => /\.(mp4|mov|webm|mkv|avi)$/i.test(k);
+  const isAudio = (k: string) => /\.(mp3|m4a|aac|ogg|wav|flac)$/i.test(k);
+  const isPdf = (k: string) => /\.pdf$/i.test(k);
+  const baseName = (k: string) => k.split('/').pop() ?? '';
+  const stemName = (k: string) => baseName(k).replace(/\.[^.]+$/, '');
+  const extName = (k: string) => (baseName(k).match(/\.[^.]+$/) ?? [''])[0];
   const hasStored = (k: string, field: 'accessKeyId' | 'secretAccessKey') => Boolean(secretByK[k]?.[field]);
+
+  function openPreview(it: MediaItem) {
+    preview = it;
+    previewName = stemName(it.key);
+    previewError = '';
+  }
+
+  async function renameMedia() {
+    if (!preview || !previewName.trim()) return;
+    previewBusy = true;
+    previewError = '';
+    try {
+      const d = await post<{ data: { key: string } }>('/api/admin/media/rename', {
+        bucket: selectedId || undefined,
+        key: preview.key,
+        name: previewName.trim() + extName(preview.key),
+      });
+      const next = d.data.key;
+      items = items.map((x) => (x.key === preview!.key ? { ...x, key: next, name: next } : x));
+      preview = items.find((x) => x.key === next) ?? { ...preview, key: next, name: next };
+      previewName = stemName(next);
+      void load();
+    } catch (e) {
+      previewError = msg(e);
+    } finally {
+      previewBusy = false;
+    }
+  }
 </script>
 
 <div class="row spread head">
@@ -452,7 +490,9 @@
   {#each items as it (it.key)}
     <div class="card tile">
       {#if isImg(it.key)}
-        <img src={mediaLink(selected, it.key)} alt={it.key} loading="lazy" />
+        <button class="thumb" onclick={() => openPreview(it)} aria-label="预览">
+          <img src={mediaLink(selected, it.key)} alt={it.key} loading="lazy" />
+        </button>
       {:else}
         <div class="file">🗎 {it.name.split('/').pop()}</div>
       {/if}
@@ -460,6 +500,7 @@
         <span class="nm" title={it.key}>{it.name.split('/').pop()}</span>
         <span class="muted">{fmtTime(it.uploaded)} · {fmtSize(it.size)} · {KIND_LABEL[it.kind] ?? '其他'}</span>
         <div class="ops">
+          <button class="sm" onclick={() => openPreview(it)}>预览</button>
           <button class="sm" onclick={() => void copy(it.key)}>复制链接</button>
           <button class="sm danger" onclick={() => void remove(it.key)}>删除</button>
         </div>
@@ -469,6 +510,47 @@
 </div>
 
 {#if !items.length && !error}<p class="muted">这个桶里还没有媒体文件。</p>{/if}
+
+{#if preview}
+  <div class="scrim center" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) preview = null; }}>
+    <div class="panel preview">
+      <div class="row spread">
+        <h3>预览</h3>
+        <button class="sm ghost" onclick={() => (preview = null)}>关闭</button>
+      </div>
+      <div class="pvbox">
+        {#if isImg(preview.key)}
+          <img src={mediaLink(selected, preview.key)} alt={preview.key} />
+        {:else if isVideo(preview.key)}
+          <video src={mediaLink(selected, preview.key)} controls preload="metadata"><track kind="captions" /></video>
+        {:else if isAudio(preview.key)}
+          <audio src={mediaLink(selected, preview.key)} controls preload="metadata"></audio>
+        {:else if isPdf(preview.key)}
+          <iframe src={mediaLink(selected, preview.key)} title={preview.key}></iframe>
+        {:else}
+          <div class="file">{baseName(preview.key)}</div>
+        {/if}
+      </div>
+      <div class="meta">
+        <span class="mono small">{preview.key}</span>
+        <span class="muted small">{fmtTime(preview.uploaded)} · {fmtSize(preview.size)}</span>
+      </div>
+      <div class="row pvrename">
+        <input bind:value={previewName} maxlength="120" aria-label="文件名" />
+        <span class="muted small">{extName(preview.key)}</span>
+        <button class="sm" onclick={() => void renameMedia()} disabled={previewBusy || !previewName.trim() || previewName.trim() === stemName(preview.key)}>
+          {previewBusy ? '保存中…' : '保存文件名'}
+        </button>
+      </div>
+      {#if previewError}<p class="err small">{previewError}</p>{/if}
+      <p class="warn small">已插入文章的旧地址不会自动更新。</p>
+      <div class="row">
+        <button class="sm" onclick={() => void copy(preview!.key)}>复制链接</button>
+        <a class="sm linkbtn" href={mediaLink(selected, preview.key)} target="_blank" rel="noreferrer">新标签打开</a>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if drawer}
   <div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) drawer = false; }}>
@@ -628,6 +710,14 @@
     flex-direction: column;
     gap: 0.4rem;
   }
+  .thumb {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: zoom-in;
+  }
   .tile img {
     width: 100%;
     aspect-ratio: 1;
@@ -664,6 +754,44 @@
     display: flex;
     justify-content: flex-end;
     z-index: 50;
+  }
+  .scrim.center {
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+  }
+  .panel.preview {
+    width: min(760px, 94vw);
+    height: auto;
+    max-height: 90vh;
+    border-left: 0;
+    border-radius: var(--radius);
+  }
+  .pvbox {
+    display: flex;
+    justify-content: center;
+    min-height: 120px;
+    background: var(--panel-2);
+    border-radius: var(--radius-sm);
+    overflow: auto;
+  }
+  .pvbox img,
+  .pvbox video {
+    max-width: 100%;
+    max-height: 55vh;
+    object-fit: contain;
+  }
+  .pvbox audio {
+    width: 100%;
+    margin: auto 0;
+  }
+  .pvbox iframe {
+    width: 100%;
+    height: 60vh;
+    border: 0;
+  }
+  .pvrename input {
+    flex: 1;
   }
   .panel {
     width: min(560px, 94vw);

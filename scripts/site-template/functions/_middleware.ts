@@ -127,7 +127,7 @@ const API_INSECURE_IMG = API_ORIGIN.startsWith('http://') ? ` ${API_ORIGIN}` : '
 
 /** 主题里写死的那几个外部脚本源（第三方评论、数学公式、404 页的寻人启事）；短代码再引别家 CDN 就来这里补一行 */
 const EXTERNAL_SCRIPTS =
-  'https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://gcore.jsdelivr.net https://unpkg.com https://giscus.app https://qzonestyle.gtimg.cn';
+  'https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://gcore.jsdelivr.net https://unpkg.com https://giscus.app https://qzonestyle.gtimg.cn https://res.wx.qq.com';
 const EXTERNAL_STYLES = 'https://cdn.jsdelivr.net https://unpkg.com';
 
 /** https://x → wss://x、http://x → ws://x（评论系统的实时推送走 WebSocket，只放 https 会看着好了、socket 仍被拦） */

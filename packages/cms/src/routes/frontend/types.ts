@@ -7,7 +7,7 @@
  * 前端先按这套拦一遍，免得用户点了保存才看到后端报错。
  */
 
-export type SectionKey = 'site' | 'nav' | 'home' | 'footer' | 'about' | 'works' | 'moments' | 'apply' | 'seo';
+export type SectionKey = 'site' | 'nav' | 'home' | 'footer' | 'about' | 'works' | 'moments' | 'apply' | 'archive' | 'search' | 'subscribe' | 'seo';
 
 export interface SiteSection {
   name: string;
@@ -47,6 +47,8 @@ export interface NavSection {
 
 export interface HomeSection {
   layout: 'bento' | 'grid';
+  showTitle: boolean;
+  title: string;
   desc: string;
   showDesc: boolean;
 }
@@ -90,6 +92,8 @@ export interface ContactItem {
   external: boolean;
 }
 export interface AboutSection {
+  showTitle: boolean;
+  title: string;
   desc: string;
   tagline: string;
   bio: string[];
@@ -105,6 +109,8 @@ export interface WorkItem {
   url: string;
 }
 export interface WorksSection {
+  showTitle: boolean;
+  title: string;
   desc: string;
   items: WorkItem[];
 }
@@ -119,6 +125,9 @@ export interface ApplyRow {
  * 名单本身在 data/links.yaml（后台「友链」维护），这一页只管三段说明文字。
  */
 export interface ApplySection {
+  showTitle: boolean;
+  title: string;
+  desc: string;
   intro: string;
   requirements: string[];
   myInfo: ApplyRow[];
@@ -126,6 +135,9 @@ export interface ApplySection {
 }
 
 export interface MomentsSection {
+  showTitle: boolean;
+  title: string;
+  desc: string;
   paginate: number;
   showLocation: boolean;
   defaultLocation: string;
@@ -142,6 +154,12 @@ export interface MomentsSection {
  * 表单里用驼峰，落盘统一转成 snake_case —— 那份文件要和 params.toml 的 [seo] 段
  * 逐键对应（Hugo 会把 params 的键小写化，两种拼法混用会留下两个键）。
  */
+export interface PageHeaderSection {
+  showTitle: boolean;
+  title: string;
+  desc: string;
+}
+
 export interface SeoSection {
   defaultDescription: string;
   defaultKeywords: string[];
@@ -181,6 +199,9 @@ export interface FrontendData {
   works: WorksSection | null;
   moments: MomentsSection | null;
   apply: ApplySection | null;
+  archive: PageHeaderSection | null;
+  search: PageHeaderSection | null;
+  subscribe: PageHeaderSection | null;
   seo: SeoSection | null;
   dataDir: string;
   notice: string | null;
@@ -205,6 +226,9 @@ export interface Forms {
   works: WorksSection;
   moments: MomentsSection;
   apply: ApplySection;
+  archive: PageHeaderSection;
+  search: PageHeaderSection;
+  subscribe: PageHeaderSection;
   seo: SeoSection;
 }
 
@@ -214,11 +238,11 @@ export interface Issue {
   message: string;
 }
 
-export const SECTION_KEYS: SectionKey[] = ['site', 'nav', 'home', 'footer', 'about', 'works', 'moments', 'apply', 'seo'];
+export const SECTION_KEYS: SectionKey[] = ['site', 'nav', 'home', 'footer', 'about', 'works', 'moments', 'apply', 'archive', 'search', 'subscribe', 'seo'];
 
 /**
  * 每一段的中文名、落盘文件名、子标签文字，以及「这一份 data 文件删掉之后前台改读什么」。
- * 八段回落 params.toml，只有「友链申请」回落的是友链页自己的正文
+ * 各段回落 params.toml；友链页回落的是友链页自己的正文
  * （content/links/_index.md 里手写的 .apply-col），所以那一句得单独写，不然界面会骗人。
  */
 export const SECTION_META: Record<SectionKey, { label: string; file: string; tab: string; fallback: string }> = {
@@ -227,9 +251,12 @@ export const SECTION_META: Record<SectionKey, { label: string; file: string; tab
   home: { label: '首页', file: 'home.json', tab: '首页', fallback: 'params.toml' },
   footer: { label: '页脚', file: 'footer.json', tab: '页脚', fallback: 'params.toml' },
   about: { label: '关于页', file: 'about.json', tab: '关于页', fallback: 'params.toml' },
-  works: { label: '工坊', file: 'works.json', tab: '工坊', fallback: 'params.toml' },
+  works: { label: '工坊页', file: 'works.json', tab: '工坊页', fallback: 'params.toml' },
   moments: { label: '时刻页', file: 'moments.json', tab: '时刻页', fallback: 'params.toml' },
-  apply: { label: '友链申请', file: 'apply.json', tab: '友链申请', fallback: '友链页正文' },
+  apply: { label: '友链页', file: 'apply.json', tab: '友链页', fallback: '友链页正文' },
+  archive: { label: '归档页', file: 'archive.json', tab: '归档页', fallback: 'params.toml' },
+  search: { label: '搜索页', file: 'search.json', tab: '搜索页', fallback: 'params.toml' },
+  subscribe: { label: '订阅页', file: 'subscribe.json', tab: '订阅页', fallback: 'params.toml' },
   seo: { label: 'SEO', file: 'seo.json', tab: 'SEO', fallback: 'params.toml' },
 };
 
@@ -302,11 +329,14 @@ export const blankForms = (): Forms => ({
     landingImage: '',
   },
   nav: { items: [blankNavItem()] },
-  home: { layout: 'bento', desc: '', showDesc: true },
+  home: { layout: 'bento', showTitle: true, title: '', desc: '', showDesc: true },
   footer: { copyrightText: '', showPoweredBy: true, poweredByText: '', poweredByLink: '', icpItems: [], showServiceName: true, services: [], socialRow1: [], socialRow2: [] },
-  about: { desc: '', tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
-  works: { desc: '', items: [{ title: '', desc: '', status: '', url: '' }] },
+  about: { showTitle: true, title: '', desc: '', tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
+  works: { showTitle: true, title: '', desc: '', items: [{ title: '', desc: '', status: '', url: '' }] },
   moments: {
+    showTitle: true,
+    title: '',
+    desc: '',
     paginate: 10,
     showLocation: true,
     defaultLocation: '',
@@ -319,11 +349,17 @@ export const blankForms = (): Forms => ({
   },
   // 空白模板 = 三段全空：前台这一段就退回「读不到 data 时」的样子（页面正文）
   apply: {
+    showTitle: true,
+    title: '',
+    desc: '',
     intro: '',
     requirements: [''],
     myInfo: [{ label: '', value: '' }],
     submitExample: [{ label: '', value: '' }],
   },
+  archive: { showTitle: true, title: '', desc: '' },
+  search: { showTitle: true, title: '', desc: '' },
+  subscribe: { showTitle: true, title: '', desc: '' },
   // 空白模板 = params.toml 里 [seo] 的那一份默认值，主题不依赖这一层也能跑
   seo: {
     defaultDescription: '',
@@ -380,7 +416,7 @@ export function normNav(raw: unknown): NavSection {
 
 export function normHome(raw: unknown): HomeSection {
   const o = rec(raw);
-  return { layout: o.layout === 'grid' ? 'grid' : 'bento', desc: str(o.desc), showDesc: bool(o.showDesc) };
+  return { layout: o.layout === 'grid' ? 'grid' : 'bento', showTitle: bool(o.showTitle, true), title: str(o.title), desc: str(o.desc), showDesc: bool(o.showDesc) };
 }
 
 const normFooterIcon = (x: unknown): FooterIconItem => {
@@ -413,6 +449,8 @@ export function normFooter(raw: unknown): FooterSection {
 export function normAbout(raw: unknown): AboutSection {
   const o = rec(raw);
   return {
+    showTitle: bool(o.showTitle, true),
+    title: str(o.title),
     desc: str(o.desc),
     tagline: str(o.tagline),
     bio: arr(o.bio).map(str),
@@ -428,6 +466,8 @@ export function normAbout(raw: unknown): AboutSection {
 export function normWorks(raw: unknown): WorksSection {
   const o = rec(raw);
   return {
+    showTitle: bool(o.showTitle, true),
+    title: str(o.title),
     desc: str(o.desc),
     items: arr(o.items).map((x) => {
       const w = rec(x);
@@ -440,11 +480,19 @@ export function normApply(raw: unknown): ApplySection {
   const o = rec(raw);
   const rows = (v: unknown): ApplyRow[] => arr(v).map((x) => ({ label: str(rec(x).label), value: str(rec(x).value) }));
   return {
+    showTitle: bool(o.showTitle, true),
+    title: str(o.title),
+    desc: str(o.desc),
     intro: str(o.intro),
     requirements: arr(o.requirements).map(str),
     myInfo: rows(o.myInfo),
     submitExample: rows(o.submitExample),
   };
+}
+
+export function normPageHeader(raw: unknown): PageHeaderSection {
+  const o = rec(raw);
+  return { showTitle: bool(o.showTitle, true), title: str(o.title), desc: str(o.desc) };
 }
 
 export function normSite(raw: unknown): SiteSection {
@@ -467,6 +515,9 @@ export function normSite(raw: unknown): SiteSection {
 export function normMoments(raw: unknown): MomentsSection {
   const o = rec(raw);
   return {
+    showTitle: bool(o.showTitle, true),
+    title: str(o.title),
+    desc: str(o.desc),
     paginate: Math.min(100, Math.max(1, int(o.paginate, 10) || 10)),
     showLocation: bool(o.showLocation, true),
     defaultLocation: str(o.defaultLocation),
@@ -526,6 +577,9 @@ const NORMALIZERS: Record<SectionKey, (raw: unknown) => Forms[SectionKey]> = {
   works: normWorks,
   moments: normMoments,
   apply: normApply,
+  archive: normPageHeader,
+  search: normPageHeader,
+  subscribe: normPageHeader,
   seo: normSeo,
 };
 
@@ -545,6 +599,9 @@ export function readFrontendData(payload: unknown): FrontendData {
     works: d.works === null || d.works === undefined ? null : normWorks(d.works),
     moments: d.moments === null || d.moments === undefined ? null : normMoments(d.moments),
     apply: d.apply === null || d.apply === undefined ? null : normApply(d.apply),
+    archive: d.archive === null || d.archive === undefined ? null : normPageHeader(d.archive),
+    search: d.search === null || d.search === undefined ? null : normPageHeader(d.search),
+    subscribe: d.subscribe === null || d.subscribe === undefined ? null : normPageHeader(d.subscribe),
     seo: d.seo === null || d.seo === undefined ? null : normSeo(d.seo),
     dataDir: trimmed(d.dataDir, 'data'),
     notice: typeof d.notice === 'string' && d.notice.trim() ? d.notice.trim() : null,
@@ -589,6 +646,9 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
   if (key === 'moments') {
     const f = form as MomentsSection;
     return {
+      showTitle: !!f.showTitle,
+      title: f.title.trim(),
+      desc: f.desc.trim(),
       paginate: Math.min(100, Math.max(1, int(f.paginate, 10) || 10)),
       showLocation: !!f.showLocation,
       defaultLocation: f.defaultLocation.trim(),
@@ -652,7 +712,13 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
   }
   if (key === 'home') {
     const f = form as HomeSection;
-    return { layout: f.layout === 'grid' ? 'grid' : 'bento', desc: f.desc.trim(), showDesc: !!f.showDesc };
+    return {
+      layout: f.layout === 'grid' ? 'grid' : 'bento',
+      showTitle: !!f.showTitle,
+      title: f.title.trim(),
+      desc: f.desc.trim(),
+      showDesc: !!f.showDesc,
+    };
   }
   if (key === 'footer') {
     const f = form as FooterSection;
@@ -673,6 +739,8 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
   if (key === 'about') {
     const f = form as AboutSection;
     return {
+      showTitle: !!f.showTitle,
+      title: f.title.trim(),
       desc: f.desc.trim(),
       tagline: f.tagline.trim(),
       bio: f.bio.map((x) => x.trim()).filter(Boolean),
@@ -683,6 +751,10 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
         .filter((x) => x.text || x.url),
     };
   }
+  if (key === 'archive' || key === 'search' || key === 'subscribe') {
+    const f = form as PageHeaderSection;
+    return { showTitle: !!f.showTitle, title: f.title.trim(), desc: f.desc.trim() };
+  }
   if (key === 'apply') {
     const f = form as ApplySection;
     /** 标签与内容都空的行丢掉：主题那一行本来就不输出，留着只会让「复制」出来的文本多空行 */
@@ -691,6 +763,9 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
         .map((x) => ({ label: x.label.trim(), value: x.value.trim() }))
         .filter((x) => x.label || x.value);
     return {
+      showTitle: !!f.showTitle,
+      title: f.title.trim(),
+      desc: f.desc.trim(),
       intro: f.intro.trim(),
       requirements: f.requirements.map((x) => x.trim()).filter(Boolean),
       myInfo: rows(f.myInfo),
@@ -699,6 +774,8 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
   }
   const f = form as WorksSection;
   return {
+    showTitle: !!f.showTitle,
+    title: f.title.trim(),
     desc: f.desc.trim(),
     items: f.items.map((x) => ({ title: x.title.trim(), desc: x.desc.trim(), status: x.status.trim(), url: x.url.trim() })),
   };

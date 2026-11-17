@@ -30,6 +30,14 @@
   });
   const denied = $derived(!isLogin && ready && !!session.user && !isAdmin);
 
+  /** 提前把文章元数据（发布时间）烘热，「文章」页列表才能立即按时间排好 */
+  let postMetaWarmed = false;
+  $effect(() => {
+    if (!ready || !isAdmin || postMetaWarmed) return;
+    postMetaWarmed = true;
+    get('/api/admin/posts?all=1').catch(() => undefined);
+  });
+
   /* 深浅色：system（跟随系统）→ light → dark 三态循环；首选值记在 localStorage，
      首屏由 app.html 里的内联脚本先套上 data-theme，避免亮一下再变深。 */
   type ThemeMode = 'system' | 'light' | 'dark';

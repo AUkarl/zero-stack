@@ -1,14 +1,15 @@
 <script lang="ts">
   import { CAP, LIMIT, type AboutSection, type ContactItem } from './types';
+  import PageTitleFields from './PageTitleFields.svelte';
 
   let { about }: { about: AboutSection } = $props();
 
   /** 三个「段落列表」区块共用一套增删改排序 */
   type ParaField = 'bio' | 'site' | 'declaration';
-  const PARA_BLOCKS: { field: ParaField; title: string; hint: string }[] = [
-    { field: 'bio', title: '关于我（bio）', hint: '一段一个文本框，按顺序显示在「关于我」区' },
-    { field: 'site', title: '关于本站（site）', hint: '写站点是怎么来的、用什么做的；一段一框' },
-    { field: 'declaration', title: '站点声明（declaration）', hint: '版权许可、隐私与免责声明；一段一框' },
+  const PARA_BLOCKS: { field: ParaField; title: string }[] = [
+    { field: 'bio', title: '关于我（bio）' },
+    { field: 'site', title: '关于本站（site）' },
+    { field: 'declaration', title: '站点声明（declaration）' },
   ];
 
   const PARA_LABEL: Record<ParaField, string> = { bio: '关于我', site: '关于本站', declaration: '站点声明' };
@@ -66,6 +67,7 @@
 
 <section class="card blk">
   <h3>关于页头部</h3>
+  <PageTitleFields bind:showTitle={about.showTitle} bind:title={about.title} defaultTitle="关于" />
   <div class="grid">
     <label>
       描述
@@ -86,7 +88,7 @@
     <div class="row spread">
       <div>
         <h3>{b.title}</h3>
-        <p class="muted small">{b.hint}；每段上限 {LIMIT.long} 字，最多 {CAP.paragraph} 段。</p>
+        <p class="muted small">最多 {CAP.paragraph} 段。</p>
       </div>
       <button class="sm primary" onclick={() => addPara(b.field)} disabled={list.length >= CAP.paragraph}>＋ 添加一段</button>
     </div>

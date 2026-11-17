@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CAP, LIMIT, type ApplyRow, type ApplySection } from './types';
+  import PageTitleFields from './PageTitleFields.svelte';
 
   let { apply }: { apply: ApplySection } = $props();
 
@@ -72,6 +73,12 @@
       .map((r) => (r.label ? `${r.label}：${r.value}` : r.value))
       .join('\n');
 </script>
+
+<section class="card blk">
+  <h3>友链页头部</h3>
+  <PageTitleFields bind:showTitle={apply.showTitle} bind:title={apply.title} defaultTitle="友链" />
+  <label>标题下的描述<input bind:value={apply.desc} maxlength={LIMIT.short} /></label>
+</section>
 
 <section class="card blk">
   <div class="row spread">
@@ -216,8 +223,5 @@
     line-height: 1.7;
     white-space: pre-wrap;
     word-break: break-all;
-  }
-  .note {
-    margin-top: 0.2rem;
   }
 </style>

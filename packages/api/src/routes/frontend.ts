@@ -18,7 +18,7 @@ import type { AppEnv } from '../lib/app';
 import { zodZh } from '../lib/zmsg';
 
 /**
- * 前端管理：基本信息 / 导航 / 首页 / 页脚 / 关于 / 工坊 / 时刻 / 友链申请 / SEO。
+ * 前端管理：基本信息 / 导航 / 首页 / 页脚 / 关于页 / 工坊页 / 时刻页 / 友链页 / 归档页 / 搜索页 / 订阅页 / SEO。
  *
  * 内容写进站点的 data/*.json（Hugo 原生读 data 目录），主题优先读这些文件、
  * 读不到再回落到 params.toml。之所以不直接改 params.toml：那个文件里全是给人看的
@@ -132,6 +132,8 @@ const navSchema = z.object({ items: z.array(navItem).max(60) });
 
 const homeSchema = z.object({
   layout: z.enum(['bento', 'grid']),
+  showTitle: z.boolean().default(true),
+  title: short.default(''),
   desc: short,
   showDesc: z.boolean(),
 });
@@ -169,6 +171,8 @@ const footerSchema = z.object({
 });
 
 const aboutSchema = z.object({
+  showTitle: z.boolean().default(true),
+  title: short.default(''),
   desc: short,
   tagline: short,
   bio: z.array(long).max(60),
@@ -181,6 +185,8 @@ const aboutSchema = z.object({
 });
 
 const worksSchema = z.object({
+  showTitle: z.boolean().default(true),
+  title: short.default(''),
   desc: short,
   items: z
     .array(z.object({ title: short, desc: long, status: short, url: linkUrl }))
@@ -200,6 +206,9 @@ const worksSchema = z.object({
 const infoRow = z.object({ label: short, value: short });
 
 const applySchema = z.object({
+  showTitle: z.boolean().default(true),
+  title: short.default(''),
+  desc: short.default(''),
   /** 「友链要求」标题下那段引导语 */
   intro: long.default(''),
   /** 要求条目：一行一条，前台排成有序列表 */
@@ -258,6 +267,9 @@ const siteSchema = z.object({
  * 里的运行期开关（改了不用重建），不写进 data/moments.json。
  */
 const momentsSchema = z.object({
+  showTitle: z.boolean().default(true),
+  title: short.default(''),
+  desc: short.default(''),
   paginate: z.number().int().min(1).max(100).default(10),
   showLocation: z.boolean().default(true),
   defaultLocation: short.default(''),
@@ -275,6 +287,12 @@ const momentsSchema = z.object({
  * 键全部 snake_case —— params 的键会被 Hugo 小写化，而 JSON 保持原样，
  * 混用驼峰会让同一个参数在合成后出现两个键。
  */
+const pageHeaderSchema = z.object({
+  showTitle: z.boolean().default(true),
+  title: short.default(''),
+  desc: short.default(''),
+});
+
 const seoSchema = z.object({
   default_description: long.default(''),
   default_keywords: z.array(short).max(40).default([]),
@@ -310,9 +328,12 @@ const SECTIONS = {
   home: { file: 'home.json', schema: homeSchema, label: '首页' },
   footer: { file: 'footer.json', schema: footerSchema, label: '页脚' },
   about: { file: 'about.json', schema: aboutSchema, label: '关于页' },
-  works: { file: 'works.json', schema: worksSchema, label: '工坊' },
+  works: { file: 'works.json', schema: worksSchema, label: '工坊页' },
   moments: { file: 'moments.json', schema: momentsSchema, label: '时刻页' },
-  apply: { file: 'apply.json', schema: applySchema, label: '友链申请' },
+  apply: { file: 'apply.json', schema: applySchema, label: '友链页' },
+  archive: { file: 'archive.json', schema: pageHeaderSchema, label: '归档页' },
+  search: { file: 'search.json', schema: pageHeaderSchema, label: '搜索页' },
+  subscribe: { file: 'subscribe.json', schema: pageHeaderSchema, label: '订阅页' },
   seo: { file: 'seo.json', schema: seoSchema, label: 'SEO' },
 } as const;
 
@@ -697,6 +718,9 @@ const saveSchema = z.object({
   works: z.unknown().optional(),
   moments: z.unknown().optional(),
   apply: z.unknown().optional(),
+  archive: z.unknown().optional(),
+  search: z.unknown().optional(),
+  subscribe: z.unknown().optional(),
   seo: z.unknown().optional(),
   triggerBuild: z.boolean().optional().default(true),
 });

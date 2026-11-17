@@ -62,7 +62,6 @@
   const GROUPS: Group[] = [
     {
       title: '注册与邀请码',
-      desc: '关闭「前台账号系统」后读者无法登录。',
       fields: [
         { key: 'accountSystemEnabled', label: '前台账号系统', kind: 'bool' },
         { key: 'allowRegister', label: '允许注册', kind: 'bool' },
@@ -75,17 +74,15 @@
     },
     {
       title: '用户中心',
-      desc: '全站总闸；具体权限在「用户」页按账号勾选。',
       fields: [
         { key: 'draftsEnabled', label: '开放投稿', kind: 'bool' },
         { key: 'authorVerifyEnabled', label: '开放作者认证申请', kind: 'bool' },
-        { key: 'newUserCanPublish', label: '新注册默认可投稿', kind: 'bool', hint: '只影响之后注册的账号' },
-        { key: 'newUserCanAuthor', label: '新注册默认可申请认证', kind: 'bool', hint: '只影响之后注册的账号' },
+        { key: 'newUserCanPublish', label: '新注册默认可投稿', kind: 'bool' },
+        { key: 'newUserCanAuthor', label: '新注册默认可申请认证', kind: 'bool' },
       ],
     },
     {
       title: '评论',
-      desc: '运行时切换，60 秒内生效，无需重建。',
       fields: [
         { key: 'commentEnabled', label: '开启评论', kind: 'bool' },
         {
@@ -94,23 +91,20 @@
           kind: 'bool',
           hint: '未开启登录注册时无效',
         },
-        { key: 'commentRequireReview', label: '游客评论需审核', kind: 'bool', hint: '登录用户评论始终直接通过' },
+        { key: 'commentRequireReview', label: '游客评论需审核', kind: 'bool' },
         { key: 'commentMaxDepth', label: '最大嵌套层级', kind: 'number', hint: '2 以上，不设上限' },
-        { key: 'commentRateLimit', label: '每小时评论上限', kind: 'number', hint: '同一 IP 对同一篇文章，0 表示不限流' },
+        { key: 'commentRateLimit', label: '每小时评论上限', kind: 'number', hint: '0 = 不限' },
         { key: 'commentProvider', label: '文章评论区', kind: 'select', options: PROVIDERS },
         {
           key: 'commentProviders',
           label: '第三方评论参数（JSON）',
           kind: 'textarea',
-          hint: '{"waline":{"serverURL":"…"},"twikoo":{"envId":"…"},"giscus":{…},"artalk":{…}}；切到 zero 时不需要填。'
-            + '保存时会自动把 waline/artalk 的接口域补进站点 CSP（含 wss://，改了 static/_headers 与 functions/_middleware.ts 两份，Pages 随之重建）；'
-            + 'twikoo 只给 envId 时认不出域，请写 "serviceUrl":"https://你的域名"',
+          hint: '{"waline":{"serverURL":"…"},"twikoo":{"envId":"…"},"giscus":{…},"artalk":{…}}',
         },
       ],
     },
     {
       title: '评论审核服务商',
-      desc: '外部复核，异常按放行处理；规则在「评论审核」页。',
       fields: [
         {
           key: 'spamProviderEndpoint',
@@ -133,7 +127,6 @@
     },
     {
       title: 'AI 模型配置',
-      desc: '供评论审核、AI 回复、翻译共用。',
       fields: [
         {
           key: 'aiProvider',
@@ -172,14 +165,13 @@
       title: '邮件订阅',
       fields: [
         { key: 'subscribeEnabled', label: '开启订阅', kind: 'bool' },
-        { key: 'subscribeDoubleOptIn', label: '双重确认', kind: 'bool', hint: '关闭后直接置为已确认，容易被灌订阅' },
-        { key: 'subscribePushEnabled', label: '新文章自动推送', kind: 'bool', hint: '每天一次的定时任务（北京时间 10:00），只发给已确认订阅者' },
-        { key: 'subscribeFeedUrl', label: '用于比对的 RSS 地址', hint: '留空则按「站点地址 + /index.xml」拼；填错的话推送只会报「RSS 里没有条目」' },
+        { key: 'subscribeDoubleOptIn', label: '双重确认', kind: 'bool' },
+        { key: 'subscribePushEnabled', label: '新文章自动推送', kind: 'bool', hint: '每天一次，只发已确认订阅者' },
+        { key: 'subscribeFeedUrl', label: '用于比对的 RSS 地址' },
       ],
     },
     {
       title: '头像与媒体',
-      desc: '全站头像与媒体地址兜底。',
       fields: [
         { key: 'avatarTemplate', label: '头像地址模板' },
         {
@@ -195,8 +187,14 @@
       ],
     },
     {
+      title: '分享',
+      fields: [
+        { key: 'wechatShareAppId', label: '微信 AppID' },
+        { key: 'wechatShareSecret', label: '微信 AppSecret', kind: 'secret' },
+      ],
+    },
+    {
       title: '发信方式',
-      desc: '先选通道，只填对应的一节。',
       fields: [
         {
           key: 'emailProvider',
@@ -208,7 +206,7 @@
             { value: 'cloudflare', label: 'Cloudflare Email Sending' },
           ],
         },
-        { key: 'emailDailyLimit', label: '每日发信上限', kind: 'number', hint: '按 UTC 日界计数，填 0 表示不限制' },
+        { key: 'emailDailyLimit', label: '每日发信上限', kind: 'number', hint: '0 = 不限' },
         { key: 'emailFrom', label: '发件邮箱' },
         { key: 'emailFromName', label: '发件人名称' },
         { key: 'smtpHost', label: 'SMTP 服务器' },
@@ -233,25 +231,21 @@
       sections: [
         {
           title: '通道与发件人',
-          desc: '密钥可直接填在这里；留空即不修改。',
           keys: ['emailProvider', 'emailFrom', 'emailFromName', 'emailDailyLimit'],
         },
         {
           title: 'SMTP',
-          desc: '465 / 587 需开 SSL/TLS；密码填服务商授权码。',
           keys: ['smtpHost', 'smtpPort', 'smtpSecure', 'smtpUser', 'smtpPassword'],
           onlyFor: ['smtp'],
           presets: true,
         },
         {
           title: 'Resend',
-          desc: 'API Key 形如 re_…。',
           keys: ['resendApiKey'],
           onlyFor: ['resend'],
         },
         {
           title: 'Cloudflare Email Sending',
-          desc: 'Account ID 在 Workers 控制台右侧；Token 是 Email Sending 里签发的 API Token（权限要含 Message: send）。',
           keys: ['cloudflareAccountId', 'cloudflareEmailToken'],
           onlyFor: ['cloudflare'],
         },
@@ -281,8 +275,8 @@
           hint: '默认 90，只看填了 RSS 的站（没 RSS 抓不到更新时间）；填 0 表示不按更新频率降级',
         },
         { key: 'friendApplyRequireReview', label: '申请需人工审核', kind: 'bool' },
-        { key: 'friendApplyAutoPublish', label: '通过后自动写友链文件', kind: 'bool', hint: '只管这一条路径：关掉就只进数据库、不提交 links.yaml，与投稿那个开关互不影响' },
-        { key: 'friendApplyBlocklist', label: '申请黑名单关键词', kind: 'lines', hint: '一行一个，站名/网址/描述命中即直接拒绝' },
+        { key: 'friendApplyAutoPublish', label: '通过后自动写友链文件', kind: 'bool' },
+        { key: 'friendApplyBlocklist', label: '申请黑名单关键词', kind: 'lines', hint: '一行一个，命中即拒' },
       ],
     },
     {
@@ -300,7 +294,6 @@
           key: 'poststatsEnabled',
           label: '导出文章统计',
           kind: 'bool',
-          hint: '每天定时把每篇的阅读 / 评论 / 点赞 / 收藏写回站点 data/poststats.json，首页精选与「最热」构建期按它排序（改完点「统计导出」页的立即导出）',
         },
         {
           key: 'poststatsViewWindowDays',
@@ -312,20 +305,18 @@
     },
     {
       title: '内容仓库',
-      desc: '内容写入目标；令牌用 wrangler secret GITHUB_TOKEN 配置。',
       fields: [
         { key: 'githubOwner', label: 'owner' },
         { key: 'githubRepo', label: 'repo' },
         { key: 'githubBranch', label: 'branch' },
         { key: 'githubContentDir', label: '内容目录', hint: '如 content' },
-        { key: 'githubPostsDir', label: '文章目录', hint: '如 content/zh/posts（多语言）或 content/posts（单语言扁平），「文章」页写这里' },
-        { key: 'githubMomentsDir', label: '时刻目录', hint: '如 content/zh/moments，「时刻」页读写这里' },
+        { key: 'githubPostsDir', label: '文章目录', hint: '如 content/zh/posts' },
+        { key: 'githubMomentsDir', label: '时刻目录', hint: '如 content/zh/moments' },
         {
           key: 'githubDataDir',
           label: '数据目录',
-          hint: '后台读写 data/*.json（导航、首页、页脚、友链状态、变体清单…）与 links.yaml、authors.yaml 时用的前缀，默认 data；把站点数据挪到别的目录才需要改，改完「前端管理」九段与友链检测都跟着走这里',
         },
-        { key: 'githubLinksFile', label: '友链文件', hint: '留空 = 「数据目录」（默认 data）下的 links.yaml；只有主题装在别处、或数据目录挪走了才需要填，填了以后后台列出的、审核通过写入的、定时任务读的都是这一份' },
+        { key: 'githubLinksFile', label: '友链文件' },
         { key: 'githubAuthorsFile', label: '作者数据文件', hint: '如 data/authors.yaml' },
         {
           key: 'cloudflarePagesBuildHook',
@@ -336,24 +327,23 @@
         {
           key: 'cfZoneId',
           label: 'Cloudflare Zone ID',
-          hint: '删文章后要把那条地址从边缘缓存里清掉（Pages 的 HTML 在 CDN 上缓存 7 天，不清就还能用老链接打开，强刷也没用）。在 Cloudflare 控制台选中站点域名，右侧概览里能复制 Zone ID',
+          hint: 'Cloudflare 控制台可复制',
         },
         {
           key: 'cfPurgeToken',
           label: 'Purge Cache 令牌',
           kind: 'secret',
-          hint: 'My Profile → API Tokens → 自定义令牌，权限只给「Zone - Cache - Purge」（清除缓存）即可；令牌只存不回读，这一栏显示为空是正常的，留空表示不改动',
+          hint: '权限仅 Zone - Cache - Purge',
         },
         {
           key: 'apiBaseUrl',
           label: '接口地址',
-          hint: '邮件里的「确认订阅」「退订」指向接口自己的 /api/...，必须用这个域名拼（站点域名是 Pages 上的静态站，没有 /api 代理，写成站点地址点开就是 404）。第一次有人订阅时会自动记下，之后换域名在这里改',
+          hint: '确认/退订链接用的接口域名',
         },
       ],
     },
     {
       title: '邮件模板',
-      desc: '只写正文；站点名、Logo 与页脚由主题统一包好，留空用默认文本。',
       fields: [
         {
           key: 'emailTemplateCode',
@@ -381,7 +371,6 @@
     },
     {
       title: '评论提醒与展示',
-      desc: '关闭只是不发信，评论本身不受影响。',
       fields: [
         { key: 'commentNotifyAdmin', label: '新评论提醒管理员', kind: 'bool', hint: '不会提醒你自己发的评论' },
         {

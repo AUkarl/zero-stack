@@ -550,7 +550,7 @@ exit 0
  */
 function siteCsp(apiBase: string): string {
   const externalScripts =
-    'https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://gcore.jsdelivr.net https://unpkg.com https://giscus.app https://qzonestyle.gtimg.cn';
+    'https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://gcore.jsdelivr.net https://unpkg.com https://giscus.app https://qzonestyle.gtimg.cn https://res.wx.qq.com';
   const externalStyles = 'https://cdn.jsdelivr.net https://unpkg.com';
   let origin = '';
   try {

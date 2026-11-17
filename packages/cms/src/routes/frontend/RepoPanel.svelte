@@ -258,15 +258,6 @@
     flex-direction: column;
     gap: 0.5rem;
   }
-  .intro {
-    margin: 0;
-    line-height: 1.75;
-  }
-  .intro code {
-    background: var(--panel-2);
-    border-radius: 4px;
-    padding: 0 0.22rem;
-  }
   .box {
     display: flex;
     flex-direction: column;

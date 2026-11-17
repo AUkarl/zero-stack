@@ -797,6 +797,7 @@ function statKey(raw: string): string {
 
 export interface PostStat {
   views: number;
+  visitors: number;
   comments: number;
   likes: number;
   stars: number;
@@ -822,7 +823,7 @@ export async function exportPostStats(env: Env, onChange?: (paths: string[]) => 
     const key = statKey(raw);
     let entry = stats.get(key);
     if (!entry) {
-      entry = { views: 0, comments: 0, likes: 0, stars: 0 };
+      entry = { views: 0, visitors: 0, comments: 0, likes: 0, stars: 0 };
       stats.set(key, entry);
     }
     return entry;
@@ -856,6 +857,16 @@ export async function exportPostStats(env: Env, onChange?: (paths: string[]) => 
     .where(gte(visits.createdAt, since))
     .groupBy(visits.path);
   for (const r of visitRows) at(r.path).views = Number(r.n || 0);
+
+  /* 文章页的「阅读人数」按累计独立访客算，不按天去重；窗口只影响热榜用的 views */
+  const visitorRows = await db
+    .select({
+      path: visits.path,
+      n: sql<number>`count(distinct coalesce(nullif(${visits.ipHash}, ''), ${visits.sessionId}))`,
+    })
+    .from(visits)
+    .groupBy(visits.path);
+  for (const r of visitorRows) at(r.path).visitors = Number(r.n || 0);
 
   const posts: Record<string, PostStat> = {};
   for (const [slug, stat] of [...stats.entries()]

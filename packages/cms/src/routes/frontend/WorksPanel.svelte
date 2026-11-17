@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CAP, LIMIT, type WorksSection } from './types';
+  import PageTitleFields from './PageTitleFields.svelte';
 
   let { works }: { works: WorksSection } = $props();
 
@@ -31,12 +32,10 @@
 </script>
 
 <section class="card blk">
-  <h3>工坊页描述</h3>
-  <label>
-    描述
-    <input bind:value={works.desc} maxlength={LIMIT.short} placeholder="每一朵云都由思想摩尔组成" />
-    <span class="muted small cnt">{works.desc.length}/{LIMIT.short}</span>
-  </label>
+  <h3>工坊页头部</h3>
+  <PageTitleFields bind:showTitle={works.showTitle} bind:title={works.title} defaultTitle="工坊" />
+  <label>标题下的描述<input bind:value={works.desc} maxlength={LIMIT.short} placeholder="每一朵云都由思想摩尔组成" /></label>
+  <span class="muted small cnt">{works.desc.length}/{LIMIT.short}</span>
 </section>
 
 <section class="card blk">

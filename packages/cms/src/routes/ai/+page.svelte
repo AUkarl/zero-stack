@@ -354,7 +354,4 @@
     font-size: 0.84rem;
     margin-top: 0.25rem;
   }
-  .note {
-    background: transparent;
-  }
 </style>
