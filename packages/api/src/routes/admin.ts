@@ -181,9 +181,6 @@ app.patch('/config', async (c) => {
 
   const changed: { key: string; from: string; to: string }[] = [];
   const failed: { key: string; error: string }[] = [];
-  /** 微信 token / jsapi_ticket 按 appId 缓存在 KV 里；改了 AppID 或 Secret 不清理，
-      最长要等 7000 秒才会换新的，期间签名一直用旧凭据算，微信只会回 invalid signature。 */
-  const wechatAppBefore = String((await getConfig(c.env, 'wechatShareAppId')) ?? '');
   for (const w of writes) {
     const before = (await getConfig(c.env, w.key)) ?? '';
     if (before === w.value) continue;
@@ -200,17 +197,6 @@ app.patch('/config', async (c) => {
       continue;
     }
     changed.push({ key: w.key, from: before, to: w.value });
-  }
-
-  /* 微信分享凭据一改就清掉对应的 token / ticket：缓存键里带 appId，但 Secret 改了仍是同一个键。
-     不清理的话，后台显示「已保存」，前台最长 7000 秒还在用旧 ticket 签名，表现就是「怎么改都不生效」。 */
-  if (changed.some((x) => x.key === 'wechatShareAppId' || x.key === 'wechatShareSecret')) {
-    const appIds = new Set([wechatAppBefore, String((await getConfig(c.env, 'wechatShareAppId')) ?? '')]);
-    for (const id of appIds) {
-      if (!id) continue;
-      await kvDelete(c.env, `zero:wechat:token:${id}`);
-      await kvDelete(c.env, `zero:wechat:ticket:${id}`);
-    }
   }
 
   await writeAudit(c.env, {

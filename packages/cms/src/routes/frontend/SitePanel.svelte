@@ -5,9 +5,7 @@
 
   let { site }: { site: SiteSection } = $props();
 
-  /** 预览图地址：站内相对路径（/img/bj.png）在后台自己的域名下没有这些文件，
-      必须拼站点前台地址；拼不出（siteUrl 没配）就退回文字，不给一张碎图。
-      协议相对地址（//cdn…）和 data:/blob: 原样交给浏览器，别在前面加站点域名。 */
+  /* 预览地址 */
   function previewSrc(v: string): string {
     const s = v.trim();
     if (!s) return '';
@@ -177,8 +175,7 @@
   .cnt {
     font-size: 0.72rem;
   }
-  /* 预览容器：宽图按 16:9 附近的高度裁切，图标按原比例装进固定盒子。
-     以前只给 28px 高，超宽背景图会被压成一条线；现在桌面上约 160px、手机上约 110px。 */
+  /* 图片预览 */
   .pv {
     position: relative;
     display: flex;

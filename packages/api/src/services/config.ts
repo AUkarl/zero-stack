@@ -15,9 +15,6 @@ export type ConfigKey =
 | 'siteLogo'
   | 'siteFavicon'
   | 'author'
-  /** 微信 JS-SDK：用于自定义分享卡片；AppID 公开、AppSecret 只存服务端 */
-  | 'wechatShareAppId'
-  | 'wechatShareSecret'
   /** 站长本人在 data/authors.yaml 里的作者标识；邮件落款与 SEO 的作者兜底读它 */
   | 'defaultAuthor'
   | 'siteUrl'
@@ -178,8 +175,6 @@ export const ALL_CONFIG_KEYS: ConfigKey[] = [
   'siteLogo',
   'siteFavicon',
   'author',
-  'wechatShareAppId',
-  'wechatShareSecret',
   'defaultAuthor',
   'siteUrl',
   'cmsAdminUrl',
@@ -538,7 +533,6 @@ export const SECRET_KEYS: ConfigKey[] = [
   'spamProviderKeyId',
   'spamProviderSecret',
   'aiKey',
-  'wechatShareSecret',
 ];
 
 export function isSecretKey(key: string): boolean {
@@ -761,7 +755,7 @@ export function jsonKeyBadValue(key: string, value: string): string | null {
  * `og:site_name`、JSON-LD 与 RSS —— 全站标题与结构化数据一起被撑爆，后台界面也跟着横向溢出。
  * 每档都比现网任何一份正常配置宽一到两个数量级：只挡误粘贴与手滑，不挡正经文案。
  */
-const NAME_KEYS = new Set(['siteName', 'wechatShareAppId', 'emailFromName', 'aiReplyName', 'aiReplyGroup', 'totpIssuer', 'author', 'defaultAuthor', 'githubOwner', 'githubRepo', 'githubBranch', 'smtpUser', 'cloudflareAccountId']);
+const NAME_KEYS = new Set(['siteName', 'emailFromName', 'aiReplyName', 'aiReplyGroup', 'totpIssuer', 'author', 'defaultAuthor', 'githubOwner', 'githubRepo', 'githubBranch', 'smtpUser', 'cloudflareAccountId']);
 const PATH_SHAPE_KEYS = /(Url|URL|Endpoint|Host|Dir|File|Favicon|Logo|Token|Email|Hook|Zone|Model|Branch|Owner|Repo|User)$/;
 
 export function textKeyMaxLen(key: string): number {

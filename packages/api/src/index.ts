@@ -25,7 +25,6 @@ import petStateApi from './routes/pet-state';
 import publicMedia from './routes/media';
 import account, { deletionsAdmin } from './routes/account';
 import security from './routes/security';
-import share from './routes/share';
 import broadcastJobs from './routes/broadcast';
 import { getAllowedOrigins, getConfig, getPublicConfig, getAdminContactEmail, recordApiOrigin } from './services/config';
 import { listBuckets } from './services/media';
@@ -299,7 +298,6 @@ app.route('/api/user', userCenter);
 app.route('/api/account', account);
 app.route('/api/admin/deletions', deletionsAdmin);
 app.route('/api/security', security);
-app.route('/api/share', share);
 /**
  * 内容仓 CI 的构建结果回报。**必须挂在 /api/admin/* 那道统一登录闸之外** ——
  * CI 没有会话 Cookie，挂在下面时它连处理函数都进不去（实测 401「请先登录」）。
