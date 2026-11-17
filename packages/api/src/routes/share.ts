@@ -66,7 +66,7 @@ app.get('/wechat', async (c) => {
   } catch {
     fail(400, 'url 不合法');
   }
-  const site = new URL(String((await getConfig(c.env, 'siteUrl')) ?? 'https://molyun.com'));
+  const site = new URL(String((await getConfig(c.env, 'siteUrl')) ?? 'https://example.com'));
   const local = c.env.ENVIRONMENT !== 'production' && /^(localhost|127\.0\.0\.1)$/.test(page!.hostname);
   if (page!.protocol !== 'https:' && !local) fail(400, 'url 必须使用 https');
   if (!local && page!.hostname !== site.hostname && page!.hostname !== `www.${site.hostname}`) {

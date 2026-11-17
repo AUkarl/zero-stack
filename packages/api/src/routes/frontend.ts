@@ -176,6 +176,8 @@ const aboutSchema = z.object({
   title: short.default(''),
   showDesc: z.boolean().default(true),
   desc: short,
+  showAvatar: z.boolean().default(true),
+  showName: z.boolean().default(true),
   tagline: short,
   bio: z.array(long).max(60),
   declaration: z.array(long).max(60),

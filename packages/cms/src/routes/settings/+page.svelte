@@ -180,8 +180,12 @@
     {
       title: '分享',
       fields: [
-        { key: 'wechatShareAppId', label: '微信 AppID' },
-        { key: 'wechatShareSecret', label: '微信 AppSecret', kind: 'secret' },
+        {
+          key: 'wechatShareAppId',
+          label: '微信 AppID',
+          hint: '公众号后台「设置与开发 → 公众号设置 → 功能设置 → JS接口安全域名」必须填前台域名（如 example.com，不带 https）；个人未认证订阅号不支持自定义分享卡片',
+        },
+        { key: 'wechatShareSecret', label: '微信 AppSecret', kind: 'secret', hint: '公众号后台「设置与开发 → 基本配置」里的 AppSecret；留空表示不修改已存的值' },
       ],
     },
     {

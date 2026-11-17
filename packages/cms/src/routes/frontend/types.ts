@@ -96,6 +96,8 @@ export interface AboutSection {
   title: string;
   showDesc: boolean;
   desc: string;
+  showAvatar: boolean;
+  showName: boolean;
   tagline: string;
   bio: string[];
   declaration: string[];
@@ -336,7 +338,7 @@ export const blankForms = (): Forms => ({
   nav: { items: [blankNavItem()] },
   home: { layout: 'bento', showTitle: true, title: '', desc: '', showDesc: true },
   footer: { copyrightText: '', showPoweredBy: true, poweredByText: '', poweredByLink: '', icpItems: [], showServiceName: true, services: [], socialRow1: [], socialRow2: [] },
-  about: { showTitle: true, title: '', showDesc: true, desc: '', tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
+  about: { showTitle: true, title: '', showDesc: true, desc: '', showAvatar: true, showName: true, tagline: '', bio: [''], declaration: [''], site: [''], contacts: [] },
   works: { showTitle: true, title: '', showDesc: true, desc: '', items: [{ title: '', desc: '', status: '', url: '' }] },
   moments: {
     showTitle: true,
@@ -460,6 +462,8 @@ export function normAbout(raw: unknown): AboutSection {
     title: str(o.title),
     showDesc: bool(o.showDesc, true),
     desc: str(o.desc),
+    showAvatar: bool(o.showAvatar, true),
+    showName: bool(o.showName, true),
     tagline: str(o.tagline),
     bio: arr(o.bio).map(str),
     declaration: arr(o.declaration).map(str),
@@ -755,6 +759,8 @@ export function payloadOf(key: SectionKey, form: Forms[SectionKey]): unknown {
       title: f.title.trim(),
       showDesc: !!f.showDesc,
       desc: f.desc.trim(),
+      showAvatar: !!f.showAvatar,
+      showName: !!f.showName,
       tagline: f.tagline.trim(),
       bio: f.bio.map((x) => x.trim()).filter(Boolean),
       declaration: f.declaration.map((x) => x.trim()).filter(Boolean),

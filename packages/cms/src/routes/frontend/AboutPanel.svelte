@@ -68,9 +68,14 @@
 <section class="card blk">
   <h3>关于页头部</h3>
   <PageHeaderFields bind:showTitle={about.showTitle} bind:title={about.title} bind:showDesc={about.showDesc} bind:desc={about.desc} defaultTitle="关于" />
+  <div class="row sws">
+    <label class="switch"><input type="checkbox" bind:checked={about.showAvatar} /><span>显示头像</span></label>
+    <label class="switch"><input type="checkbox" bind:checked={about.showName} /><span>显示昵称</span></label>
+  </div>
+  <p class="muted small">关闭头像后不保留图片占位，昵称与个性签名会和下方正文左对齐；个性签名留空则前台整行不显示。</p>
   <label>
     个性签名
-    <input bind:value={about.tagline} maxlength={LIMIT.short} placeholder="日上三竿我独眠，谁是神仙，我是神仙" />
+    <input bind:value={about.tagline} maxlength={LIMIT.short} placeholder="留空则前台不显示" />
     <span class="muted small cnt">{about.tagline.length}/{LIMIT.short}</span>
   </label>
 </section>
@@ -210,5 +215,9 @@
     gap: 0.35rem;
     font-size: 0.82rem;
     color: var(--fg);
+  }
+  .sws {
+    flex-wrap: wrap;
+    gap: 0.5rem 1.2rem;
   }
 </style>

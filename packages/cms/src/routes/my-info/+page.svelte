@@ -267,6 +267,21 @@
     authorDonate = (row.donate ?? []).map(String).slice(0, 3);
   }
 
+  /**
+   * 账号资料与作者资料有 5 个同名字段，但写入的是两份文件（users 表 / data/authors.yaml），
+   * 前台读取的位置也不同：评论、账号页、关于页读账号资料；文章署名、文末作者框、作者页读作者资料。
+   * 不替用户决定删哪边，只提供一个「把账号资料的值带过来」的快捷入口，核对后再保存。
+   */
+  function fillAuthorFromProfile() {
+    if (!profile) return;
+    if (profile.name) authorName = profile.name;
+    if (profile.email) authorEmail = profile.email;
+    if (profile.image) authorAvatar = profile.image;
+    if (profile.bio) authorBio = profile.bio;
+    if (profile.website) authorSite = profile.website;
+    notice = '已从账号资料填入昵称 / 邮箱 / 头像 / 简介 / 个人站；核对后点「保存作者资料」才会写入 data/authors.yaml。';
+  }
+
   /** PUT /api/admin/authors/me：只写作者资料，不碰账号资料与登录凭据 */
   async function saveAuthor() {
     if (!authorName.trim() || !authorAvatar.trim() || !authorEmail.trim()) {
@@ -652,8 +667,11 @@
 
 <!-- --------------------------------------- 站长作者资料（写 data/authors.yaml） -->
 <section class="card blk">
-  <h3>站长作者资料</h3>
-  <p class="muted small">文章 front matter 的 <code>author</code> 写这个标识。</p>
+  <div class="row spread">
+    <h3>站长作者资料</h3>
+    <button class="sm ghost" onclick={fillAuthorFromProfile} disabled={!profile}>从账号资料填入</button>
+  </div>
+  <p class="muted small">文章 front matter 的 <code>author</code> 写这个标识。昵称 / 邮箱 / 头像 / 简介 / 个人站与「账号资料」重复，但分别服务前台的不同位置（评论与账号页读账号资料，文章署名与作者页读这里）；填入后核对再保存，不会自动覆盖。</p>
   {#if authorHandle}
     <div class="grid2">
       <label>作者昵称 *<input bind:value={authorName} maxlength="64" /></label>
