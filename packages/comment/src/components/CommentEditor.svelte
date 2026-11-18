@@ -118,13 +118,21 @@
 <div class="editor">
   <div class="tools">
     <button type="button" title={t('bold')} aria-label={t('bold')} onclick={() => wrap('**', '**', t('bold'))}><b>B</b></button>
-    <button type="button" title={t('italic')} aria-label={t('italic')} onclick={() => wrap('*', '*', t('italic'))}><i>I</i></button>
+    <button type="button" title={t('italic')} aria-label={t('italic')} onclick={() => wrap('*', '*', t('italic'))}><span class="italic-i">I</span></button>
     <button type="button" title={t('code')} aria-label={t('code')} onclick={() => wrap('`', '`', t('code'))}><span class="mono">&lt;/&gt;</span></button>
-    <button type="button" title={t('link')} aria-label={t('link')} onclick={() => wrap('[', '](https://)', t('link'))}><span class="sym">🔗</span></button>
+    <button type="button" title={t('link')} aria-label={t('link')} onclick={() => wrap('[', '](https://)', t('link'))}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+      </svg>
+    </button>
     <button type="button" title={t('shortlink')} aria-label={t('shortlink')} onclick={() => wrap('[[', ']]', t('shortlink'))}><span class="mono">[[]]</span></button>
-    <button type="button" title={t('quote')} aria-label={t('quote')} onclick={() => wrap('\n> ', '', t('quote'))}><span class="sym">❝</span></button>
+    <button type="button" title={t('quote')} aria-label={t('quote')} onclick={() => wrap('\n> ', '', t('quote'))}><span class="quote-mark">❝</span></button>
     <button type="button" class="pv" class:active={previewing} title={t('preview')} aria-label={t('preview')} onclick={() => (previewing = !previewing)}>
-      <span class="sym">👁</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
     </button>
   </div>
 
@@ -202,7 +210,9 @@
   }
   .tools button:hover { color: var(--zc-fg, #333); border-color: var(--zc-accent, #0070f3); }
   .tools .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.78rem; }
-  .tools .sym { font-size: 1rem; line-height: 1; }
+  .tools svg { width: 1.05em; height: 1.05em; display: block; }
+  .tools .italic-i { font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-size: 1.05rem; line-height: 1; }
+  .tools .quote-mark { font-family: Georgia, 'Times New Roman', serif; font-size: 1.2rem; line-height: 1; }
   .tools button.pv.active { color: var(--zc-on-accent, #fff); background: var(--zc-accent, #0070f3); border-color: var(--zc-accent, #0070f3); }
   .preview {
     margin-top: 0.5rem; padding: 0.6rem; border: 1px dashed var(--zc-border, #ddd);
