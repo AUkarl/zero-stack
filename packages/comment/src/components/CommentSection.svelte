@@ -87,6 +87,13 @@
      读屏靠页面里常驻的 .sr-only[role=status] 播报（临时插入的元素不保证会被念出来）。 */
   let doneMessage = $state('');
 
+  /* 成功/待审提示做成视口底部浮层：二级回复框在页面深处，编辑器旁的提示看不见 */
+  $effect(() => {
+    if (!doneMessage) return;
+    const timer = setTimeout(() => (doneMessage = ''), 3200);
+    return () => clearTimeout(timer);
+  });
+
   async function load(
     reset: boolean,
     currentSort: SortKey,
@@ -494,8 +501,6 @@
         />
       </div>
     {/if}
-    {#if doneMessage}<p class="done" aria-hidden="true">{doneMessage}</p>{/if}
-
     {#if tree.length === 0 && mineList.length === 0 && !doneMessage}
       <p class="hint">{t('empty')}</p>
     {/if}
@@ -609,6 +614,10 @@
     {#if meta?.requireReview && isGuest && !needLogin}<span class="hint inline">{t('reviewHint')}</span>{/if}
     {#if session.user}<span class="hint inline">{t('actingAs', { name: session.user.name })}</span>{/if}
   {/snippet}
+
+  {#if doneMessage}
+    <div class="toast" aria-hidden="true">{doneMessage}</div>
+  {/if}
 </section>
 
 <style>
@@ -682,7 +691,14 @@
   .hint.mine-title { margin-top: 1rem; }
   .hint.id-hint { margin: 0.35rem 0 0; font-size: 0.78rem; }
   .error-text { color: var(--zc-danger); font-size: 0.85rem; }
-  .done { color: var(--zc-ok); font-size: 0.88rem; margin: 0.4rem 0 0.6rem; }
+  .toast {
+    position: fixed; left: 50%; bottom: max(1.25rem, env(safe-area-inset-bottom));
+    transform: translateX(-50%); z-index: 10000;
+    max-width: calc(100vw - 2rem); padding: 0.55rem 1rem;
+    border-radius: 12px; background: var(--zc-accent); color: var(--zc-on-accent);
+    font-size: 0.86rem; line-height: 1.5; text-align: center;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .sorts { display: flex; align-items: center; gap: 0.35rem; margin: -0.4rem 0 0.9rem; flex-wrap: wrap; }
   .sorts button {
