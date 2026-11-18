@@ -17,6 +17,10 @@ import { fail, ok } from '../lib/errors';
 import type { AppEnv } from '../lib/app';
 import { zodZh } from '../lib/zmsg';
 import { kvDelete, kvGet, kvPut } from '../services/kv-cache';
+import { listBuckets, putMediaObject } from '../services/media';
+import { fetchWithTimeout } from '../lib/fetch';
+import { toHex } from '../lib/crypto';
+import { checkUploadBytes } from '../services/hugo-guard';
 
 /**
  * 前端管理：基本信息 / 导航 / 首页 / 页脚 / 关于页 / 工坊页 / 时刻页 / 友链页 / 归档页 / 搜索页 / 订阅页 / SEO。
@@ -723,8 +727,117 @@ app.get('/', async (c) => {
   return ok(payload);
 });
 
-const saveSchema = z.object({
-  site: z.unknown().optional(),
+const FOOTER_IMAGE_TYPES: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+  'image/svg+xml': 'svg',
+};
+
+/**
+ * 页脚外链图片本地化：后台粘贴外链后，保存时下载到站内，再把 data/footer.json 里的地址改写。
+ * 栅格图进公开 R2；SVG 是文本，写进站点 static/img/footer/，避免公开桶直出 SVG。
+ */
+async function localizeFooterImages(
+  env: Env,
+  footer: Record<string, unknown>,
+  opts: { apiOrigin: string; actor: { id?: string | null; name?: string | null } | null; ip: string },
+): Promise<{ value: Record<string, unknown>; notes: string[] }> {
+  const notes: string[] = [];
+  const out = { ...footer };
+  let site: URL;
+  try {
+    site = new URL(String((await getConfig(env, 'siteUrl')) ?? 'https://example.com'));
+  } catch {
+    site = new URL('https://example.com');
+  }
+  const buckets = await listBuckets(env);
+  const publicBucket = buckets.find((b) => b.binding === 'R2_PUBLIC') ?? buckets.find((b) => b.id === 'public') ?? buckets[0];
+  const ownedHosts = new Set<string>([site.hostname, new URL(opts.apiOrigin).hostname]);
+  for (const bucket of buckets) {
+    if (!bucket.baseUrl) continue;
+    try {
+      ownedHosts.add(new URL(bucket.baseUrl).hostname);
+    } catch {
+      /* 配错的 baseUrl 不参与判断 */
+    }
+  }
+
+  for (const row of ['services', 'socialRow1', 'socialRow2'] as const) {
+    const list = Array.isArray(out[row]) ? (out[row] as Record<string, unknown>[]) : null;
+    if (!list) continue;
+    const next: Record<string, unknown>[] = [];
+    for (const item of list) {
+      const raw = String(item.img ?? '').trim();
+      if (!/^https?:\/\//i.test(raw)) {
+        next.push(item);
+        continue;
+      }
+      let host = '';
+      try {
+        host = new URL(raw).hostname;
+      } catch {
+        next.push(item);
+        continue;
+      }
+      if (ownedHosts.has(host)) {
+        next.push(item);
+        continue;
+      }
+      try {
+        const res = await fetchWithTimeout(
+          raw,
+          { headers: { accept: 'image/*', 'user-agent': 'Mozilla/5.0 zero-cms image localizer' } },
+          8000,
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+        const ext = FOOTER_IMAGE_TYPES[type];
+        if (!ext) throw new Error(`不支持的图片类型 ${type || '未知'}`);
+        const declared = Number(res.headers.get('content-length') ?? 0);
+        if (declared > 2 * 1024 * 1024) throw new Error('图片超过 2MB');
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        if (bytes.length > 2 * 1024 * 1024) throw new Error('图片超过 2MB');
+        if (type !== 'image/svg+xml') {
+          const bad = checkUploadBytes(ext, bytes);
+          if (bad) throw new Error(bad);
+        }
+        const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(raw));
+        const hash = toHex(new Uint8Array(digest)).slice(0, 16);
+        if (type === 'image/svg+xml') {
+          const svg = new TextDecoder().decode(bytes);
+          if (/<script\b|onload\s*=|javascript:/i.test(svg)) throw new Error('SVG 含有脚本，未保存');
+          const path = `static/img/footer/${hash}.svg`;
+          const written = await writeRepoFile(env, path, svg, `zero-cms: 保存页脚图标 ${String(item.name ?? '')}`.trim(), {
+            actor: opts.actor,
+            ip: opts.ip,
+            action: 'params',
+          });
+          if (!written.success) throw new Error(written.error || '写入站点文件失败');
+          item.img = `/img/footer/${hash}.svg`;
+        } else {
+          if (!publicBucket) throw new Error('没有可用的公开存储桶');
+          const stored = await putMediaObject(env, publicBucket, {
+            key: `uploads/footer/${hash}.${ext}`,
+            data: bytes,
+            contentType: type,
+          });
+          item.img = stored.url.startsWith('/') ? new URL(stored.url, opts.apiOrigin).toString() : stored.url;
+        }
+        notes.push(`页脚图标「${String(item.name ?? '')}」已本地化`);
+      } catch (e) {
+        notes.push(`页脚图标「${String(item.name ?? '')}」外链没本地化：${e instanceof Error ? e.message : String(e)}`);
+      }
+      next.push(item);
+    }
+    out[row] = next;
+  }
+  return { value: out, notes };
+}
+
+const saveSchema = z.object({  site: z.unknown().optional(),
   nav: z.unknown().optional(),
   home: z.unknown().optional(),
   footer: z.unknown().optional(),
@@ -759,6 +872,7 @@ app.post('/', async (c) => {
       值没进去而屏幕上看不出任何异常）。这里不改判定、不学 /api/admin/config 那样整批 400
       （后台面板和脚本可能带冗余字段，突然报错等于制造新故障），只把它们点名回出去。 */
   const ignored: string[] = [];
+  const localizeNotes: string[] = [];
   /** 基本信息是 SEO 重复项的顶层来源；先收着，轮到 seo 或收尾时同步四个别名 */
   let siteForSync: Record<string, unknown> | null = null;
   for (const key of Object.keys(SECTIONS) as SectionKey[]) {
@@ -812,6 +926,13 @@ app.post('/', async (c) => {
       if ((raw as Record<string, unknown>)?.showServiceName === undefined && typeof before?.showServiceName === 'boolean') {
         value = { ...value, showServiceName: before.showServiceName };
       }
+      const localized = await localizeFooterImages(c.env, value, {
+        apiOrigin: new URL(c.req.url).origin,
+        actor: admin,
+        ip: clientIp(c),
+      });
+      value = localized.value;
+      localizeNotes.push(...localized.notes);
     }
     pending.push({ key, content: JSON.stringify(value, null, 2) + '\n' });
   }
@@ -908,16 +1029,18 @@ app.post('/', async (c) => {
   const health = written.length ? await runLocalBuildCheck(c.env) : null;
   if (written.length) await kvDelete(c.env, `zero:admin:frontend:${dir}`);
 
+  const saveNotices = [...(failed.length ? [`部分未保存：${failed.join('；')}`] : []), ...localizeNotes];
+
   return ok({
     written,
-    notice: failed.length ? `部分未保存：${failed.join('；')}` : null,
+    notice: saveNotices.length ? saveNotices.join('；') : null,
     /** 面板/脚本这次送的、schema 没登记的键（形如「基本信息.siteName」）：它们没有落盘。空数组=一切有效 */
     ignored,
     build,
     buildHealth: health,
     message: (written.length
       ? buildReceipt(build, `已保存 ${written.length} 个文件`) + (ignored.length ? `；另有 ${ignored.length} 个字段本站面板不认识，未保存` : '')
-      : '未保存任何文件') + buildHealthReceipt(health),
+      : '未保存任何文件') + (localizeNotes.length ? `；${localizeNotes.join('；')}` : '') + buildHealthReceipt(health),
   });
 });
 
