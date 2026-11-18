@@ -94,10 +94,19 @@
 <style>
   .picker {
     position: absolute; bottom: calc(100% + 0.35rem); left: 0; z-index: 20;
-    width: min(24rem, 86vw); box-sizing: border-box;
+    width: min(24rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); box-sizing: border-box;
     border: 1px solid var(--zc-border, #e2e2e2); border-radius: 10px;
     background: var(--zc-bg, #fff); box-shadow: var(--zc-shadow, 0 8px 24px rgba(0, 0, 0, 0.12));
     padding: 0.35rem;
+  }
+  @media (max-width: 640px) {
+    .picker {
+      position: fixed; left: 50%; top: 50%; right: auto; bottom: auto;
+      transform: translate(-50%, -50%);
+      width: calc(100vw - 1.5rem); max-width: 24rem; max-height: 60vh;
+      z-index: 9999; overflow: hidden;
+    }
+    .items { max-height: calc(60vh - 3rem); }
   }
   .tabs { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; padding-bottom: 0.35rem; border-bottom: 1px solid var(--zc-border, #e2e2e2); }
   .tabs button {

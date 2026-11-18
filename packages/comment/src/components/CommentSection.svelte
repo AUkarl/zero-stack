@@ -474,7 +474,6 @@
     </div>
 
     <p class="sr-only" role="status" aria-live="polite">{doneMessage}</p>
-    {#if doneMessage}<p class="done" aria-hidden="true">{doneMessage}</p>{/if}
 
     {#if !collapsed}
       <div class="main-form">
@@ -495,6 +494,7 @@
         />
       </div>
     {/if}
+    {#if doneMessage}<p class="done" aria-hidden="true">{doneMessage}</p>{/if}
 
     {#if tree.length === 0 && mineList.length === 0 && !doneMessage}
       <p class="hint">{t('empty')}</p>
@@ -682,7 +682,7 @@
   .hint.mine-title { margin-top: 1rem; }
   .hint.id-hint { margin: 0.35rem 0 0; font-size: 0.78rem; }
   .error-text { color: var(--zc-danger); font-size: 0.85rem; }
-  .done { color: var(--zc-ok); font-size: 0.88rem; margin: 0 0 0.6rem; }
+  .done { color: var(--zc-ok); font-size: 0.88rem; margin: 0.4rem 0 0.6rem; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .sorts { display: flex; align-items: center; gap: 0.35rem; margin: -0.4rem 0 0.9rem; flex-wrap: wrap; }
   .sorts button {

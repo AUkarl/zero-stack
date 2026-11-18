@@ -117,14 +117,14 @@
 
 <div class="editor">
   <div class="tools">
-    <button type="button" onclick={() => wrap('**', '**', t('bold'))}>{t('bold')}</button>
-    <button type="button" onclick={() => wrap('*', '*', t('italic'))}>{t('italic')}</button>
-    <button type="button" onclick={() => wrap('`', '`', t('code'))}>{t('code')}</button>
-    <button type="button" onclick={() => wrap('[', '](https://)', t('link'))}>{t('link')}</button>
-    <button type="button" onclick={() => wrap('[[', ']]', t('shortlink'))}>{t('shortlink')}</button>
-    <button type="button" onclick={() => wrap('\n> ', '', t('quote'))}>{t('quote')}</button>
-    <button type="button" class="pv" class:active={previewing} onclick={() => (previewing = !previewing)}>
-      {t('preview')}
+    <button type="button" title={t('bold')} aria-label={t('bold')} onclick={() => wrap('**', '**', t('bold'))}><b>B</b></button>
+    <button type="button" title={t('italic')} aria-label={t('italic')} onclick={() => wrap('*', '*', t('italic'))}><i>I</i></button>
+    <button type="button" title={t('code')} aria-label={t('code')} onclick={() => wrap('`', '`', t('code'))}><span class="mono">&lt;/&gt;</span></button>
+    <button type="button" title={t('link')} aria-label={t('link')} onclick={() => wrap('[', '](https://)', t('link'))}><span class="sym">🔗</span></button>
+    <button type="button" title={t('shortlink')} aria-label={t('shortlink')} onclick={() => wrap('[[', ']]', t('shortlink'))}><span class="mono">[[]]</span></button>
+    <button type="button" title={t('quote')} aria-label={t('quote')} onclick={() => wrap('\n> ', '', t('quote'))}><span class="sym">❝</span></button>
+    <button type="button" class="pv" class:active={previewing} title={t('preview')} aria-label={t('preview')} onclick={() => (previewing = !previewing)}>
+      <span class="sym">👁</span>
     </button>
   </div>
 
@@ -192,13 +192,17 @@
   }
   textarea::placeholder { color: var(--zc-muted, #999); }
   textarea.has-error { border-color: var(--zc-danger, #dc2626); }
-  .tools { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.4rem; }
+  .tools { display: flex; flex-wrap: nowrap; gap: 0.25rem; margin-bottom: 0.4rem; overflow-x: auto; scrollbar-width: none; }
+  .tools::-webkit-scrollbar { display: none; }
   .tools button {
-    font-size: 0.78rem; padding: 0.15rem 0.55rem; border-radius: 6px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 2.1rem; height: 2rem; padding: 0 0.3rem; box-sizing: border-box;
+    font-size: 0.9rem; line-height: 1; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--zc-border, #e2e2e2); background: var(--zc-bg, #fff); color: var(--zc-muted, #888);
   }
   .tools button:hover { color: var(--zc-fg, #333); border-color: var(--zc-accent, #0070f3); }
-  .tools button.pv { margin-left: auto; }
+  .tools .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.78rem; }
+  .tools .sym { font-size: 1rem; line-height: 1; }
   .tools button.pv.active { color: var(--zc-on-accent, #fff); background: var(--zc-accent, #0070f3); border-color: var(--zc-accent, #0070f3); }
   .preview {
     margin-top: 0.5rem; padding: 0.6rem; border: 1px dashed var(--zc-border, #ddd);
