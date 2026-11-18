@@ -17,6 +17,15 @@
 
   const t = $derived(tr(lang));
 
+  /* 手机端打开面板时锁住页面滚动，避免在表情格上滑动把底下的页面带走 */
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    if (!window.matchMedia('(max-width: 640px)').matches) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  });
+
   /** 记住用户最后一次用的 tab：切库后下次打开还在同一组 */
   const STORAGE = 'zero-comment-emoji-tab';
   let active = $state('');
@@ -97,7 +106,7 @@
     width: min(24rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); box-sizing: border-box;
     border: 1px solid var(--zc-border, #e2e2e2); border-radius: 10px;
     background: var(--zc-bg, #fff); box-shadow: var(--zc-shadow, 0 8px 24px rgba(0, 0, 0, 0.12));
-    padding: 0.35rem;
+    padding: 0.35rem; overscroll-behavior: contain;
   }
   @media (max-width: 640px) {
     .picker {
@@ -122,6 +131,7 @@
   .items {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(2.15rem, 1fr)); gap: 0.1rem;
     max-height: 12rem; overflow-y: auto; padding-top: 0.35rem;
+    overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   }
   .items button {
     border: none; background: none; font-family: inherit; font-size: 1.1rem; line-height: 1.35;

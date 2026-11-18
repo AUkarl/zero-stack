@@ -163,30 +163,32 @@
   {#if error}<p class="error-text" role="alert">{error}</p>{/if}
 
   <div class="actions">
-    {#if packs.length}
-      <div class="emoji-wrap">
-        <button
-          type="button"
-          class="emoji-btn"
-          class:active={emojiOpen}
-          aria-expanded={emojiOpen}
-          aria-haspopup="dialog"
-          onclick={() => (emojiOpen = !emojiOpen)}
-        >
-          {t('emoji')}
-        </button>
-        {#if emojiOpen}
-          <EmojiPicker {packs} {lang} onpick={insertEmoji} onclose={() => (emojiOpen = false)} />
-        {/if}
-      </div>
-    {/if}
+    <div class="action-buttons">
+      {#if packs.length}
+        <div class="emoji-wrap">
+          <button
+            type="button"
+            class="emoji-btn"
+            class:active={emojiOpen}
+            aria-expanded={emojiOpen}
+            aria-haspopup="dialog"
+            onclick={() => (emojiOpen = !emojiOpen)}
+          >
+            {t('emoji')}
+          </button>
+          {#if emojiOpen}
+            <EmojiPicker {packs} {lang} onpick={insertEmoji} onclose={() => (emojiOpen = false)} />
+          {/if}
+        </div>
+      {/if}
 
-    <button type="button" class="primary" disabled={!canSubmit} onclick={() => onsubmit?.()}>
-      {busy ? t('submitting') : submitLabel}
-    </button>
-    {#if oncancel}
-      <button type="button" class="ghost" onclick={oncancel}>{cancelLabel || t('cancel')}</button>
-    {/if}
+      <button type="button" class="primary" disabled={!canSubmit} onclick={() => onsubmit?.()}>
+        {busy ? t('submitting') : submitLabel}
+      </button>
+      {#if oncancel}
+        <button type="button" class="ghost" onclick={oncancel}>{cancelLabel || t('cancel')}</button>
+      {/if}
+    </div>
     {#if trailing}{@render trailing()}{/if}
   </div>
 </div>
@@ -219,14 +221,22 @@
     border-radius: 8px; background: var(--zc-code-bg, #fafafa); color: var(--zc-fg, #333);
   }
   .hint { color: var(--zc-muted, #888); font-size: 0.85rem; margin: 0; }
-  .actions { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.55rem; flex-wrap: wrap; }
-  .emoji-wrap { position: relative; }
+  .actions { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.55rem; }
+  .action-buttons { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.4rem; min-width: 0; }
+  .action-buttons > * { flex: 0 1 auto; min-width: 0; }
+  .action-buttons button { padding: 0.32rem 0.7rem; font-size: 0.85rem; white-space: nowrap; }
+  .emoji-wrap { position: relative; flex: 0 0 auto; }
   .emoji-btn {
     font-size: 0.85rem; padding: 0.32rem 0.7rem; border-radius: 999px; cursor: pointer;
     border: 1px solid var(--zc-border, #e2e2e2); background: var(--zc-bg, #fff); color: var(--zc-muted, #888);
   }
   .emoji-btn:hover { color: var(--zc-fg, #333); border-color: var(--zc-accent, #0070f3); }
   .emoji-btn.active { color: var(--zc-on-accent, #fff); background: var(--zc-accent, #0070f3); border-color: var(--zc-accent, #0070f3); }
+  @media (max-width: 420px) {
+    .action-buttons { gap: 0.3rem; }
+    .action-buttons button { padding: 0.28rem 0.5rem; font-size: 0.8rem; }
+    .action-buttons button.primary { flex: 1 1 auto; }
+  }
   button { font: inherit; border-radius: 8px; border: 1px solid var(--zc-border, #ddd); background: var(--zc-bg, #fff); color: var(--zc-fg, #333); padding: 0.35rem 0.9rem; cursor: pointer; }
   button.primary { background: var(--zc-accent, #0070f3); border-color: var(--zc-accent, #0070f3); color: var(--zc-on-accent, #fff); }
   button.ghost { color: var(--zc-muted, #888); }
