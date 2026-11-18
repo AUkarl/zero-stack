@@ -809,18 +809,18 @@ async function localizeFooterImages(
         if (type === 'image/svg+xml') {
           const svg = new TextDecoder().decode(bytes);
           if (/<script\b|onload\s*=|javascript:/i.test(svg)) throw new Error('SVG 含有脚本，未保存');
-          const path = `static/img/footer/${hash}.svg`;
+          const path = `static/img/${hash}.svg`;
           const written = await writeRepoFile(env, path, svg, `zero-cms: 保存页脚图标 ${String(item.name ?? '')}`.trim(), {
             actor: opts.actor,
             ip: opts.ip,
             action: 'params',
           });
           if (!written.success) throw new Error(written.error || '写入站点文件失败');
-          item.img = `/img/footer/${hash}.svg`;
+          item.img = `/img/${hash}.svg`;
         } else {
           if (!publicBucket) throw new Error('没有可用的公开存储桶');
           const stored = await putMediaObject(env, publicBucket, {
-            key: `uploads/footer/${hash}.${ext}`,
+            key: `uploads/img/${hash}.${ext}`,
             data: bytes,
             contentType: type,
           });
