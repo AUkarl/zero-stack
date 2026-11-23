@@ -459,7 +459,16 @@
 
 <section class="zc" use:hostAccent class:is-dark={hostTheme.dark} class:is-light={!hostTheme.dark}>
   {#if loading && !meta}
-    <p class="hint">{t('loading')}</p>
+    <div class="load-skeleton" role="status">
+      <span class="sr-only">{t('loading')}</span>
+      <span class="sk-title"></span>
+      {#each [0, 1, 2] as i (i)}
+        <div class="sk-row">
+          <span class="sk-avatar"></span>
+          <span class="sk-lines"><i></i><i></i><i></i></span>
+        </div>
+      {/each}
+    </div>
   {:else if !meta}
     <p class="hint error-text">{listError || t('unavailable')}</p>
   {:else if !meta.commentEnabled}
@@ -689,6 +698,27 @@
   .hint { color: var(--zc-muted); font-size: 0.85rem; margin: 0.4rem 0; }
   .hint.inline { margin: 0; }
   .hint.mine-title { margin-top: 1rem; }
+  /* 评论列表首屏：骨架和真实楼层同构（头像 + 昵称行 + 两行正文），
+     加载完直接换成内容，不闪一段「加载中」文字 */
+  .load-skeleton { display: flex; flex-direction: column; gap: 1rem; margin-top: 0.2rem; }
+  .load-skeleton .sk-title { display: block; width: 7.5rem; height: 1rem; border-radius: 999px; margin-bottom: 0.3rem; }
+  .sk-row { display: flex; gap: 0.65rem; }
+  .sk-avatar { flex: 0 0 36px; width: 36px; height: 36px; border-radius: 50%; }
+  .sk-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.15rem; }
+  .sk-lines i { display: block; height: 0.62rem; border-radius: 999px; }
+  .sk-lines i:nth-child(1) { width: 30%; }
+  .sk-lines i:nth-child(2) { width: 96%; }
+  .sk-lines i:nth-child(3) { width: 72%; }
+  .load-skeleton .sk-title, .sk-avatar, .sk-lines i {
+    background-color: rgba(128, 128, 128, 0.18);
+    background-image: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.28) 42%, transparent 64%);
+    background-size: 220% 100%; background-repeat: no-repeat;
+    animation: zcSkeletonShimmer 1.35s linear infinite;
+  }
+  @keyframes zcSkeletonShimmer { from { background-position: 180% 0; } to { background-position: -80% 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .load-skeleton .sk-title, .sk-avatar, .sk-lines i { animation: none; background-image: none; }
+  }
   .error-text { color: var(--zc-danger); font-size: 0.85rem; }
   .toast {
     position: fixed; left: 50%; bottom: max(1.25rem, env(safe-area-inset-bottom));
