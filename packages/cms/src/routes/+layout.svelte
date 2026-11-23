@@ -325,21 +325,41 @@
     <footer class="copy">{copyright}</footer>
   </div>
 {:else if !ready || !session.user}
-  <!-- 会话还没确认（或确认下来没登录）时不挂页面组件：后台只有 /login 是公开页，
-      而页面一挂上去就发自己那条管理接口请求 —— 匿名打开 /users 会先吃一次注定 401 的调用。
-      等得久不能只留一句话（站主第 12 条「显示一个等候时间超长的验证页」）：
-      到点把在等哪个地址说出来，并给「再试一次 / 去登录页改地址」两个出口。 -->
-  <div class="boot">
-    <div class="bootcard">
-      <p>正在验证登录状态…</p>
+  <!-- 会话校验期间先把后台框架搭出来，用流光骨架占住内容区；
+       页面组件等会话确认后再挂，避免匿名打开管理页先吃一次 401。 -->
+  <div class="skeleton-shell" aria-busy="true" aria-label="加载中">
+    <aside class="sk-aside" aria-hidden="true">
+      <div class="sk-brand"></div>
+      <div class="sk-nav">
+        {#each Array(9) as _, i}
+          <div class="sk-line" style={`width:${[72, 58, 66, 50, 62, 54, 70, 48, 60][i]}%`}></div>
+        {/each}
+      </div>
+    </aside>
+    <div class="sk-body">
+      <div class="sk-top" aria-hidden="true">
+        <div class="sk-avatar"></div>
+        <div class="sk-line" style="width:120px"></div>
+        <div class="sk-line" style="width:70px;margin-left:auto"></div>
+      </div>
+      <div class="sk-content" aria-hidden="true">
+        {#each Array(3) as _, i}
+          <div class="sk-card">
+            <div class="sk-line" style={`width:${[38, 52, 30][i]}%;height:16px`}></div>
+            <div class="sk-line"></div>
+            <div class="sk-line" style="width:84%"></div>
+            <div class="sk-line" style="width:62%"></div>
+          </div>
+        {/each}
+      </div>
       {#if session.slow}
         {@const apiBase = getApiBase()}
-        <p>
-          接口 4 秒还没回话。当前 API 地址：<code>{apiBase || '（后台自身域名）'}</code>
-        </p>
-        <div class="row">
-          <button class="sm" onclick={() => void session.refresh()}>再试一次</button>
-          <button class="sm ghost" onclick={() => void goto('/login')}>去登录页改地址</button>
+        <div class="sk-slow">
+          <p>接口 4 秒还没回话。当前 API 地址：<code>{apiBase || '（后台自身域名）'}</code></p>
+          <div class="row">
+            <button class="sm" onclick={() => void session.refresh()}>再试一次</button>
+            <button class="sm ghost" onclick={() => void goto('/login')}>去登录页改地址</button>
+          </div>
         </div>
       {/if}
     </div>
@@ -469,32 +489,107 @@
     font-size: 0.9rem;
     color: var(--muted);
   }
-  .boot {
+  .skeleton-shell {
     display: flex;
-    align-items: center;
-    justify-content: center;
     min-height: 100vh;
     min-height: 100dvh;
-    color: var(--muted);
-    padding: 1rem;
-  }
-  .bootcard {
-    max-width: 520px;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 1.1rem 1.2rem;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
+    background: var(--bg);
     color: var(--fg);
   }
-  .bootcard p {
-    margin: 0;
+  .sk-aside {
+    width: 216px;
+    flex: 0 0 216px;
+    padding: 18px 14px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
   }
-  .bootcard code {
+  .sk-brand {
+    width: 112px;
+    height: 26px;
+    border-radius: 8px;
+  }
+  .sk-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-top: 8px;
+  }
+  .sk-body {
+    flex: 1;
+    min-width: 0;
+    padding: 18px 22px;
+  }
+  .sk-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+  .sk-avatar {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border-radius: 50%;
+  }
+  .sk-content {
+    display: grid;
+    gap: 14px;
+    max-width: 920px;
+  }
+  .sk-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  .sk-line {
+    height: 12px;
+    border-radius: 6px;
+  }
+  .sk-brand,
+  .sk-avatar,
+  .sk-line {
+    background: linear-gradient(90deg, var(--panel-2) 25%, var(--border) 37%, var(--panel-2) 63%);
+    background-size: 400% 100%;
+    animation: sk-shimmer 1.35s ease infinite;
+  }
+  @keyframes sk-shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: 0 0; }
+  }
+  .sk-slow {
+    max-width: 640px;
+    margin-top: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .sk-slow p {
+    margin: 0 0 8px;
+    color: var(--fg);
+    font-size: 0.86rem;
+    line-height: 1.6;
+  }
+  .sk-slow code {
     word-break: break-all;
+  }
+  @media (max-width: 720px) {
+    .sk-aside { display: none; }
+    .sk-body { padding: 14px 12px; }
+    .sk-content { max-width: none; }
+    .sk-top { margin-bottom: 16px; }
+    .sk-card { padding: 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sk-brand, .sk-avatar, .sk-line { animation: none; }
   }
   .shell {
     display: flex;

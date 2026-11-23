@@ -16,6 +16,7 @@
   } = $props();
 
   const t = $derived(tr(lang));
+  let root = $state<HTMLDivElement | null>(null);
 
   /* 手机端打开面板时锁住页面滚动，避免在表情格上滑动把底下的页面带走 */
   $effect(() => {
@@ -24,6 +25,22 @@
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
+  });
+
+  /* 点击面板外任意位置关闭；表情按钮本身由 data-emoji-toggle 标记，点它交给开关处理 */
+  $effect(() => {
+    if (!onclose) return;
+    function onDown(e: PointerEvent) {
+      const path = e.composedPath ? e.composedPath() : [];
+      if (root && path.includes(root)) return;
+      if (path.some((n) => n instanceof HTMLElement && n.hasAttribute('data-emoji-toggle'))) return;
+      onclose!();
+    }
+    const timer = setTimeout(() => document.addEventListener('pointerdown', onDown), 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('pointerdown', onDown);
+    };
   });
 
   /** 记住用户最后一次用的 tab：切库后下次打开还在同一组 */
@@ -61,7 +78,7 @@
   const texts = $derived(current?.items ?? []);
 </script>
 
-<div class="picker" role="group" aria-label={t('emoji')}>
+<div class="picker" role="group" aria-label={t('emoji')} bind:this={root}>
   <div class="tabs" role="tablist">
     {#each packs as pack (pack.id)}
       <button

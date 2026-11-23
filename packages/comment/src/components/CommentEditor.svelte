@@ -170,6 +170,7 @@
             type="button"
             class="emoji-btn"
             class:active={emojiOpen}
+            data-emoji-toggle
             aria-expanded={emojiOpen}
             aria-haspopup="dialog"
             onclick={() => (emojiOpen = !emojiOpen)}

@@ -689,7 +689,6 @@
   .hint { color: var(--zc-muted); font-size: 0.85rem; margin: 0.4rem 0; }
   .hint.inline { margin: 0; }
   .hint.mine-title { margin-top: 1rem; }
-  .hint.id-hint { margin: 0.35rem 0 0; font-size: 0.78rem; }
   .error-text { color: var(--zc-danger); font-size: 0.85rem; }
   .toast {
     position: fixed; left: 50%; bottom: max(1.25rem, env(safe-area-inset-bottom));
