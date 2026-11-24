@@ -632,3 +632,24 @@ export const petState = sqliteTable('pet_state', {
   lastInteraction: integer('last_interaction').notNull().default(0),
   updatedAt: integer('updated_at').notNull().default(0),
 });
+
+/**
+ * 鲸鱼娘互动记录：后台 AI PET 页查看。
+ * 不记录 IP / UA，只留聊天问题与回复、动作、页面和当时心情。
+ */
+export const petEvents = sqliteTable(
+  'pet_events',
+  {
+    id: text('id').primaryKey(),
+    /** 'chat' | 'feed' | 'poke' | 'sleep' | 'wake' */
+    kind: text('kind').notNull(),
+    question: text('question'),
+    reply: text('reply'),
+    page: text('page'),
+    section: text('section'),
+    mood: text('mood'),
+    trigger: text('trigger'),
+    createdAt: integer('created_at').notNull().default(unixNow),
+  },
+  (t) => [index('pet_events_created_idx').on(t.createdAt), index('pet_events_kind_idx').on(t.kind, t.createdAt)],
+);

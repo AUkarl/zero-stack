@@ -41,6 +41,20 @@ function looksLikeQuestion(text: string): boolean {
   return /[?？]|怎么|如何|为什么|为啥|能不能|可不可以|吗|呢|请问|请教|求解|有没有/.test(text);
 }
 
+/**
+ * 短句误杀兜底：本地规则已经放行、正文也没有链接/联系方式/辱骂时，
+ * AI 再判 pending 不改状态。模型对「好多鱼」「我来试试大肥鱼好不好用」这类
+ * 玩梗/测试语气很容易用「过短、语义不明」转人工，但这些正是正常评论。
+ * 明确 spam 不在这里放行；带链接或人身的短句仍然交给 AI。
+ */
+function lowRiskShortComment(text: string): boolean {
+  const compact = text.replace(/\s+/g, '');
+  if (!compact || Array.from(compact).length > 24) return false;
+  if (/https?:\/\/|www\.|[\w.+-]+@[\w-]+\.[a-z]{2,}|\d{5,}/i.test(compact)) return false;
+  if (/(傻逼|智障|贱人|狗东西|婊子|去死|操你|你妈|妈的|滚蛋|滚开|废物|垃圾东西|恶心玩意|fuck|shit|bitch|idiot)/i.test(compact)) return false;
+  return true;
+}
+
 const AI_CONTEXT_TURNS = 12;
 const AI_CONTEXT_CHARS = 500;
 
@@ -842,7 +856,10 @@ app.post('/', async (c) => {
         postSlug: slug,
         parentContent: parent?.content ?? null,
       });
-      if (ai.verdict !== 'approve') {
+      /* 短句玩梗/测试只让 AI 复核、不让它单独决定转人工：本地规则已经放行，
+         模型仍判 pending 时放回通过；明确 spam 与 24 字以上的内容不适用。 */
+      const softPending = ai.verdict === 'pending' && lowRiskShortComment(content);
+      if (ai.verdict !== 'approve' && !softPending) {
         status = ai.verdict === 'spam' ? 'spam' : 'pending';
         spamReason = ai.reason ? `AI：${ai.reason}` : 'AI 审核未通过，转人工';
       }

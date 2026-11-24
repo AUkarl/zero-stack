@@ -26,6 +26,46 @@
     creditEnabled: boolean;
   }
 
+  type EventKind = 'chat' | 'feed' | 'poke' | 'sleep' | 'wake';
+  type EventFilter = 'all' | EventKind;
+
+  interface PetEvent {
+    id: string;
+    kind: EventKind;
+    question: string | null;
+    reply: string | null;
+    page: string | null;
+    section: string | null;
+    mood: string | null;
+    trigger: string | null;
+    createdAt: number;
+  }
+
+  const EVENT_FILTERS: { key: EventFilter; label: string }[] = [
+    { key: 'all', label: '全部' },
+    { key: 'chat', label: '聊天' },
+    { key: 'feed', label: '投喂' },
+    { key: 'poke', label: '摸摸' },
+    { key: 'sleep', label: '睡觉' },
+    { key: 'wake', label: '起床' },
+  ];
+
+  const EVENT_LABEL: Record<EventKind, string> = {
+    chat: '聊天',
+    feed: '投喂',
+    poke: '摸摸',
+    sleep: '睡觉',
+    wake: '起床',
+  };
+
+  const EVENT_ACTION: Record<EventKind, string> = {
+    chat: '',
+    feed: '给鲸鱼娘喂了一碗白米饭',
+    poke: '摸了摸鲸鱼娘',
+    sleep: '哄鲸鱼娘睡觉',
+    wake: '叫醒了鲸鱼娘',
+  };
+
   const DEFAULTS: PetCfg = {
     enabled: true,
     size: 'm',
@@ -56,7 +96,55 @@
   let filePath = $state('data/pet.json');
   let backend = $state('');
 
+  let events = $state<PetEvent[]>([]);
+  let eventKind = $state<EventFilter>('all');
+  let eventCounts = $state<Record<string, number>>({});
+  let eventTotal = $state(0);
+  let eventsLoading = $state(false);
+  let eventsLoaded = $state(false);
+  let eventsError = $state('');
+  let eventsSeq = 0;
+
   const preview = $derived(frontUrl('/home/'));
+
+  function formatEventTime(sec: number): string {
+    return new Date(sec * 1000).toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  }
+
+  async function loadEvents(reset = true) {
+    const seq = ++eventsSeq;
+    const kind = eventKind;
+    const offset = reset ? 0 : events.length;
+    eventsLoading = true;
+    eventsError = '';
+    try {
+      const res = await get<{
+        data: { events: PetEvent[]; total: number; counts: Record<string, number> };
+      }>(`/api/admin/pet/events?kind=${kind}&limit=20&offset=${offset}`);
+      if (seq !== eventsSeq) return;
+      events = reset ? res.data.events : [...events, ...res.data.events];
+      eventTotal = res.data.total;
+      eventCounts = res.data.counts || {};
+      eventsLoaded = true;
+    } catch (e) {
+      if (seq === eventsSeq) eventsError = e instanceof Error ? e.message : '读取互动记录失败';
+    } finally {
+      if (seq === eventsSeq) eventsLoading = false;
+    }
+  }
+
+  function setEventKind(kind: EventFilter) {
+    if (eventKind === kind) return;
+    eventKind = kind;
+    void loadEvents(true);
+  }
 
   async function load() {
     loading = true;
@@ -102,6 +190,7 @@
 
   onMount(() => {
     void load();
+    void loadEvents(true);
   });
 </script>
 
@@ -221,6 +310,56 @@
   </section>
 
   <section class="card">
+    <div class="row spread">
+      <h3>互动记录</h3>
+      <button class="sm" type="button" onclick={() => void loadEvents(true)} disabled={eventsLoading}>
+        {eventsLoading ? '读取中…' : '刷新'}
+      </button>
+    </div>
+    <div class="event-filters">
+      {#each EVENT_FILTERS as f (f.key)}
+        <button class="sm" type="button" class:active={eventKind === f.key} onclick={() => setEventKind(f.key)}>
+          {f.label}{f.key === 'all' ? ` ${eventTotal}` : eventCounts[f.key] ? ` ${eventCounts[f.key]}` : ''}
+        </button>
+      {/each}
+    </div>
+    <p class="muted hint">聊天、投喂、摸摸、睡觉/起床都会记在这里；不记访客 IP，90 天后自动清理。</p>
+    {#if eventsError}
+      <p class="err">{eventsError}</p>
+    {:else if eventsLoading && !events.length}
+      <p class="muted small">读取中…</p>
+    {:else if events.length}
+      <ul class="event-list">
+        {#each events as event (event.id)}
+          <li class="event-item">
+            <span class="event-kind">{EVENT_LABEL[event.kind]}</span>
+            <div class="event-main">
+              {#if event.kind === 'chat'}
+                <p class="event-q">问：{event.question || '（未记录问题）'}</p>
+                <p class="event-a">答：{event.reply || '（未记录回复）'}</p>
+              {:else}
+                <p class="event-line">{EVENT_ACTION[event.kind]}</p>
+              {/if}
+              <p class="event-meta">
+                <span>{formatEventTime(event.createdAt)}</span>
+                {#if event.page || event.section}<span>· {event.page || event.section}</span>{/if}
+                {#if event.mood}<span>· 心情 {event.mood}</span>{/if}
+              </p>
+            </div>
+          </li>
+        {/each}
+      </ul>
+      {#if events.length < eventTotal}
+        <button class="sm event-more" type="button" onclick={() => void loadEvents(false)} disabled={eventsLoading}>
+          {eventsLoading ? '读取中…' : `加载更多（已显示 ${events.length}/${eventTotal}）`}
+        </button>
+      {/if}
+    {:else if eventsLoaded}
+      <p class="muted small">还没有记录。访客在前台和鲸鱼娘聊天、喂饭后会出现在这里。</p>
+    {/if}
+  </section>
+
+  <section class="card">
     <h3>网页联动</h3>
     <div class="bools">
       <div class="bool">
@@ -327,6 +466,70 @@
   }
   .head .row {
     flex-wrap: wrap;
+  }
+  .event-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .event-filters button.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .event-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .event-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-2);
+  }
+  .event-kind {
+    flex: 0 0 auto;
+    padding: 0.08rem 0.45rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.7rem;
+    line-height: 1.5;
+  }
+  .event-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .event-q,
+  .event-a,
+  .event-line {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+  .event-a {
+    margin-top: 0.15rem;
+    color: var(--muted);
+  }
+  .event-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin: 0.3rem 0 0;
+    color: var(--muted);
+    font-size: 0.7rem;
+    line-height: 1.5;
+  }
+  .event-more {
+    align-self: flex-start;
   }
   @media (max-width: 640px) {
     .head .row {

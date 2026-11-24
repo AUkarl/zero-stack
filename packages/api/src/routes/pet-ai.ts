@@ -12,6 +12,7 @@ import { aiChat, aiConfig } from '../services/ai';
 import { getConfig } from '../services/config';
 import { rateLimitLocal } from '../lib/rate-limit';
 import { cleanMultiline } from '../lib/sanitize';
+import { logPetEvent, siteTimeContext } from '../services/pet';
 import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
@@ -82,7 +83,9 @@ app.post('/pet-line', async (c) => {
   const group = oneLine(rawGroup, 24);
   const persona = cleanMultiline(rawPersona ?? '', 2000);
   const state = body.state && typeof body.state === 'object' ? (body.state as Record<string, unknown>) : {};
+  const clock = await siteTimeContext(c.env).catch(() => null);
   const stateLine = [
+    clock ? `现实时间 ${clock.label}` : '',
     `心情 ${oneLine(state.mood, 20) || '平静'}`,
     `精力 ${Math.max(0, Math.min(100, Number(state.energy) || 0))}/100`,
     `饱腹 ${Math.max(0, Math.min(100, Number(state.satiety) || 0))}/100`,
@@ -107,6 +110,9 @@ app.post('/pet-line', async (c) => {
   const system = [
     `你是站长博客里的鲸鱼娘「${name}」。` + (group ? `你的身份标识是「${group}」。` : ''),
     persona ? `站长给你的人设与说话要求（优先遵守）：\n${persona}` : '你说话短、轻、俏皮，像在网站角落里陪读者聊天。',
+    '除非当前问题或状态直接相关，否则不要提水洼、泡泡、晒太阳、白米饭；不要连续使用同一个意象。',
+    clock ? `现在是 ${clock.label}。你可以自然参考这个时间（深夜会困、饭点会饿），但不要每条都报时。` : '',
+    '不要反复使用同一组意象、句式和口头禅；每次换一种说法。',
     history.length ? '你们刚才已经聊过几轮，下面会带上对话历史；回答要自然承接，不要重复自己说过的话。' : '',
     isQuestion ? '读者在向你提问：先用一句中文直接回答他的问题（保持人设），不要装没听见、不要答非所问；只有确实不知道时才俏皮地说不知道。不超过 90 个字，不许编造站内没有的信息。' : '每次只说一句中文，不超过 30 个字；不用 Markdown，不用引号，不解释，不说自己是 AI。',
     '只返回严格 JSON，不要代码块：',
@@ -134,7 +140,24 @@ app.post('/pet-line', async (c) => {
       messages,
       { temperature: 0.8, maxTokens: isQuestion ? 220 : 140, timeoutMs: 15_000 },
     );
-    return c.json(parseModelLine(text, isQuestion ? 90 : 60));
+    const reply = parseModelLine(text, isQuestion ? 90 : 60);
+    if (isQuestion) {
+      const logged = logPetEvent(c.env, {
+        kind: 'chat',
+        question,
+        reply: reply.line,
+        page: title || section,
+        section,
+        mood: reply.mood,
+        trigger: 'chat',
+      });
+      try {
+        c.executionCtx.waitUntil(logged);
+      } catch {
+        void logged;
+      }
+    }
+    return c.json(reply);
   } catch (e) {
     console.warn('[zero-api] AI PET 台词生成失败：', e instanceof Error ? e.message : String(e));
     return c.json({ error: 'upstream failed' }, 502);

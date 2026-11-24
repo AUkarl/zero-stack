@@ -14,56 +14,13 @@ import { createDb } from '../db/client';
 import { petState } from '../db/schema';
 import { fail, ok } from '../lib/errors';
 import { rateLimitLocal } from '../lib/rate-limit';
+import { loadPetRow, logPetEvent, PET_ROW_ID, settlePetState, type PetEventKind, type PetRow } from '../services/pet';
 import type { AppEnv } from '../lib/app';
 
 const app = new Hono<AppEnv>();
 
-const ROW_ID = 'global';
-const IDLE_SLEEP_SEC = 300;
-
-type Row = typeof petState.$inferSelect;
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function round1(n: number): number {
-  return Math.round(n * 10) / 10;
-}
-
-/** 按离开时长做衰减；返回的是「假如现在就结算」的值，调用方决定要不要写库 */
-function settle(row: Row, nowSec: number) {
-  const last = row.lastInteraction || 0;
-  const awaySec = last ? Math.max(0, nowSec - last) : 0;
-  const awayHours = round1(Math.min(240, awaySec / 3600));
-  let energy = row.energy;
-  let satiety = row.satiety;
-  let boredom = row.boredom;
-  let mood = row.mood;
-  if (awayHours > 3) {
-    energy = Math.max(18, energy - Math.min(46, awayHours * 1.8));
-    satiety = Math.max(12, satiety - Math.min(50, awayHours * 2.2));
-    boredom = Math.min(96, boredom + Math.min(60, awayHours * 1.6));
-    mood = awayHours > 12 ? '有点想你' : boredom > 70 ? '无聊' : '平静';
-  }
-  const asleep = row.asleep
-    ? 1
-    : last && nowSec - last > IDLE_SLEEP_SEC
-      ? 1
-      : 0;
-  return {
-    mood,
-    energy: round1(clamp(energy, 0, 100)),
-    satiety: round1(clamp(satiety, 0, 100)),
-    boredom: round1(clamp(boredom, 0, 100)),
-    asleep,
-    awayHours,
-    asleepSince: asleep ? row.asleepSince || last || nowSec : 0,
-  };
-}
-
 /** 给前端的形状：时间和客户端一致用毫秒，省得两边换单位 */
-function toClient(row: Row, s: ReturnType<typeof settle>) {
+function toClient(row: PetRow, s: ReturnType<typeof settlePetState>) {
   return {
     mood: s.mood,
     energy: s.energy,
@@ -78,19 +35,12 @@ function toClient(row: Row, s: ReturnType<typeof settle>) {
   };
 }
 
-async function loadRow(env: Env) {
-  const db = createDb(env);
-  await db.insert(petState).values({ id: ROW_ID }).onConflictDoNothing();
-  const rows = await db.select().from(petState).where(eq(petState.id, ROW_ID)).limit(1);
-  return rows[0];
-}
-
 /** 公开只读：不写库，不改变任何状态 */
 app.get('/state', async (c) => {
   rateLimitLocal(c, 'pet-state-read', 240, 60);
-  const row = await loadRow(c.env);
+  const row = await loadPetRow(c.env);
   const nowSec = Math.floor(Date.now() / 1000);
-  const s = settle(row, nowSec);
+  const s = settlePetState(row, nowSec);
   c.header('Cache-Control', 'no-store');
   return ok({ state: toClient(row, s) });
 });
@@ -105,9 +55,9 @@ app.post('/state', async (c) => {
   const action = String(body?.action || '');
   if (!['poke', 'feed', 'sleep', 'wake'].includes(action)) return fail(400, '不认识的桌宠动作');
 
-  const row = await loadRow(c.env);
+  const row = await loadPetRow(c.env);
   const nowSec = Math.floor(Date.now() / 1000);
-  const s = settle(row, nowSec);
+  const s = settlePetState(row, nowSec);
   let { mood, energy, satiety, boredom } = s;
   let interactions = row.interactions;
   let pets = row.pets;
@@ -117,17 +67,17 @@ app.post('/state', async (c) => {
   if (action === 'poke') {
     interactions += 1;
     pets += 1;
-    boredom = clamp(boredom - 7, 0, 100);
-    energy = clamp(energy - 0.5, 0, 100);
-    satiety = clamp(satiety - 0.2, 0, 100);
+    boredom = Math.max(0, boredom - 7);
+    energy = Math.max(0, energy - 0.5);
+    satiety = Math.max(0, satiety - 0.2);
     mood = '开心';
     asleep = 0;
     asleepSince = 0;
   } else if (action === 'feed') {
     interactions += 1;
-    satiety = clamp(satiety + 32, 0, 100);
-    energy = clamp(energy + 4, 0, 100);
-    boredom = clamp(boredom - 12, 0, 100);
+    satiety = Math.min(100, satiety + 32);
+    energy = Math.min(100, energy + 4);
+    boredom = Math.max(0, boredom - 12);
     mood = '开心';
     asleep = 0;
     asleepSince = 0;
@@ -141,9 +91,9 @@ app.post('/state', async (c) => {
 
   const next = {
     mood,
-    energy: round1(energy),
-    satiety: round1(satiety),
-    boredom: round1(boredom),
+    energy: Math.round(energy * 10) / 10,
+    satiety: Math.round(satiety * 10) / 10,
+    boredom: Math.round(boredom * 10) / 10,
     interactions,
     pets,
     asleep,
@@ -152,10 +102,23 @@ app.post('/state', async (c) => {
     updatedAt: nowSec,
   };
   const db = createDb(c.env);
-  await db.update(petState).set(next).where(eq(petState.id, ROW_ID));
-  const saved: Row = { ...row, ...next, id: ROW_ID };
+  await db.update(petState).set(next).where(eq(petState.id, PET_ROW_ID));
+  const saved: PetRow = { ...row, ...next, id: PET_ROW_ID };
+
+  // 互动记录在后台 AI PET 里看；写入失败不影响互动本身
+  const logged = logPetEvent(c.env, {
+    kind: action as PetEventKind,
+    mood,
+    trigger: action,
+  });
+  try {
+    c.executionCtx.waitUntil(logged);
+  } catch {
+    void logged;
+  }
+
   c.header('Cache-Control', 'no-store');
-  return ok({ state: toClient(saved, settle(saved, nowSec)) });
+  return ok({ state: toClient(saved, settlePetState(saved, nowSec)) });
 });
 
 export default app;

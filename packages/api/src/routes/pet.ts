@@ -14,6 +14,7 @@ import { buildReceipt, triggerPagesBuild } from '../services/git';
 import { clientIp } from '../lib/http';
 import { fail, ok } from '../lib/errors';
 import { zodZh } from '../lib/zmsg';
+import { listPetEvents, PET_EVENT_KINDS } from '../services/pet';
 import type { AppEnv } from '../lib/app';
 
 const DEFAULTS = {
@@ -119,6 +120,27 @@ app.post('/', async (c) => {
     buildHealth: health,
     message: buildReceipt(build, 'AI PET 设置已保存') + buildHealthReceipt(health),
   });
+});
+
+/**
+ * 前台鲸鱼娘的互动记录（聊天、投喂、摸摸、睡觉/起床）。
+ * 只给管理员看，不记录 IP / UA；内容按站点保留策略自动清理旧行。
+ */
+app.get('/events', async (c) => {
+  requireAdmin(c);
+  const kind = String(c.req.query('kind') || 'all');
+  if (kind !== 'all' && !(PET_EVENT_KINDS as readonly string[]).includes(kind)) {
+    fail(400, '记录类型只能是 chat / feed / poke / sleep / wake / all');
+  }
+  const limit = Number(c.req.query('limit'));
+  const offset = Number(c.req.query('offset'));
+  return ok(
+    await listPetEvents(c.env, {
+      kind: kind as (typeof PET_EVENT_KINDS)[number] | 'all',
+      limit: Number.isFinite(limit) ? limit : 30,
+      offset: Number.isFinite(offset) ? offset : 0,
+    }),
+  );
 });
 
 export default app;
