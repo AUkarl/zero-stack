@@ -303,7 +303,7 @@ const MODERATION_SYSTEM = [
   'pending = 只有出现具体可疑迹象、但还不足以判 spam 时才用：例如正文带可疑链接但不像明确广告、模板化拉人但没违法内容、轻度人身攻击但不确定是否玩笑。',
   'spam = 明确垃圾（赌博、色情、诈骗、违法交易、刷单导流、无关广告、辱骂骚扰、纯链接堆砌）。',
   '评论者填写的昵称、邮箱、个人网址只是资料，不等于垃圾；只有正文明显为该链接导流时才计入。',
-  '示例：「好多鱼」「望月思」「我也收到过。」→ approve；「我来试试大肥鱼好不好用。」→ approve；「加微信 abc123，带你赚钱」→ spam；「你这篇写得不行，论据有问题」→ approve。',
+  '示例：「好耶」「路过」「+1」→ approve；「我来试试评论功能。」→ approve；「加微信 abc123，带你赚钱」→ spam；「你这篇写得不行，论据有问题」→ approve。',
   '只输出一个 JSON 对象，不要任何解释或代码块：{"verdict":"approve|pending|spam","reason":"不超过 40 字的中文理由"}',
 ].join('\n');
 
@@ -389,7 +389,7 @@ export async function aiComposeReply(env: Env, input: AiReplyInput): Promise<str
     );
   }
   if (contextLines.length) {
-    contextLines.push('时间和状态只是背景：自然影响语气，不要每条都汇报；不要在无关时硬提水洼、泡泡、晒太阳、白米饭，也不要连续使用同一个意象。');
+    contextLines.push('时间和状态只是背景：自然影响语气，不要每条都汇报；也不要反复使用同一组意象或口头禅。');
   }
   const system = [
     asCharacter

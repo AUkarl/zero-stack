@@ -43,8 +43,8 @@ function looksLikeQuestion(text: string): boolean {
 
 /**
  * 短句误杀兜底：本地规则已经放行、正文也没有链接/联系方式/辱骂时，
- * AI 再判 pending 不改状态。模型对「好多鱼」「我来试试大肥鱼好不好用」这类
- * 玩梗/测试语气很容易用「过短、语义不明」转人工，但这些正是正常评论。
+ * AI 再判 pending 不改状态。模型对短句玩梗、测试语气很容易用
+ * 「过短、语义不明」转人工，但这些正是正常评论。
  * 明确 spam 不在这里放行；带链接或人身的短句仍然交给 AI。
  */
 function lowRiskShortComment(text: string): boolean {
